@@ -51,6 +51,19 @@ verify.md는 **마지막 code commit 이후에 작성**한다. 다음을 반드�
 - Round 2: Round 1에서 REJECT/DOWNGRADE → RE-CODE 후 1회만 더
 - Round 3 이상은 호출하지 마라. summary.md에 양측 의견 명시하고 Planner에게 escalate.
 
+## RE-CODE regression 가드 (Phase 2b 사후 도입)
+
+RE-CODE 라운드에서 **새 결함을 도입하는** 케이스가 실제로 발생했다. 이를 방지하기 위해:
+
+1. **RE-CODE 후 verify.md는 반드시 "Regression check" 섹션을 포함**한다. 다음 내용:
+   - Round 1에서 fix한 영역의 회귀 여부 (해당 영역의 테스트 명확히 통과 확인)
+   - RE-CODE에서 새로 추가/수정한 코드 경로의 단위 테스트 존재 여부
+   - 새 코드가 기존 contract (CLI exit code, public API 등)를 깨지 않았는지
+
+2. **새 코드 경로는 반드시 테스트**: 특히 CLI exit code 분기, error handler, edge case branch는 subprocess 또는 unit test로 잠금. "수동 확인했다"는 evidence 부족.
+
+3. **fix가 의도한 영역 외 추가 변경**: 작은 정합성 정리(예: exit code 통일)는 OK이지만 summary.md의 "Deviations from plan"에 명시.
+
 ## Phase 시작 시 절차
 
 사용자가 `phase_N_prompt.md` 내용을 주면:
@@ -68,7 +81,11 @@ verify.md는 **마지막 code commit 이후에 작성**한다. 다음을 반드�
 9. **Stage 5b**: `bash scripts/run_verify_cross.sh N` (Round 1) → commit
 10. **Stage 5c**: round 1 결과 종합. DOWNGRADE/REJECT면 RE-CODE → 새 verify.md → Round 2 cross-verify (마지막). Round 2 이후엔 호출하지 마라.
 11. **Stage 6**: summary.md → commit
-12. `git push` → 작업 종료. summary 내용을 Human에게 보고.
+12. Push 정책 (WORKFLOW.md Stage 6 참조):
+    - 정상 PASS_CANDIDATE → `git push`
+    - Round 2 REJECT/DOWNGRADE → push 보류, Planner escalate
+    - Planner-directed fix → push 보류, Planner가 직접
+13. summary 내용을 Human에게 보고. 작업 종료.
 
 ## 커밋 메시지 규칙 (Conventional Commits)
 
