@@ -16,7 +16,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-BlockType = Literal["text", "image", "header"]
+BlockType = Literal["text", "image", "header", "table"]
 MessageRole = Literal["user", "assistant", "system"]
 
 
