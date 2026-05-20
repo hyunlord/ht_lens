@@ -125,7 +125,7 @@ messages      (id, thread_id, role, content, model, created_at)
 
 ---
 
-### Phase 2b — Translation Pipeline ⬜
+### Phase 2b — Translation Pipeline ✅
 **Deliverable**
 - `OpenAICompatibleClient` (sglang Qwen3.6 기본, `enable_thinking=false`)
 - `python -m ht_lens.translate --doc-id <id>` — block 단위 번역 + 캐시
@@ -148,6 +148,15 @@ messages      (id, thread_id, role, content, model, created_at)
 
 **Versioning**
 - **v0.1 달성**: Phase 2a + 2b 완료 시점
+
+**완료 노트**
+- 88/100 self-score, Round 2 REJECT → Planner-directed targeted fix → PASS
+- 147 tests pass (unit + integration), mypy strict 0 위반
+- exit code 체계 정립: 0=success / 1=block failure / 2=invalid input / 3=DB error / 4=health check failed
+- v0.1 마일스톤 달성 (Phase 2a + 2b 완료)
+- Known debt:
+  - Sequential translate loop → Phase 3에서 asyncio.gather 병렬화
+  - Live sglang DoD evidence → `@pytest.mark.llm` (CI endpoint 부재로 강제 skip)
 
 ---
 
@@ -217,7 +226,7 @@ messages      (id, thread_id, role, content, model, created_at)
 
 | 버전 | 시점               | 의미                              |
 | ---- | ------------------ | --------------------------------- |
-| v0.1 | Phase 2a + 2b 완료 | CLI로 번역 가능                   |
+| v0.1 ✅ | Phase 2a + 2b 완료 | CLI로 번역 가능                   |
 | v0.2 | Phase 3~4 완료     | 브라우저에서 읽기 가능            |
 | v0.3 | Phase 5 완료       | Q&A 동작, 핀                      |
 | v1.0 | Phase 6 완료       | 일상 도구로 사용 가능             |
