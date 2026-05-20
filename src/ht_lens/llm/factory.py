@@ -23,6 +23,10 @@ def from_env() -> LLMClient:
         from ht_lens.llm.mock import MockLLMClient
 
         return MockLLMClient()
+    if provider == "mock_fail":
+        from ht_lens.llm.mock import FailMockLLMClient
+
+        return FailMockLLMClient()
     if provider == "openai_compat":
         from ht_lens.llm.openai_compat import OpenAICompatibleClient
 
@@ -32,7 +36,7 @@ def from_env() -> LLMClient:
         return OpenAICompatibleClient(base_url=base_url, model=model, api_key=api_key)
     raise NotImplementedError(
         f"LLM provider {provider!r} is not implemented. "
-        "Set LLM_PROVIDER=mock or LLM_PROVIDER=openai_compat."
+        "Set LLM_PROVIDER=mock, LLM_PROVIDER=mock_fail, or LLM_PROVIDER=openai_compat."
     )
 
 

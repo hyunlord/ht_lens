@@ -134,6 +134,52 @@ def test_translate_dry_run_exit_0(tmp_path: Path) -> None:
     assert "dry_run:" in proc.stdout
 
 
+def test_translate_exit_1_on_block_failure(tmp_path: Path) -> None:
+    """LLM_PROVIDER=mock_fail → every block fails → exit 1."""
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    proc = _run_translate(
+        "--doc-id",
+        str(doc_id),
+        db_path=db_path,
+        extra_env={"LLM_PROVIDER": "mock_fail"},
+    )
+    assert proc.returncode == 1, (proc.stdout, proc.stderr)
+
+
+def test_translate_exit_4_on_health_check_failed(tmp_path: Path) -> None:
+    """Unreachable openai_compat endpoint without --dry-run → health_check fails → exit 4."""
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    proc = _run_translate(
+        "--doc-id",
+        str(doc_id),
+        db_path=db_path,
+        extra_env={
+            "LLM_PROVIDER": "openai_compat",
+            "LLM_BASE_URL": "http://localhost:1",
+            "LLM_MODEL": "test-model",
+        },
+    )
+    assert proc.returncode == 4, (proc.stdout, proc.stderr)
+
+
+def test_translate_dry_run_bypasses_health_check(tmp_path: Path) -> None:
+    """--dry-run skips health_check so an unreachable endpoint still exits 0."""
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    proc = _run_translate(
+        "--doc-id",
+        str(doc_id),
+        "--dry-run",
+        db_path=db_path,
+        extra_env={
+            "LLM_PROVIDER": "openai_compat",
+            "LLM_BASE_URL": "http://localhost:1",
+            "LLM_MODEL": "test-model",
+        },
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "dry_run:" in proc.stdout
+
+
 def test_translate_exit_3_without_alembic_version(tmp_path: Path) -> None:
     """DB without alembic_version should give exit 3 (SchemaVersionMismatch)."""
     import asyncio

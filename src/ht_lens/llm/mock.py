@@ -46,4 +46,23 @@ class MockLLMClient:
         return True
 
 
-__all__ = ["MockLLMClient"]
+class FailMockLLMClient(MockLLMClient):
+    """MockLLMClient variant that always raises LLMPermanentError on translate.
+
+    Used by subprocess-level tests to trigger stats.failed > 0 via LLM_PROVIDER=mock_fail.
+    """
+
+    async def translate(
+        self,
+        text: str,
+        src: str,
+        tgt: str,
+        *,
+        context: str | None = None,
+    ) -> str:
+        from ht_lens.llm.errors import LLMPermanentError
+
+        raise LLMPermanentError("mock permanent failure")
+
+
+__all__ = ["FailMockLLMClient", "MockLLMClient"]
