@@ -47,7 +47,6 @@ EOF
 echo "[run_debate] invoking codex for phase ${PHASE_NUM}..." >&2
 
 codex exec \
-  --ask-for-approval never \
   --sandbox read-only \
   --ephemeral \
   --output-last-message "${OUT_FILE}" \
