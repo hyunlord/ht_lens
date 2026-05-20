@@ -75,7 +75,7 @@ bash scripts/run_debate.sh <phase-num>
 이 스크립트가:
 1. ROADMAP.md, plan.md를 컨텍스트로 모음
 2. `prompts/codex_debate.md`를 instruction으로 Codex에 전달
-3. `codex exec --ask-for-approval never --sandbox read-only --output-last-message`로 실행
+3. `codex exec --sandbox read-only --ephemeral --output-last-message`로 실행
 4. 결과를 `.claude/phases/phase-N/debate.md`에 저장
 
 Worker는 결과를 읽고 다음 stage로 진행한다. **debate.md를 직접 작성하지 않는다.**
