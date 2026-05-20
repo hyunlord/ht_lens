@@ -1,47 +1,51 @@
 ## 1. Verification of automated checks
 
-Lint, format, type, and test evidence in `.claude/phases/phase-1/verify.md:9-12` is plausible but thin: it reports only summarized terminal output, with no saved log. The commands match project config in `pyproject.toml:38-62`, so I do not see a contradiction.
+Lint/format/type evidence in `.claude/phases/phase-1/verify.md:17-19` is plausible but not independently proven: it is only summarized terminal output, with no saved log. The commands match CI config in `.github/workflows/ci.yml:27-37`.
 
-Coverage is partly credible because pytest always runs with `--cov=ht_lens --cov-report=term-missing` via `pyproject.toml:51-53`. However, verify lists the command as only “(pytest --cov)” at `.claude/phases/phase-1/verify.md:13`, and there is no threshold or persisted artifact. The 0% coverage for `src/ht_lens/extract/__main__.py` in `.claude/phases/phase-1/verify.md:28` matters because the DoD deliverable is specifically `python -m ht_lens.extract`.
+Test evidence is plausible but thin. The suite does include the claimed new coverage points: subprocess `python -m ht_lens.extract` tests in `tests/integration/test_module_cli.py:20-47` and close-on-exception in `tests/integration/test_fitz_lifecycle.py:20-28`. However, there is no persisted pytest log, and the `ht-lens extract` console script itself is not tested as an installed script; `tests/integration/test_cli_errors.py:15-16` only calls `main(["extract", ...])`.
 
-CI is not verified. `.claude/phases/phase-1/verify.md:14` says “green expected,” while `WORKFLOW.md` requires GitHub Actions green. `.github/workflows/ci.yml:27-37` runs the right local commands, but expected green is not evidence.
+Coverage evidence is internally inconsistent. The current `.coverage` report shows TOTAL 92%, but `src/ht_lens/extract/__main__.py` is still 0% covered, not 60% as claimed in `.claude/phases/phase-1/verify.md:38`. That is expected because `pyproject.toml:51-62` has no subprocess coverage configuration, so subprocess CLI tests prove behavior but do not contribute to coverage.
 
-Dependency and fitz-isolation checks are directionally useful but not complete. The dependency grep in `.claude/phases/phase-1/verify.md:15` proves the three expected deps exist, not that extraction stayed limited to them. The fitz isolation check is credible for `src/`; `src/ht_lens/extract/_fitz.py:16` is the only source import. The dead-API check at `.claude/phases/phase-1/verify.md:17` uses a malformed path (`src/ ht_lens/`), but the conclusion is independently true: `save_images` is gone from current source.
+CI is not verified. `.claude/phases/phase-1/verify.md:22` says “green expected,” which is not evidence. The workflow exists and runs the right checks, but no green run is shown.
+
+The dependency and fitz-isolation checks are mostly credible for source code: `src/ht_lens/extract/_fitz.py:16` is the only source `fitz` import, and `pyproject.toml:12-14` has the Phase 1 extract dependencies. The dead `save_images` API is gone from current source, but the plan still mentions it at `.claude/phases/phase-1/plan.md:126-139`.
 
 ## 2. Verification of functional checks
 
-The functional tests cover a lot of Phase 1 behavior, but the self-report overstates the CLI evidence. The three-fixture integration tests call `extract_pdf()` directly in `tests/integration/test_extract_pipeline.py:33-51`, not `python -m ht_lens.extract` or the installed `ht-lens extract` command. CLI error tests call `main(["extract", ...])` through `tests/integration/test_cli_errors.py:15-16`, still not a real module/subprocess invocation. There is no success-path test for `src/ht_lens/extract/__main__.py:13-14`.
+The module CLI deliverable from `ROADMAP.md:78-82` is now functionally exercised: `tests/integration/test_module_cli.py:20-33` invokes `python -m ht_lens.extract` successfully, and `tests/integration/test_module_cli.py:35-47` covers exit 2 on an existing output directory.
 
-The 3 sample PDFs are actually exercised for metadata, JSON/PNG pairing, schema, render scale, and snapshot output in `tests/integration/test_extract_pipeline.py:26-150` and `tests/integration/test_extract_snapshot.py:25-33`. That supports the DoD better than the previous verify.
+The `ht-lens extract` claim is weaker. `.claude/phases/phase-1/verify.md:57` equates single-process `main()` calls with the console entry point. That tests Typer routing and error mapping, but not the installed script declared in `pyproject.toml:28-29`.
 
-The “block JSON is human-reasonable” claim is only partially exercised. `docs/phases/phase-1/samples.md` exists and is useful, but automated real-fixture reading-order checks only assert two facts on `sample_en.pdf` page 1 in `tests/integration/test_real_reading_order.py:28-56`. They do not test Korean ordering, mixed-document ordering, figure/caption order, or any real multi-column page. The arXiv margin stamp is still classified as a `header` in `docs/phases/phase-1/samples.md:16`, so header over-classification is reduced, not eliminated.
+The three sample PDFs are exercised through the pipeline for metadata, PNG/JSON pairing, schema, render scale, and snapshots in `tests/integration/test_extract_pipeline.py:26-150` and `tests/integration/test_extract_snapshot.py:25-33`. The human-review artifact exists at `docs/phases/phase-1/samples.md`, but automated “reasonable block JSON” checks remain narrow.
 
-The rotated-page check is weaker than named. `tests/integration/test_rotated_page.py:29-36` verifies `rotation=90` and PNG dimensions, but does not verify that text bboxes map onto the rotated render. The limitation is disclosed in `.claude/phases/phase-1/verify.md:60`, so this is not a blocker, but the test name/report wording overclaims.
+Reading-order verification does not really exercise the ROADMAP risk. The only real-fixture assertions are two checks on `sample_en.pdf` page 1 in `tests/integration/test_real_reading_order.py:28-56`. There is no Korean reading-order assertion, no mixed-document assertion, and no real multi-column fixture assertion.
+
+The rotated-page check is accurately caveated in the verify report, but its name overclaims. `tests/integration/test_rotated_page.py:29-36` verifies rotation metadata and PNG dimensions, not that text bboxes map to rotated pixels.
 
 ## 3. Score audit
 
-독창성 / 15: 13/15 is slightly high. `_fitz.py` isolation and the simplified reading-order fallback are pragmatic, but the fallback is still a narrow heuristic and the real-layout proof is thin. Suggested score: 12/15.
+독창성 / 15: `12 / 15` is justified. `_fitz.py` isolation and per-page render metadata are useful, while `src/ht_lens/extract/reading_order.py:34-53` is intentionally simple. I would confirm 12/15.
 
-완결성 / 35: 33/35 is not justified. CI is not green, real module CLI invocation is untested despite being the stated deliverable, and “human-reasonable” block ordering is backed mostly by snapshots plus one English-page assertion. Suggested score: 30/35.
+완결성 / 35: `31 / 35` is high. The minimal DoD is mostly covered, but CI is unverified, installed `ht-lens` is not subprocess-tested, current coverage contradicts the `__main__.py` claim, and the phase plan still promises 1-3 column detection at `.claude/phases/phase-1/plan.md:13` while actual code does not implement it. Suggested: 28/35.
 
-안정성 / 30: 29/30 is too high. Error scenarios are solid in `tests/integration/test_cli_errors.py:40-94`, but the promised close-on-exception coverage from `.claude/phases/phase-1/challenge.md` is absent, `src/ht_lens/extract/__main__.py` is uncovered, and CJK ToUnicode remains untested. Suggested score: 27/30.
+안정성 / 30: `28 / 30` is optimistic. Error tests cover several paths, but corrupted/encrypted inputs create output directories before failing because `extract_pdf()` creates `pages/` and `images/` before `open_pdf()` at `src/ht_lens/extract/pipeline.py:126-135`; tests only assert exit code in `tests/integration/test_cli_errors.py:68-81`. The coverage report also leaves `__main__.py` and fallback branches unmeasured. Suggested: 26/30.
 
-확장성 / 20: 19/20 is a little generous. Render metadata helps Phase 4, but rotation bbox normalization is deferred to the viewer, and `src/ht_lens/extract/language.py:18-19` is explicitly tuned to the current mixed fixture. Suggested score: 18/20.
+확장성 / 20: `18 / 20` is generous. The schema helps Phase 4, but rotation bbox mapping is delegated, reading-order is not column-aware, and `_MIXED_RATIO = 0.20` is explicitly fixture-tuned in `src/ht_lens/extract/language.py:18-19` despite the plan saying 30% at `.claude/phases/phase-1/plan.md:117-120`. Suggested: 16/20.
 
-Fair score: 87/100.
+Fair score: 84/100.
 
 ## 4. Issues missed
 
-`test_open_pdf_close_on_exception` was promised in `.claude/phases/phase-1/challenge.md`, but no such test exists; `rg` only finds `open_pdf` usage in source. `_fitz.is_closed()` exists at `src/ht_lens/extract/_fitz.py:83-84` but is unused by tests, so resource cleanup on caller exceptions is assumed rather than locked.
+The coverage claim for `__main__.py` is wrong. Subprocess tests validate behavior, but without subprocess coverage support, the current coverage report still shows `src/ht_lens/extract/__main__.py` at 0%. This should be corrected in verify rather than presented as 60%.
 
-The reading-order fallback only triggers on vertical regressions: `src/ht_lens/extract/reading_order.py:23-40`. A two-column page emitted in monotonic row-major order would pass through unchanged, even if column-major reading order is desired. Current real-fixture tests do not cover that case.
+The phase plan is stale relative to implementation. It still lists “Reading order (1~3컬럼 자동 감지)” and x-clustering in `.claude/phases/phase-1/plan.md:13` and `.claude/phases/phase-1/plan.md:96-103`, but `src/ht_lens/extract/reading_order.py:42-53` only separates page-spanning blocks and sorts the rest by `(y, x)`.
 
-Language detection deviates from the plan without much justification. The plan described 30% page disagreement for mixed detection, but the implementation uses `_MIXED_RATIO = 0.20` and comments that it is tuned on `sample_mixed` in `src/ht_lens/extract/language.py:18-19`. That is hidden fixture coupling.
+The reading-order unit test is weaker than its name. `tests/unit/test_reading_order.py:23-35` expects left-column then right-column output, but the fixture is constructed with y-values that make a plain `(y, x)` sort pass. It does not prove actual column grouping.
 
-The CLI deliverable is under-tested. `src/ht_lens/extract/__main__.py:13-14` is the user-facing `python -m ht_lens.extract` path, but the tests never invoke it. This is exactly the command named in ROADMAP Phase 1.
+Failure cleanup is under-specified. For encrypted/corrupted PDFs, `extract_pdf()` creates output directories before parsing at `src/ht_lens/extract/pipeline.py:126-135`; a failed run can leave a non-empty output dir that blocks retry without `--overwrite`. Existing tests do not assert output cleanliness.
 
-Header typing is semantically loose. `src/ht_lens/extract/blocks.py:108-113` relies on size, line count, and length, which still tags vertical arXiv metadata as `header` in `docs/phases/phase-1/samples.md:16`. That may be acceptable for Phase 1, but verify should not present header over-classification as solved.
+Vertical text is still semantically loose. The arXiv side stamp is classified as `header` in `docs/phases/phase-1/samples.md:16`; `group_page()` ignores `RawLine.direction` even though `_fitz.py` exposes it at `src/ht_lens/extract/_fitz.py:126-133`.
 
 ## 5. Verdict
 
-**DOWNGRADE** — The implementation is broadly functional and the RE-CODE addressed several prior defects, especially removing `save_images`, avoiding repo-writing tests, and adding real fixture checks. But the self-verification still overclaims: CI is not verified, the exact module CLI deliverable is untested, rotated bbox behavior is not actually validated, and real reading-order coverage is narrow. I would score this at about 87/100 and recommend targeted re-code before treating Phase 1 as pass-candidate quality.
+**DOWNGRADE** — The implementation appears broadly sufficient for a Phase 1 extractor, and the v3 report honestly lowered its own score. But the automated evidence has a concrete contradiction around `__main__.py` coverage, CI is still unverified, the installed console command is not truly exercised, and reading-order proof remains much narrower than the plan implies. I would score this around 84/100: not a full reject, but not strong enough to accept the 89 without targeted corrections or a clearer “known limitations” update to the plan/verify artifacts.

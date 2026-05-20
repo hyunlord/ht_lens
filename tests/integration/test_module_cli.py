@@ -46,3 +46,23 @@ def test_python_m_ht_lens_extract_returns_2_on_existing_dir(tmp_path: Path) -> N
     assert "output directory not empty" in proc.stderr
     # External file must survive.
     assert (out / "stash.txt").read_text() == "hi"
+
+
+def test_ht_lens_console_script_extract(tmp_path: Path) -> None:
+    """The installed ``ht-lens`` console script declared in pyproject.toml."""
+    script = REPO / ".venv" / "bin" / "ht-lens"
+    if not script.exists():
+        # uv venv may use a different layout — skip explicitly.
+        import pytest
+
+        pytest.skip(f"ht-lens entry script not found at {script}")
+    out = tmp_path / "out"
+    proc = subprocess.run(
+        [str(script), "extract", str(FIXTURES / "sample_en.pdf"), "-o", str(out)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "ok: pages=8 lang=en" in proc.stdout
+    assert (out / "doc_meta.json").exists()

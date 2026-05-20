@@ -123,16 +123,21 @@ def extract_pdf(
     if not pdf_path.exists() or not pdf_path.is_file():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
 
+    # Validate the output directory before doing anything else (so an
+    # empty-dir error doesn't depend on PDF validity), but defer creating
+    # ``pages/`` / ``images/`` until after the PDF opens successfully so a
+    # corrupted or encrypted PDF does not leave behind directories that
+    # would block a no-flag retry.
     _ensure_out_dir(out_dir, overwrite=overwrite)
-    pages_dir = out_dir / "pages"
-    pages_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "images").mkdir(parents=True, exist_ok=True)
 
     sha256 = _sha256_file(pdf_path)
     page_langs: list[LangGuess] = []
     page_block_counts: list[int] = []
 
     with open_pdf(pdf_path) as doc:
+        pages_dir = out_dir / "pages"
+        pages_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "images").mkdir(parents=True, exist_ok=True)
         for raw in iter_pages(doc):
             page_idx = raw.page_num - 1
             png_path = pages_dir / f"page_{raw.page_num:04d}.png"

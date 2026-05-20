@@ -71,6 +71,9 @@ def test_encrypted_pdf_exit_code_2(tmp_path: Path) -> None:
     out = tmp_path / "out"
     code = _run([str(pdf), "-o", str(out)])
     assert code == 2
+    # Failure must not leave pages/ behind to block a retry without --overwrite.
+    assert not (out / "pages").exists()
+    assert not (out / "images").exists()
 
 
 def test_corrupted_pdf_exit_code_3(tmp_path: Path) -> None:
@@ -79,6 +82,8 @@ def test_corrupted_pdf_exit_code_3(tmp_path: Path) -> None:
     out = tmp_path / "out"
     code = _run([str(pdf), "-o", str(out)])
     assert code == 3
+    assert not (out / "pages").exists()
+    assert not (out / "images").exists()
 
 
 def test_scanned_page_writes_empty_blocks_json(tmp_path: Path) -> None:

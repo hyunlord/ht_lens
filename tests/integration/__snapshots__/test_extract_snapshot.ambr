@@ -73,7 +73,7 @@
             'id': 'p1_b005',
             'order': 5,
             'text': 'arXiv:2503.09642v2  [cs.GR]  23 Mar 2025',
-            'type': 'header',
+            'type': 'text',
           }),
           dict({
             'bbox': list([
@@ -16203,7 +16203,7 @@
             'id': 'p1_b005',
             'order': 5,
             'text': 'arXiv:2503.09642v2  [cs.GR]  23 Mar 2025',
-            'type': 'header',
+            'type': 'text',
           }),
           dict({
             'bbox': list([

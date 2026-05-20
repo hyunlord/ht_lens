@@ -40,6 +40,12 @@ def _line_height(line: RawLine) -> float:
     return float(line.bbox[3] - line.bbox[1])
 
 
+def _is_horizontal(line: RawLine) -> bool:
+    """True iff the line's writing direction is closer to horizontal than vertical."""
+    dx, dy = line.direction
+    return abs(dx) >= abs(dy)
+
+
 def _union(boxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
     x0 = min(b[0] for b in boxes)
     y0 = min(b[1] for b in boxes)
@@ -105,8 +111,10 @@ def group_page(page: RawPage) -> list[GroupedBlock]:
             bbox = _union([ln.bbox for ln in para_lines])
             sizes = [_line_size(ln) for ln in para_lines if _line_size(ln) > 0]
             avg_size = median(sizes) if sizes else median_size
+            all_horizontal = all(_is_horizontal(ln) for ln in para_lines)
             is_header = (
-                avg_size >= _HEADER_SIZE_RATIO * median_size
+                all_horizontal
+                and avg_size >= _HEADER_SIZE_RATIO * median_size
                 and avg_size >= _HEADER_MIN_SIZE_PT
                 and len(para_lines) <= _HEADER_MAX_LINES
                 and len(text.replace("\n", "").strip()) >= _HEADER_MIN_CHARS
