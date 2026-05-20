@@ -1,0 +1,112 @@
+"""Translate CLI — Phase 2b.
+
+Standalone: ``python -m ht_lens.translate --doc-id <id>``
+Main app:   ``ht-lens translate --doc-id <id>``
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+import typer
+
+from ht_lens.errors import SchemaVersionMismatch
+
+app = typer.Typer(add_completion=False)
+
+_DEFAULT_DB = Path("data/ht_lens.db")
+
+
+def _db_path_from_env() -> Path:
+    url = os.environ.get("HT_LENS_DB_URL", "")
+    if url.startswith("sqlite+aiosqlite:///"):
+        return Path(url.removeprefix("sqlite+aiosqlite:///"))
+    return _DEFAULT_DB
+
+
+def translate_command(
+    doc_id: int = typer.Option(..., "--doc-id", help="Document ID to translate."),
+    concurrency: int = typer.Option(5, "--concurrency", min=1, max=50),
+    max_retries: int = typer.Option(3, "--max-retries", min=0),
+    retry_failed: bool = typer.Option(
+        False,
+        "--retry-failed/--no-retry-failed",
+        help="Re-translate blocks with status='failed'.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run/--no-dry-run",
+        help="Estimate cache stats without calling LLM.",
+    ),
+    db: Path | None = typer.Option(  # noqa: B008
+        None, "--db", resolve_path=True, help="SQLite DB path."
+    ),
+) -> None:
+    """Translate all text/header blocks for a document."""
+    from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.llm.factory import from_env
+    from ht_lens.translate.pipeline import translate_document
+
+    db_path = db if db is not None else _db_path_from_env()
+    llm = from_env()
+
+    async def _run() -> None:
+        engine = make_engine(db_path)
+        factory = make_session_factory(engine)
+        try:
+            async with factory() as session:
+                stats = await translate_document(
+                    doc_id,
+                    session,
+                    llm,
+                    concurrency=concurrency,
+                    max_retries=max_retries,
+                    retry_failed=retry_failed,
+                    dry_run=dry_run,
+                )
+            if dry_run:
+                total = stats.translated + stats.cached
+                typer.echo(
+                    f"dry_run: doc_id={stats.document_id} "
+                    f"total={total} cache_hits={stats.cached} "
+                    f"estimated_llm_calls={stats.translated}"
+                )
+            else:
+                typer.echo(
+                    f"ok: doc_id={stats.document_id} "
+                    f"translated={stats.translated} cached={stats.cached} "
+                    f"skipped={stats.skipped} failed={stats.failed}"
+                )
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_run())
+    except SchemaVersionMismatch as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    except ValueError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except Exception as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+# Register in standalone app
+app.command()(translate_command)
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        app(argv if argv is not None else sys.argv[1:], standalone_mode=True)
+    except SystemExit as exc:
+        if isinstance(exc.code, int):
+            return exc.code
+        if exc.code is None:
+            return 0
+        return 1
+    return 0

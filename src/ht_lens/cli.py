@@ -19,6 +19,7 @@ from ht_lens.errors import (
     SchemaVersionMismatch,
 )
 from ht_lens.extract.pipeline import extract_pdf
+from ht_lens.translate.cli import translate_command
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -30,6 +31,9 @@ def _db_path_from_env() -> Path:
     if url.startswith("sqlite+aiosqlite:///"):
         return Path(url.removeprefix("sqlite+aiosqlite:///"))
     return _DEFAULT_DB
+
+
+app.command("translate")(translate_command)
 
 
 @app.callback()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -75,3 +76,15 @@ async def async_session_factory(
         yield factory
     finally:
         await engine.dispose()
+
+
+@pytest.fixture
+def live_llm_client() -> LLMClient:
+    """Real OpenAICompatibleClient — skip if LLM_BASE_URL / LLM_MODEL not set."""
+    from ht_lens.llm.openai_compat import OpenAICompatibleClient
+
+    base_url = os.environ.get("LLM_BASE_URL")
+    model = os.environ.get("LLM_MODEL")
+    if not base_url or not model:
+        pytest.skip("LLM_BASE_URL / LLM_MODEL not set — skipping live LLM test")
+    return OpenAICompatibleClient(base_url=base_url, model=model)

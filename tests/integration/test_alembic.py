@@ -96,3 +96,53 @@ async def test_current_schema_version_returns_none_for_fresh_engine(tmp_path: Pa
         assert version is None
     finally:
         await engine.dispose()
+
+
+def test_upgrade_0001_to_0002_preserves_existing_documents(tmp_path: Path) -> None:
+    """Upgrade from 0001 to 0002 keeps existing rows intact."""
+    import asyncio
+
+    from sqlalchemy import text as sa_text
+
+    db_path = tmp_path / "upgrade_test.db"
+
+    # Upgrade to 0001 first
+    proc = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0001"],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        env={**__import__("os").environ, "HT_LENS_DB_URL": f"sqlite+aiosqlite:///{db_path}"},
+    )
+    assert proc.returncode == 0, (proc.stderr,)
+
+    # Insert a document at schema 0001
+    async def _insert() -> None:
+        engine = make_engine(db_path)
+        async with engine.begin() as conn:
+            await conn.execute(
+                sa_text(
+                    "INSERT INTO documents (filename, src_lang, tgt_lang, status, created_at) "
+                    "VALUES ('test.pdf', 'en', 'ko', 'ready', '2026-01-01 00:00:00')"
+                )
+            )
+        await engine.dispose()
+
+    asyncio.run(_insert())
+
+    # Upgrade to head (0002)
+    proc2 = _run_alembic_upgrade(db_path)
+    assert proc2.returncode == 0, (proc2.stderr,)
+
+    # Verify document survived and new columns exist with NULL values
+    async def _check() -> None:
+        engine = make_engine(db_path)
+        async with engine.begin() as conn:
+            rows = await conn.execute(sa_text("SELECT filename, src_pdf_sha256 FROM documents"))
+            result = rows.fetchall()
+            assert len(result) == 1
+            assert result[0][0] == "test.pdf"
+            assert result[0][1] is None  # new nullable column defaults to NULL
+        await engine.dispose()
+
+    asyncio.run(_check())

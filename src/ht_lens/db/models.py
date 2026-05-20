@@ -28,6 +28,7 @@ class Document(Base):
     tgt_lang: Mapped[str]
     status: Mapped[str]
     created_at: Mapped[datetime]
+    src_pdf_sha256: Mapped[str | None]
 
     pages: Mapped[list[Page]] = relationship(
         back_populates="document",
@@ -97,6 +98,7 @@ class Translation(Base):
     )
     translated_text: Mapped[str]
     model: Mapped[str]
+    cache_key: Mapped[str | None]
     status: Mapped[str]
     updated_at: Mapped[datetime]
 

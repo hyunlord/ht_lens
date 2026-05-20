@@ -94,6 +94,7 @@ async def ingest_extract_dir(
             tgt_lang=tgt,
             status="ready_for_translation",
             created_at=datetime.now(UTC),
+            src_pdf_sha256=doc_meta.src_pdf_sha256,
         )
         session.add(document)
         await session.flush()

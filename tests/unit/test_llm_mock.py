@@ -67,6 +67,16 @@ def test_from_env_returns_mock_when_set(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_from_env_raises_for_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LLM_PROVIDER", "openai_compat")
-    with pytest.raises(NotImplementedError, match="openai_compat"):
+    monkeypatch.setenv("LLM_PROVIDER", "nonexistent_provider")
+    with pytest.raises(NotImplementedError, match="nonexistent_provider"):
         from_env()
+
+
+def test_from_env_returns_openai_compat_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ht_lens.llm.openai_compat import OpenAICompatibleClient
+
+    monkeypatch.setenv("LLM_PROVIDER", "openai_compat")
+    monkeypatch.setenv("LLM_BASE_URL", "http://localhost:8000/v1")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    client = from_env()
+    assert isinstance(client, OpenAICompatibleClient)
