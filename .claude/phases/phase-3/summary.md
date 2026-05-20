@@ -2,14 +2,15 @@
 
 ## Status
 
-**PASS_CANDIDATE** (Worker self), **DOWNGRADE** (Codex Round 2).
-Workflow Stage 5c 라운드 상한(2회) 도달. **Push 보류 → Planner escalate**.
+**PASS_CANDIDATE** (Planner-directed fix applied). Workflow Stage 5c Round 2 상한 도달 + Planner가 직접 R2 신규 결함 1건 fix 지시. **Push는 Planner가 직접** (Planner-directed fix 정책). cross-verify 재호출 금지.
 
 ## Score
 
+- **Self (v3, post Planner-directed fix)**: 97 / 100
 - **Self (v2, RE-CODE 후)**: 95 / 100
 - **Cross R1**: DOWNGRADE → 제안 88/100 (self 98이 실제 결함 대비 과대)
 - **Cross R2**: DOWNGRADE → 제안 93/100 (RE-CODE 후 R1 substantive 결함은 해소, 그러나 새 결함 1건 + verify 표현 부정확)
+- **Post-Planner-fix**: `table` Literal 추가 + 회귀 테스트 1건 → R2 substantive 결함 해소. R2 cosmetic 5건은 Phase 4 entry에서 흡수 (아래 섹션 참조).
 
 ## What was built
 
@@ -122,36 +123,51 @@ Phase 2 영향:
 - **verify_api.sh의 first-doc 가정**: 합리적 비판. 멀티 다큐먼트 DB에서 첫 다큐가 image-only면 fail. 단일 사용자 도구 + 일반적 사용 패턴(한 번에 한 다큐 처리)에서 실제 발생 가능성은 낮음.
 - 결론: R2 critique은 valid points이나 모두 cosmetic/forward-proof 영역. Round 0 debate / R1의 substantive 결함은 모두 해소됨.
 
-## Known issues / debt (Phase 5+ 또는 즉시 Planner fix 대상)
+## Planner-directed fix applied (post R2)
 
-1. **`BlockRead.type` Literal에 `table` 미포함** (R2 신규 지적): 현재 Phase 1 extract는 table block을 생성하지 않으나 ROADMAP schema는 정의함. 1줄 수정 권장.
-2. **`/messages` 후속 응답 language 검증 부재** (R2 지적): live test에서 length만 검사.
-3. **`verify_api.sh`가 첫 document만 스캔**: 멀티 doc DB일 때 image-only first doc fail 가능.
-4. **GET /threads/{id} (전체 detail), GET /threads (목록), /static**이 live verify_api.sh에 미포함 (integration test로는 커버).
-5. **concurrent same-thread writes**: 인터리브 가능 (단일 사용자 가정).
-6. **±2 block 페이지 경계 cross 안 함**: 페이지 첫/마지막 block의 컨텍스트 품질 저하. Phase 5에서 thread-anchored context로 보강.
-7. **`DocumentRead.status`는 str 유지**: 향후 phase에서 상태 확장 예정.
-8. **uvicorn `--reload`는 lifespan 매번 실행** — `--skip-llm-check` 권장.
+Planner 지시로 R2 신규 결함 1건만 fix + 회귀 테스트 1건. cross-verify 재호출 금지 (round-cap 도달 + Planner 명시 지시).
+
+- 커밋 `9c4363f`: `fix(phase-3): BlockRead.type include table (roadmap §schema alignment)`
+  - `src/ht_lens/api/schemas.py:18` `Literal["text","image","header"]` → `Literal["text","image","header","table"]` (1 line)
+- 커밋 `0ab906f`: `test(phase-3): regression test for table block type in api response`
+  - `tests/integration/test_api_pages.py::test_get_page_serializes_table_block_type` — DB Block.type을 `"table"`로 강제 update 후 API 응답 200 + `blocks[..].type == "table"` 검증.
+
+결과: 197 fast tests + `make check` RC=0 + mypy strict + ruff clean. self score 95 → 97.
+
+Phase 1 `extract/blocks.py:GroupedType`은 그대로 3 values (Phase 1 ingest는 아직 table 미생성, 의도된 격리). API 응답 schema만 ROADMAP §schema의 superset과 일치.
+
+## Known issues / debt (Phase 5+)
+
+1. **concurrent same-thread writes**: 인터리브 가능 (단일 사용자 가정).
+2. **±2 block 페이지 경계 cross 안 함**: 페이지 첫/마지막 block의 컨텍스트 품질 저하. Phase 5에서 thread-anchored context로 보강.
+3. **`DocumentRead.status`는 str 유지**: 향후 phase에서 상태 확장 예정.
+4. **uvicorn `--reload`는 lifespan 매번 실행** — `--skip-llm-check` 권장.
+5. **`GET /threads/{id}/messages` pagination 없음**: Phase 5에서.
+
+## Known issues / debt — R2 cosmetic findings (Phase 4 entry에서 흡수)
+
+- verify v2의 CI row 표현이 부정확 ("GitHub Actions 없음" → 실제 .github/workflows/ci.yml 존재)
+- ruff format --check file count 38 vs 89 불일치
+- test_api_live_llm의 /messages language assertion (Hangul) 누락
+- verify_api.sh가 first-doc만 검사 (multi-doc 시나리오 미커버)
+- shellcheck 통과 주장에 실행 evidence 부재
 
 ## Push status
 
-**보류** (Planner escalate). 사유:
-- R2 cross-verify가 DOWNGRADE (제안 93/100, threshold 95+)
-- Workflow Stage 6 push 정책: "Round 2 disagreement → push 보류, Planner escalate"
-- Worker 입장은 R2 critique이 substantive 결함보다는 cosmetic + 1건 forward-proof issue임을 주장. Planner가 다음 중 택일:
-  - (a) 1줄 fix (table Literal 추가) + verify v3 + push (Planner-directed fix)
-  - (b) R2 critique을 수용하여 추가 RE-CODE (workflow 상 round-cap을 어기는 결정이 됨)
-  - (c) Worker self-score를 신뢰하여 push 승인
-- 현재 local main이 `origin/main` 대비 11 commits ahead. `git push` 전까지 작업 보존.
+**보류 (Planner가 직접 push)**. 사유:
+- Planner-directed fix 정책: fix 적용 후에도 Worker는 push하지 않음. Planner가 검토 후 직접 push.
+- cross-verify 재호출 금지 (Round 2 상한 + Planner 명시 지시).
+- 현재 local main이 `origin/main` 대비 14 commits ahead. `git push` 전까지 작업 보존.
 
 ## Recommended next
 
-- **Planner 결정 후**:
-  - 옵션 (a) 선택 시: `schemas.py:23` `Literal["text","image","header"]` → `Literal["text","image","header","table"]`로 수정 (Phase 1의 `extract/models.py:BlockType`도 함께 검토; 현재 phase 1은 3개), `tests/integration/test_api_chat_context.py`에 table block 시드 + serialization 통과 테스트 1건 추가, verify v3 작성, push.
-  - 옵션 (c) 선택 시: 그대로 push.
+- **Phase 4 시작 시 R2 cosmetic 5건을 첫 minor task로 처리**:
+  - verify.md 표 표현 정확화 가이드 (테스트 출력 verbatim 인용)
+  - test_api_live_llm `/messages` 응답에 Hangul assertion 1줄 추가
+  - `verify_api.sh`에 `DOC_ID` env (multi-doc 대응)
+  - shellcheck 호출 evidence를 verify 산출물에 포함
 - **Phase 4 진입 전 권장**:
-  - `verify_api.sh`를 환경변수 `DOC_ID`로 지정 가능하게 (multi-doc DB 대응)
-  - Phase 4 viewer 작업 시 `/static/` HTML/JS drop-in.
+  - `/static/` HTML/JS drop-in 시 CORS + cache header 검토
 - **Phase 5 (chat panel + pin)에서 다룰 항목**:
   - `GET /threads/{id}/messages` pagination
   - concurrent thread writes 정렬 보장 (per-thread lock)
