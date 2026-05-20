@@ -12,6 +12,9 @@ dependencies = [
   "pymupdf>=1.24,<1.26",
   "pillow>=10",
   "langdetect>=1.0",
+  "sqlalchemy[asyncio]>=2.0,<3",
+  "aiosqlite>=0.20",
+  "alembic>=1.13",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +50,13 @@ strict = true
 python_version = "3.11"
 mypy_path = "src"
 packages = ["ht_lens"]
+
+[[tool.mypy.overrides]]
+module = "ht_lens.db.migrations.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = false
+warn_return_any = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
