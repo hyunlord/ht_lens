@@ -233,8 +233,21 @@ Codex 출력 verdict:
 
 작성 후:
 1. `git add . && git commit -m "feat(phase-N): <one-liner>"`
-2. `git push` (별도 지시 없으면)
+2. **Push 정책** (아래 표 참조)
 3. 작업 중지, summary 내용을 Human에게 보고
+
+#### Push 정책 (Phase 2b 사후 도입)
+
+| 상황                                                | Worker push? |
+| --------------------------------------------------- | ------------ |
+| self ≥ 95 + cross CONFIRM_PASS (Round 1)            | **YES**      |
+| self ≥ 95 + cross CONFIRM_PASS (Round 2)            | **YES**      |
+| Round 2에서 cross-verify DOWNGRADE/REJECT          | **NO** (Planner escalate) |
+| Planner-directed targeted fix 직후                  | **NO** (Planner가 직접 push) |
+| self < 95                                           | **NO** (RE-CODE 또는 escalate) |
+
+Worker가 push한 경우 `summary.md`에 명시 (예: "pushed to origin/main at <commit>").
+Planner 검토가 필요한 경우 (Round 2 REJECT, targeted fix 등) push 보류 + 보고만.
 
 ---
 
