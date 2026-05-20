@@ -93,7 +93,7 @@ messages      (id, thread_id, role, content, model, created_at)
 
 ---
 
-### Phase 2a — DB + LLMClient + Ingest ⬜
+### Phase 2a — DB + LLMClient + Ingest ✅
 **Deliverable**
 - SQLite + SQLAlchemy 2.0 async + Alembic migration
 - `LLMClient` Protocol + `MockLLMClient` (실제 LLM 호출 0건)
@@ -116,6 +116,12 @@ messages      (id, thread_id, role, content, model, created_at)
 - 실제 LLM 호출 (Phase 2b)
 - 캐시 (Phase 2b)
 - 번역 파이프라인 (Phase 2b)
+
+**완료 노트**
+- 89/100 self-score, cross-verify Round 2 DOWNGRADE → Planner PASS
+- 97 tests pass (unit + integration), mypy strict 0 위반
+- Known debt: `documents.src_pdf_sha256` 미저장 → Phase 2b에서 migration 0002로 추가, `translations.cache_key` 컬럼도 같이 추가
+- Round 2 상한이 의도대로 작동 (Phase 1의 4라운드 → 2라운드 종결)
 
 ---
 
