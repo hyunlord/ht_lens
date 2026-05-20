@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ht_lens.db.models import Block, Document, Page
+from ht_lens.db.models import Block, Document, Message, Page, Thread, Translation
 from ht_lens.db.session import ALEMBIC_HEAD, current_schema_version
 from ht_lens.errors import (
     DocumentAlreadyIngested,
@@ -71,6 +71,14 @@ async def ingest_extract_dir(
         if existing is not None:
             # Bulk DML bypasses ORM cascade, so delete bottom-up to satisfy FK constraints.
             # Same transaction — downstream failure rolls back all deletes.
+            # Full cascade order: messages→threads/translations→blocks→pages→document
+            block_ids = select(Block.id).where(
+                Block.page_id.in_(select(Page.id).where(Page.doc_id == existing.id))
+            )
+            thread_ids = select(Thread.id).where(Thread.block_id.in_(block_ids))
+            await session.execute(delete(Message).where(Message.thread_id.in_(thread_ids)))
+            await session.execute(delete(Thread).where(Thread.block_id.in_(block_ids)))
+            await session.execute(delete(Translation).where(Translation.block_id.in_(block_ids)))
             await session.execute(
                 delete(Block).where(
                     Block.page_id.in_(select(Page.id).where(Page.doc_id == existing.id))
@@ -159,7 +167,7 @@ def _resolve_src_lang(doc_meta: DocMeta, src_override: str | None) -> str:
     if doc_meta.lang_guess in ("en", "ko"):
         return doc_meta.lang_guess
     raise IngestError(
-        f"source language ambiguous (lang_guess={doc_meta.lang_guess!r}); " "pass --src explicitly"
+        f"source language ambiguous (lang_guess={doc_meta.lang_guess!r}); pass --src explicitly"
     )
 
 
@@ -195,10 +203,17 @@ def _discover_page_files(extract_dir: Path, doc_meta: DocMeta) -> list[Path]:
 def _load_page_docs(page_files: list[Path]) -> list[PageDoc]:
     docs: list[PageDoc] = []
     for path in page_files:
+        m = PAGE_FILENAME_RE.match(path.name)
+        expected_num = int(m.group(1)) if m else None  # m is always non-None here
         try:
             doc = PageDoc.model_validate_json(path.read_text(encoding="utf-8"))
         except ValidationError as exc:
             raise IngestError(f"{path.name}: invalid page JSON: {exc}") from exc
+        if expected_num is not None and doc.page_num != expected_num:
+            raise IngestError(
+                f"{path.name}: page_num mismatch "
+                f"(filename says {expected_num}, JSON says {doc.page_num})"
+            )
         docs.append(doc)
     return docs
 

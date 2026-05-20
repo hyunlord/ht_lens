@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ht_lens.db.base import Base
+from ht_lens.db.models import Message, Thread, Translation
 from ht_lens.db.session import ALEMBIC_HEAD, make_engine, make_session_factory
 from ht_lens.errors import DocumentAlreadyIngested, IngestError, SchemaVersionMismatch
 from ht_lens.ingest.pipeline import ingest_extract_dir
@@ -210,6 +211,59 @@ async def test_overwrite_false_raises_on_duplicate(
             await ingest_extract_dir(extract_dir, session, src="en", overwrite=False)
 
 
+@pytest.mark.asyncio
+async def test_overwrite_with_seeded_downstream_rows(
+    tmp_path: Path, db_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Overwrite must cascade through translations/threads/messages without FK error."""
+    from datetime import UTC, datetime
+
+    extract_dir = _make_extract_dir(tmp_path, num_pages=1, blocks_per_page=1)
+
+    async with db_factory() as session:
+        await ingest_extract_dir(extract_dir, session, src="en")
+        await session.commit()
+
+    # Seed downstream rows for the block just created.
+    async with db_factory() as session:
+        block = (await session.execute(text("SELECT id FROM blocks LIMIT 1"))).scalar_one()
+        session.add(
+            Translation(
+                block_id=block,
+                translated_text="translated",
+                model="mock",
+                status="done",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        thread = Thread(block_id=block, title="t", created_at=datetime.now(UTC))
+        session.add(thread)
+        await session.flush()
+        session.add(
+            Message(
+                thread_id=thread.id,
+                role="user",
+                content="hi",
+                model=None,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    # Overwrite must not raise IntegrityError despite downstream rows existing.
+    async with db_factory() as session:
+        await ingest_extract_dir(extract_dir, session, src="en", overwrite=True)
+        await session.commit()
+
+    async with db_factory() as session:
+        doc_count = (await session.execute(text("SELECT COUNT(*) FROM documents"))).scalar()
+        trans_count = (await session.execute(text("SELECT COUNT(*) FROM translations"))).scalar()
+        msg_count = (await session.execute(text("SELECT COUNT(*) FROM messages"))).scalar()
+    assert doc_count == 1
+    assert trans_count == 0
+    assert msg_count == 0
+
+
 # ---------------------------------------------------------------------------
 # Language resolution
 # ---------------------------------------------------------------------------
@@ -323,3 +377,19 @@ async def test_nonexistent_extract_dir_raises(
     with pytest.raises(IngestError, match="not found"):
         async with db_factory() as session:
             await ingest_extract_dir(missing, session, src="en")
+
+
+@pytest.mark.asyncio
+async def test_page_num_mismatch_between_filename_and_json_raises(
+    tmp_path: Path, db_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """page_0001.json containing page_num=2 must be rejected."""
+    extract_dir = _make_extract_dir(tmp_path, num_pages=1)
+    page_json = extract_dir / "pages" / "page_0001.json"
+    data = json.loads(page_json.read_text())
+    data["page_num"] = 2  # corrupt: filename says 1, JSON says 2
+    page_json.write_text(json.dumps(data))
+
+    with pytest.raises(IngestError, match="page_num mismatch"):
+        async with db_factory() as session:
+            await ingest_extract_dir(extract_dir, session, src="en")
