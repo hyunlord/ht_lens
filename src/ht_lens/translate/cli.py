@@ -55,8 +55,10 @@ def translate_command(
     llm = from_env()
 
     async def _run() -> None:
-        # Verify endpoint health before starting (reasoning_tokens == 0 regression guard).
-        await llm.health_check()
+        if not dry_run:
+            # Verify endpoint health before starting (reasoning_tokens == 0 regression guard).
+            # Skipped in dry-run so offline cache-estimation works without a live endpoint.
+            await llm.health_check()
 
         engine = make_engine(db_path)
         factory = make_session_factory(engine)
@@ -99,7 +101,7 @@ def translate_command(
         raise
     except LLMHealthCheckFailed as exc:
         typer.echo(f"error: health_check failed: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
+        raise typer.Exit(code=4) from exc
     except SchemaVersionMismatch as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=3) from exc
