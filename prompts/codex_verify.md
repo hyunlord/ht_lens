@@ -49,13 +49,14 @@ For each category:
 
 ## 4. Issues missed (new this round)
 What problems do you see in the code or design that they did not surface? Inspect actual files. Look for:
+- **Regressions introduced by RE-CODE**: if this is Round 2+, check whether the RE-CODE fixed Round 1 issues without breaking previously working code. Examples: a CLI flag stopped working, an error path now masks earlier behavior, a previously-tested branch is no longer reachable. **This is your top priority in Round 2+.**
 - Untested error paths
 - Type annotations that are technically valid but semantically loose
 - DoD items glossed over
 - Code smells that block future phases
 - Hidden coupling to assumptions
 
-If this is Round 2+, focus this section on **new issues that emerged since RE-CODE**.
+If this is Round 2+, focus this section on **regressions and new issues that emerged since RE-CODE**, not on re-arguing Round 1.
 
 ## 5. Verdict
 One of these three, with one paragraph justification:
