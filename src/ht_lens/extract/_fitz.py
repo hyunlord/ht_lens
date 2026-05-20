@@ -8,7 +8,7 @@ to PyMuPDF types are confined to this file.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, NewType, cast
@@ -76,10 +76,8 @@ def open_pdf(path: Path) -> Iterator[FitzDoc]:
             raise EncryptedPDFError(f"PDF is encrypted: {path}")
         yield cast(FitzDoc, doc)
     finally:
-        try:
+        with suppress(Exception):
             doc.close()
-        except Exception:  # noqa: BLE001 — close must not raise
-            pass
 
 
 def is_closed(doc: FitzDoc) -> bool:
@@ -109,9 +107,7 @@ def iter_pages(doc: FitzDoc) -> Iterator[RawPage]:
             btype = blk.get("type", 0)
             bbox = _as_bbox(blk["bbox"])
             if btype == 1:
-                raw_blocks.append(
-                    RawBlock(bbox=bbox, block_type="image", lines=())
-                )
+                raw_blocks.append(RawBlock(bbox=bbox, block_type="image", lines=()))
                 continue
 
             raw_lines: list[RawLine] = []
@@ -136,9 +132,7 @@ def iter_pages(doc: FitzDoc) -> Iterator[RawPage]:
                         direction=direction,
                     )
                 )
-            raw_blocks.append(
-                RawBlock(bbox=bbox, block_type="text", lines=tuple(raw_lines))
-            )
+            raw_blocks.append(RawBlock(bbox=bbox, block_type="text", lines=tuple(raw_lines)))
 
         yield RawPage(
             page_num=idx + 1,
