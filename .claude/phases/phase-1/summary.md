@@ -1,7 +1,7 @@
 # Phase 1 — Summary
 
 ## Status
-**PASS_CANDIDATE (Worker judgment, NEAR-PASS-WITH-LIMITATIONS)** — DoD 8개 항목 모두 evidence와 함께 만족. WORKFLOW.md 5-C 표에 따라 self<95 + cross-DOWNGRADE는 Worker가 RE-CODE/RE-PLAN/PASS 중 판정. Worker는 추가 사이클이 ROI 음수라고 판정, 최종 PASS는 Planner(web)에게 위임.
+**PASS_CANDIDATE (post Planner-directed v5 RE-CODE, NEAR-PASS-WITH-LIMITATIONS)** — DoD 8개 항목 모두 evidence와 함께 만족. Planner의 좁은 RE-CODE 지시 3건(stale verification 해소 / CLI subprocess 3-fixture 확장 / plan §3 stale 정리) 처리 완료. WORKFLOW.md에 따라 cross-verify는 v5에서 재호출하지 않는다 (Planner가 직접 종결). 최종 PASS 판정은 Planner.
 
 ## Score
 
@@ -10,10 +10,10 @@
 | v1    | 96   | DOWNGRADE     | 88          |
 | v2    | 94   | DOWNGRADE     | 87          |
 | v3    | 89   | DOWNGRADE     | 84          |
-| v4    | 86   | REJECT        | 70          |
-| **v5 (post final RE-CODE)** | (verify v4 본문 유지, 86 기준) | **DOWNGRADE** | **80** |
+| v4    | 86   | REJECT → DOWNGRADE | 70 → 80 |
+| **v5** | **88** | (재호출 없음 — Planner 종결) | — |
 
-Codex 누적 9건의 actionable defect critique 전부 처리. 마지막 라운드의 잔여 deduction은 모두 (a) Phase 1 80% 목표 외부, (b) 본 phase에서 자체 수정 불가능(외부 fixture/CI 의존), (c) 이미 fix 완료된 영역에 대한 재지적 — 무한 iteration 위험.
+Codex 누적 9건 actionable defect + Planner v5 좁은 fix 3건 모두 처리. 잔여 deduction은 외부 의존(CI green push 후 확정) 또는 Phase 4/6 영역.
 
 ## What was built
 
@@ -75,13 +75,14 @@ phase-1 진입 후 변경 = 31 new files / ~3000 LOC.
 
 | Item | 영향 | 추적 |
 | ---- | ---- | ---- |
-| CJK ToUnicode 누락 PDF 미검증 | medium (한국어 PDF 일부에서 텍스트 깨질 수 있음) | Phase 6 fixture 보강 |
-| 진짜 멀티컬럼 본문 fixture 부재 | medium (현 알고리즘이 단순 y0 sort라 진짜 2-column body에서 row-major 출력 가능) | Phase 6 |
-| 회전 페이지 bbox 수학적 매핑 미검증 | medium (PDF rotation ≠ 0인 페이지의 viewer overlay 정확도 불확실) | Phase 4 viewer |
-| sample_ko 표지 URL prefix (`p1_b001 .php?language=ko&…`) | low (Wikipedia 페이지 metadata 텍스트가 본문 앞에 등장) | 데이터 cleanup, Phase 6 |
-| header 분류 정확도 | low (Abstract / 1 Introduction이 본문 폰트와 비슷한 size여서 text로 분류됨, arXiv stamp는 vertical 필터로 text로 잡힘) | Phase 6에서 보강 |
-| language threshold 0.20 fixture-tuned | low (추가 fixture 들어오면 재calibrate) | Phase 6 |
-| CI green 미확정 | low (push 후 GitHub Actions에서 확인) | Human이 push 시 확정 |
+| CJK ToUnicode 누락 PDF 미검증 | medium | Phase 6 fixture 보강 |
+| 진짜 멀티컬럼 본문 fixture 부재 | medium | Phase 6 |
+| 회전 페이지 bbox 수학적 매핑 미검증 (cross-verify v5 재지적) | medium | Phase 4 viewer |
+| sample_ko 표지 URL prefix noise | low | 데이터 cleanup, Phase 6 |
+| `Abstract` / `1 Introduction`이 header가 아닌 text로 분류 (cross-verify v5 신규) | low | Phase 6 header heuristic 보강 |
+| `samples.md` determinism 자동 검증 부재 (cross-verify v5 신규) | low | Phase 6 또는 별도 minor task |
+| language threshold 0.20 fixture-tuned | low | Phase 6 (추가 fixture 확보 후 재calibrate) |
+| CI green 미확정 | low | Human이 push 시 GitHub Actions에서 확정 |
 
 ## Recommended next
 
