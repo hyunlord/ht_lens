@@ -16,7 +16,7 @@ def _block(
 
 def test_single_column_keeps_input_order_when_monotonic() -> None:
     blocks = [_block(f"line {i}", 72, 100 + i * 20, 540, 110 + i * 20) for i in range(5)]
-    ordered = order_blocks(blocks, page_width=PAGE_W)
+    ordered = order_blocks(blocks)
     assert [b.text for b in ordered] == [f"line {i}" for i in range(5)]
 
 
@@ -31,7 +31,7 @@ def test_two_columns_with_y_regression_resorted_left_then_right() -> None:
         _block("L2", 60, 120, 290, 135),  # y regresses again (140 -> 120)
         _block("R2", 310, 150, 540, 165),
     ]
-    ordered = order_blocks(blocks, page_width=PAGE_W)
+    ordered = order_blocks(blocks)
     assert [b.text for b in ordered] == ["L0", "L1", "L2", "R0", "R1", "R2"]
 
 
@@ -44,7 +44,7 @@ def test_spanning_header_pulled_above_columns() -> None:
         _block("R1", 310, 140, 540, 155),
         header,  # final block forces another regression
     ]
-    ordered = order_blocks(blocks, page_width=PAGE_W)
+    ordered = order_blocks(blocks)
     assert ordered[0].text == "HEADER"
     assert [b.text for b in ordered[1:]] == ["L0", "L1", "R0", "R1"]
 
@@ -54,13 +54,13 @@ def test_indented_bullets_do_not_create_separate_columns() -> None:
     body = [_block(f"para {i}", 72, 100 + i * 20, 540, 115 + i * 20) for i in range(3)]
     bullets = [_block("- bullet 0", 100, 160 + i * 20, 540, 175 + i * 20) for i in range(2)]
     blocks = body + bullets
-    ordered = order_blocks(blocks, page_width=PAGE_W)
+    ordered = order_blocks(blocks)
     # Should remain in y order (single column).
     ys = [b.bbox[1] for b in ordered]
     assert ys == sorted(ys)
 
 
 def test_empty_or_single_block_returns_input() -> None:
-    assert order_blocks([], page_width=PAGE_W) == []
+    assert order_blocks([]) == []
     one = [_block("only", 72, 100, 540, 115)]
-    assert order_blocks(one, page_width=PAGE_W) == one
+    assert order_blocks(one) == one

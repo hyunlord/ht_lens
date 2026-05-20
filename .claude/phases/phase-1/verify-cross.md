@@ -1,51 +1,49 @@
 ## 1. Verification of automated checks
 
-Lint/format/type evidence in `.claude/phases/phase-1/verify.md:17-19` is plausible but not independently proven: it is only summarized terminal output, with no saved log. The commands match CI config in `.github/workflows/ci.yml:27-37`.
+Lint/format/type/test evidence in `.claude/phases/phase-1/verify.md:18-22` is plausible but only summarized, not backed by saved logs. The commands match the workflow requirements in `WORKFLOW.md:130-137` and CI job in `.github/workflows/ci.yml:27-37`.
 
-Test evidence is plausible but thin. The suite does include the claimed new coverage points: subprocess `python -m ht_lens.extract` tests in `tests/integration/test_module_cli.py:20-47` and close-on-exception in `tests/integration/test_fitz_lifecycle.py:20-28`. However, there is no persisted pytest log, and the `ht-lens extract` console script itself is not tested as an installed script; `tests/integration/test_cli_errors.py:15-16` only calls `main(["extract", ...])`.
+Coverage evidence is credible as reported, but weakly gated. `pyproject.toml:51-62` enables pytest-cov and branch coverage, but there is no fail-under threshold; “92% line / 91% branch” is informational unless the phase target is defined elsewhere.
 
-Coverage evidence is internally inconsistent. The current `.coverage` report shows TOTAL 92%, but `src/ht_lens/extract/__main__.py` is still 0% covered, not 60% as claimed in `.claude/phases/phase-1/verify.md:38`. That is expected because `pyproject.toml:51-62` has no subprocess coverage configuration, so subprocess CLI tests prove behavior but do not contribute to coverage.
+CI is not verified. `.claude/phases/phase-1/verify.md:23` says “green expected,” which is explicitly not evidence for the required GitHub Actions green check in `WORKFLOW.md:137`.
 
-CI is not verified. `.claude/phases/phase-1/verify.md:22` says “green expected,” which is not evidence. The workflow exists and runs the right checks, but no green run is shown.
+Dependency and fitz-isolation checks are mostly credible for source: extract deps are `pymupdf`, `pillow`, `langdetect` in `pyproject.toml:12-14`, and the only source `fitz` import is `src/ht_lens/extract/_fitz.py:16`. Test-only `fitz` imports are acceptable.
 
-The dependency and fitz-isolation checks are mostly credible for source code: `src/ht_lens/extract/_fitz.py:16` is the only source `fitz` import, and `pyproject.toml:12-14` has the Phase 1 extract dependencies. The dead `save_images` API is gone from current source, but the plan still mentions it at `.claude/phases/phase-1/plan.md:126-139`.
+The console-script evidence is environment-sensitive. `tests/integration/test_module_cli.py:51-68` does invoke `.venv/bin/ht-lens`, but skips if that exact path is absent at `tests/integration/test_module_cli.py:53-58`; the self-report should note that this check depends on the local uv venv layout.
 
 ## 2. Verification of functional checks
 
-The module CLI deliverable from `ROADMAP.md:78-82` is now functionally exercised: `tests/integration/test_module_cli.py:20-33` invokes `python -m ht_lens.extract` successfully, and `tests/integration/test_module_cli.py:35-47` covers exit 2 on an existing output directory.
+The core `python -m ht_lens.extract` path is exercised, but only on `sample_en.pdf` in subprocess form (`tests/integration/test_module_cli.py:20-33`). The three-sample coverage is through in-process pipeline and snapshots (`tests/integration/test_extract_pipeline.py:33-150`, `tests/integration/test_extract_snapshot.py:25-33`), which is useful but not the same as running the documented CLI on all realistic inputs.
 
-The `ht-lens extract` claim is weaker. `.claude/phases/phase-1/verify.md:57` equates single-process `main()` calls with the console entry point. That tests Typer routing and error mapping, but not the installed script declared in `pyproject.toml:28-29`.
+The DoD item “3종 sample PDF 모두 block JSON이 사람이 봐도 합리적” is not convincingly satisfied. `docs/phases/phase-1/samples.md` exists, but `tests/integration/test_human_review.py:18-39` only checks that the dump format contains every block; it does not validate that the order is reasonable.
 
-The three sample PDFs are exercised through the pipeline for metadata, PNG/JSON pairing, schema, render scale, and snapshots in `tests/integration/test_extract_pipeline.py:26-150` and `tests/integration/test_extract_snapshot.py:25-33`. The human-review artifact exists at `docs/phases/phase-1/samples.md`, but automated “reasonable block JSON” checks remain narrow.
+The committed dump actually exposes reading-order problems. In `sample_ko.pdf` page 5, blocks at y=205/548/674 appear before top-of-page content at y=37/45/113 (`docs/phases/phase-1/samples.md:300-306`). Similar reversals appear on pages 6-8 (`docs/phases/phase-1/samples.md:318-329`, `docs/phases/phase-1/samples.md:335-344`, `docs/phases/phase-1/samples.md:350-360`).
 
-Reading-order verification does not really exercise the ROADMAP risk. The only real-fixture assertions are two checks on `sample_en.pdf` page 1 in `tests/integration/test_real_reading_order.py:28-56`. There is no Korean reading-order assertion, no mixed-document assertion, and no real multi-column fixture assertion.
+Reading-order tests are too narrow for the ROADMAP risk at `ROADMAP.md:89-92`. The only real-fixture assertions inspect `sample_en.pdf` page 1 (`tests/integration/test_real_reading_order.py:20-56`), not Korean pages or pages with image/sidebar layouts where the current output is visibly non-monotonic.
 
-The rotated-page check is accurately caveated in the verify report, but its name overclaims. `tests/integration/test_rotated_page.py:29-36` verifies rotation metadata and PNG dimensions, not that text bboxes map to rotated pixels.
+Rotation checks are honestly caveated in the self-report: `tests/integration/test_rotated_page.py:23-36` verifies metadata and PNG orientation, not bbox-to-rendered-pixel alignment.
 
 ## 3. Score audit
 
-독창성 / 15: `12 / 15` is justified. `_fitz.py` isolation and per-page render metadata are useful, while `src/ht_lens/extract/reading_order.py:34-53` is intentionally simple. I would confirm 12/15.
+독창성 / 15: 12/15 is defensible. `_fitz.py` isolation, line direction propagation, render metadata, and simple fallback are reasonable Phase 1 choices. No further deduction beyond the self-assessed limits.
 
-완결성 / 35: `31 / 35` is high. The minimal DoD is mostly covered, but CI is unverified, installed `ht-lens` is not subprocess-tested, current coverage contradicts the `__main__.py` claim, and the phase plan still promises 1-3 column detection at `.claude/phases/phase-1/plan.md:13` while actual code does not implement it. Suggested: 28/35.
+완결성 / 35: 30/35 is too high. One of the three explicit DoD items is only partially met because the human-review artifact contains obvious Korean reading-order regressions. CI is also unverified, and CLI testing across all three samples is in-process rather than via the promised command. Suggested: 22/35.
 
-안정성 / 30: `28 / 30` is optimistic. Error tests cover several paths, but corrupted/encrypted inputs create output directories before failing because `extract_pdf()` creates `pages/` and `images/` before `open_pdf()` at `src/ht_lens/extract/pipeline.py:126-135`; tests only assert exit code in `tests/integration/test_cli_errors.py:68-81`. The coverage report also leaves `__main__.py` and fallback branches unmeasured. Suggested: 26/30.
+안정성 / 30: 27/30 is optimistic. Error paths are much improved (`tests/integration/test_cli_errors.py:40-99`, `tests/integration/test_fitz_lifecycle.py:20-28`), but the test suite snapshots flawed output and lacks assertions for real fixture ordering beyond one English page. Suggested: 23/30.
 
-확장성 / 20: `18 / 20` is generous. The schema helps Phase 4, but rotation bbox mapping is delegated, reading-order is not column-aware, and `_MIXED_RATIO = 0.20` is explicitly fixture-tuned in `src/ht_lens/extract/language.py:18-19` despite the plan saying 30% at `.claude/phases/phase-1/plan.md:117-120`. Suggested: 16/20.
+확장성 / 20: 17/20 is too generous. Phase 2/4 depend on reliable block order and overlay metadata; `src/ht_lens/extract/reading_order.py:42-53` treats any block wider than 70% of page width as “spanning,” not just headers, which is already misordering Korean pages. The language threshold is also fixture-tuned at `src/ht_lens/extract/language.py:18-19`. Suggested: 13/20.
 
-Fair score: 84/100.
+Fair score: 70/100.
 
 ## 4. Issues missed
 
-The coverage claim for `__main__.py` is wrong. Subprocess tests validate behavior, but without subprocess coverage support, the current coverage report still shows `src/ht_lens/extract/__main__.py` at 0%. This should be corrected in verify rather than presented as 60%.
+The reading-order fallback is the main missed defect. `order_blocks()` splits blocks solely by width (`src/ht_lens/extract/reading_order.py:42-53`), so wide body paragraphs are lifted ahead of narrower top-of-page content, images, captions, and sidebars. This directly explains the bad `sample_ko.pdf` ordering in `docs/phases/phase-1/samples.md:300-312`.
 
-The phase plan is stale relative to implementation. It still lists “Reading order (1~3컬럼 자동 감지)” and x-clustering in `.claude/phases/phase-1/plan.md:13` and `.claude/phases/phase-1/plan.md:96-103`, but `src/ht_lens/extract/reading_order.py:42-53` only separates page-spanning blocks and sorts the rest by `(y, x)`.
+The unit test named `test_two_columns_with_y_regression_resorted_left_then_right` does not prove column-aware ordering. Its fixture y-values make a plain `(y0, x0)` sort produce the expected left-column-first result (`tests/unit/test_reading_order.py:23-35`), so it does not protect the intended semantic behavior.
 
-The reading-order unit test is weaker than its name. `tests/unit/test_reading_order.py:23-35` expects left-column then right-column output, but the fixture is constructed with y-values that make a plain `(y, x)` sort pass. It does not prove actual column grouping.
+The plan remains stale despite the self-report claiming plan staleness was addressed. It still lists 1-3 column detection and image saving as in-scope (`.claude/phases/phase-1/plan.md:13-14`), and still documents `save_images` in the pipeline/CLI sections (`.claude/phases/phase-1/plan.md:121-135`, `.claude/phases/phase-1/plan.md:174-178`) even though the implementation removed it.
 
-Failure cleanup is under-specified. For encrypted/corrupted PDFs, `extract_pdf()` creates output directories before parsing at `src/ht_lens/extract/pipeline.py:126-135`; a failed run can leave a non-empty output dir that blocks retry without `--overwrite`. Existing tests do not assert output cleanliness.
-
-Vertical text is still semantically loose. The arXiv side stamp is classified as `header` in `docs/phases/phase-1/samples.md:16`; `group_page()` ignores `RawLine.direction` even though `_fitz.py` exposes it at `src/ht_lens/extract/_fitz.py:126-133`.
+The self-report frames remaining deductions as outside Phase 1 (`.claude/phases/phase-1/verify.md:129-137`), but the Korean ordering defect is inside the Phase 1 sample fixture DoD, not a Phase 6 stretch issue.
 
 ## 5. Verdict
 
-**DOWNGRADE** — The implementation appears broadly sufficient for a Phase 1 extractor, and the v3 report honestly lowered its own score. But the automated evidence has a concrete contradiction around `__main__.py` coverage, CI is still unverified, the installed console command is not truly exercised, and reading-order proof remains much narrower than the plan implies. I would score this around 84/100: not a full reject, but not strong enough to accept the 89 without targeted corrections or a clearer “known limitations” update to the plan/verify artifacts.
+**REJECT** — The implementation has solid infrastructure and many prior Codex findings were addressed, but the current self-verification misses a real defect in the committed sample output for `sample_ko.pdf`. Since Phase 1’s first DoD is that all three sample block JSON outputs are human-reasonable, visible page-order reversals in the human-review artifact should trigger RE-CODE: fix or narrow the reading-order fallback, add real Korean/page-with-image ordering assertions, then regenerate snapshots and `samples.md`.

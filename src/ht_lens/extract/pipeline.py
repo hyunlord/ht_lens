@@ -144,7 +144,7 @@ def extract_pdf(
             render = render_page_png(doc, page_idx, png_path, dpi=dpi)
 
             grouped = group_page(raw)
-            ordered = order_blocks(grouped, page_width=raw.width)
+            ordered = order_blocks(grouped)
             page_doc = _build_page_doc(
                 raw,
                 ordered,

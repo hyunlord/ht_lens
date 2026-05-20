@@ -9,10 +9,10 @@
 - PyMuPDF 격리 wrapper (`extract/_fitz.py`)
 - 페이지 렌더러 (200dpi PNG, zero-padded 4자리 파일명)
 - Text block 추출 + paragraph grouping
-- Header 판정 (font-size 휴리스틱)
-- Reading order (1~3컬럼 자동 감지)
-- Image block 추출 (bbox만; 픽셀 저장은 옵션)
-- 언어 감지 (langdetect → `en|ko|mixed|unknown`)
+- Header 판정 (font-size + 가로 방향 휴리스틱)
+- Reading order: PyMuPDF sort=True baseline + 회귀 검출 시 단순 (y0, x0) fallback (RE-CODE 결과 multi-column 자동감지 제거)
+- Image block 추출 (bbox만, 픽셀 저장은 미지원 — `save_images` 옵션은 RE-CODE에서 제거)
+- 언어 감지 (langdetect → `en|ko|mixed|unknown`, mixed 임계 0.20)
 - `doc_meta.json` 생성 (filename / num_pages / lang_guess / sha256 / extracted_at / extractor_version)
 - CLI: `python -m ht_lens.extract`, `ht-lens extract` 양쪽 동작
 - Snapshot test (3 fixture, 정규화 함수 포함)
@@ -119,8 +119,10 @@ PyMuPDF의 `page.get_pixmap(dpi=dpi).tobytes("png")` 결과를 atomic write (tem
 ### 6. Pipeline (`extract/pipeline.py`)
 
 ```python
-def extract_pdf(pdf_path: Path, out_dir: Path, *, dpi: int = 200, save_images: bool = False, overwrite: bool = False) -> ExtractResult
+def extract_pdf(pdf_path: Path, out_dir: Path, *, dpi: int = 200, overwrite: bool = False) -> ExtractResult
 ```
+
+(원 plan에 있던 `save_images` 옵션은 RE-CODE 라운드에서 dead API로 제거됨. Phase 1 출력은 페이지 PNG + block JSON에 한정.)
 
 흐름:
 1. `out_dir` 존재 + 비어있지 않음 + `overwrite=False` → `OutputDirNotEmptyError` (exit 2).
@@ -174,8 +176,8 @@ debate §2(coordinate unit)와 §3(rotation)을 수용해 다음 필드를 **추
 - 옵션:
   - `-o, --out PATH` (required)
   - `--dpi INT` (default 200)
-  - `--save-images / --no-save-images` (default no)
   - `--overwrite / --no-overwrite` (default no — 기존 out_dir 비어있어야 진행)
+  - (~~`--save-images`~~ 제거됨 — Codex DOWNGRADE 대응 RE-CODE)
 - 종료 코드: 0=성공, 2=잘못된 입력(파일 없음/암호화), 3=PDF 파싱 실패
 
 ### 8. Error handling
