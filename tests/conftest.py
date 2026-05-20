@@ -79,6 +79,28 @@ async def async_session_factory(
 
 
 @pytest.fixture
+def api_db_path(tmp_path: Path) -> Path:
+    """SQLite DB path with alembic head applied. Used by API integration tests."""
+    import subprocess
+    import sys
+
+    db_path = tmp_path / "api.db"
+    env = {**os.environ, "HT_LENS_DB_URL": f"sqlite+aiosqlite:///{db_path}"}
+    repo_root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.fail(f"alembic upgrade failed: {proc.stdout}\n{proc.stderr}")
+    return db_path
+
+
+@pytest.fixture
 def live_llm_client() -> LLMClient:
     """Real OpenAICompatibleClient — skip if LLM_BASE_URL / LLM_MODEL not set."""
     from ht_lens.llm.openai_compat import OpenAICompatibleClient
