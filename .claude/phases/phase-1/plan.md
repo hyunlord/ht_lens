@@ -94,11 +94,12 @@ PyMuPDF block 단위에서는 한 paragraph가 여러 block으로 쪼개지거�
 **Phase 1 baseline은 PyMuPDF `sort=True`의 출력을 그대로 사용한다.** 도메인 휴리스틱은 다음 조건일 때만 fallback:
 
 1. PyMuPDF 결과에 y가 뒤로 가는 곳이 1회라도 있으면 fallback 진입 (cover 페이지의 회전 마진 텍스트, PyMuPDF 정렬 오류 등).
-2. fallback 절차:
-   - bbox width > `0.7 * page_width` block을 spanning header로 분리하여 최상단 y0 순으로 먼저 배치
-   - 나머지 body는 `(y0, x0)` 정렬
+2. fallback 절차: 전체 blocks를 `(y0, x0)` 키로 정렬.
 
-**원래 plan에는 1~3 컬럼 자동 감지(x-clustering)가 있었지만 RE-CODE에서 제거했다.** 이유: 단일-block 마진(arXiv 세로 스탬프 등)을 별개 컬럼으로 잘못 잡아 cover 페이지 순서를 더 망가뜨림. 진짜 멀티컬럼 본문 fixture가 없는 상태에서는 단순 y0 정렬이 ROADMAP "80% 목표"에 더 부합. 진짜 2-컬럼 본문 정렬은 fixture가 들어오는 Phase 6에서 재검토. 합성 unit test는 동일 입력에 대해 두 알고리즘 모두 동일한 출력을 내므로 보존.
+**RE-CODE 이력**:
+- 초기 plan에는 1~3 컬럼 자동 감지(x-clustering)가 있었지만 **제거됨**. 이유: 단일-block 마진(arXiv 세로 스탬프 등)을 별개 컬럼으로 잘못 잡아 cover 페이지 순서를 더 망가뜨림.
+- 그 후 한 라운드에는 "spanning header lift" (bbox width > `0.7 * page_width` block을 최상단으로) 가 fallback에 있었지만 **제거됨**. 이유: sample_ko의 폭넓은 본문 단락이 spanning으로 잘못 분류되어 narrow top-of-page 단락보다 앞에 옴.
+- 최종: 단순 `(y0, x0)` sort. 합성 unit test는 두 변형 모두에서 동일 출력을 내므로 보존. 진짜 2-컬럼 본문 정렬은 fixture 확보 후 Phase 6에서 재설계.
 
 ### 4. Page renderer (`extract/render.py`)
 
