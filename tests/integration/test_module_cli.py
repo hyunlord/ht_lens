@@ -13,14 +13,30 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 REPO = Path(__file__).resolve().parents[2]
 
 
-def test_python_m_ht_lens_extract_succeeds_on_sample_en(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "sample_name,expected_lang,expected_pages",
+    [
+        ("sample_en.pdf", "en", 8),
+        ("sample_ko.pdf", "ko", 52),
+        ("sample_mixed.pdf", "mixed", 6),
+    ],
+)
+def test_python_m_ht_lens_extract_succeeds_on_each_fixture(
+    sample_name: str,
+    expected_lang: str,
+    expected_pages: int,
+    tmp_path: Path,
+) -> None:
+    """``python -m ht_lens.extract`` runs end-to-end for each ROADMAP fixture."""
     out = tmp_path / "out"
     proc = subprocess.run(
-        [sys.executable, "-m", "ht_lens.extract", str(FIXTURES / "sample_en.pdf"), "-o", str(out)],
+        [sys.executable, "-m", "ht_lens.extract", str(FIXTURES / sample_name), "-o", str(out)],
         capture_output=True,
         text=True,
         cwd=str(REPO),
@@ -28,8 +44,8 @@ def test_python_m_ht_lens_extract_succeeds_on_sample_en(tmp_path: Path) -> None:
     assert proc.returncode == 0, (proc.stdout, proc.stderr)
     assert "ok: pages=" in proc.stdout
     meta = json.loads((out / "doc_meta.json").read_text())
-    assert meta["lang_guess"] == "en"
-    assert meta["num_pages"] == 8
+    assert meta["lang_guess"] == expected_lang
+    assert meta["num_pages"] == expected_pages
 
 
 def test_python_m_ht_lens_extract_returns_2_on_existing_dir(tmp_path: Path) -> None:
