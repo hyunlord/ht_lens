@@ -50,8 +50,7 @@ def _setup_db_with_doc(tmp_path: Path) -> tuple[Path, int]:
             await conn.run_sync(Base.metadata.create_all)
             await conn.execute(
                 text(
-                    "CREATE TABLE IF NOT EXISTS alembic_version "
-                    "(version_num VARCHAR(32) NOT NULL)"
+                    "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL)"
                 )
             )
             await conn.execute(text(f"INSERT INTO alembic_version VALUES ('{ALEMBIC_HEAD}')"))
