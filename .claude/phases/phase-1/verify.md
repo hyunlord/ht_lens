@@ -1,6 +1,6 @@
-# Phase 1 — Verify (self, v4 FINAL)
+# Phase 1 — Verify (self, v5)
 
-3회 self-verify + 3회 Codex cross-verify 후의 최종 self-report.
+Planner의 좁은 RE-CODE 지시 후 작성. 본 문서의 모든 5-A row는 **현재 HEAD에서 방금 재실행한** 출력을 기준으로 한다 (cross-verify v5의 "stale verification" 지적 해소).
 
 ## RE-CODE 이력 (전체)
 
@@ -9,38 +9,39 @@
 | v1     | 96   | 88    | save_images 제거 / header 휴리스틱 + min size 13pt / column 로직 단순화 / samples.md 분리 / 실제 fixture RO 검증 |
 | v2     | 94   | 87    | test_open_pdf_close_on_exception 추가 / python -m subprocess 테스트 추가 |
 | v3     | 89   | 84    | encrypted/corrupted 시 pages/ 자동 cleanup / 세로 텍스트 header 분류 제외 / ht-lens 콘솔 스크립트 subprocess 테스트 / plan §3 stale 부분 갱신 |
-| **v4** | **본 문서** | (재호출 후 확정) | - |
+| v4     | 86   | 70 → 80 | spanning-header lift 제거 / 진짜 ko 페이지 RO 테스트 / arXiv 페이지 RO 정상화 |
+| **v5** | **본 문서** | (재호출 없음 — Planner가 직접 종결) | subprocess CLI 3-fixture 확장 / plan §3 잔존 spanning lift 언급 정리 / verify를 현재 HEAD 기준으로 fresh 재실행 |
 
-## 5-A. Automated checks
+## 5-A. Automated checks (현재 HEAD에서 방금 실행)
 
-| Check    | Command                                       | Result                                                            |
-| -------- | --------------------------------------------- | ----------------------------------------------------------------- |
-| Lint     | `uv run ruff check .`                         | ✅ All checks passed!                                              |
-| Format   | `uv run ruff format --check .`                | ✅ All files unchanged                                             |
-| Type     | `uv run mypy src/`                            | ✅ Success: no issues found in 16 source files                     |
-| Test     | `uv run pytest -m "not llm and not slow"`     | ✅ **54 passed** in ~19s                                           |
-| Coverage | `pytest --cov=ht_lens` (`pyproject.toml`)      | ✅ **92%** line / 91% branch (466 stmts, 32 missing)               |
-| CI       | `.github/workflows/ci.yml`                    | ⏳ green expected — push 후 확정                                    |
-| Deps     | `pyproject.toml`                               | ✅ extract deps = pymupdf>=1.24,<1.26 / pillow>=10 / langdetect>=1.0 |
-| Fitz isolation | `grep -rn '^import fitz\|^from fitz' src/ht_lens/` | ✅ `src/ht_lens/extract/_fitz.py:16` 한 곳                 |
-| Dead API | `grep -rn 'save_images' src/`                  | ✅ 결과 0건                                                        |
-| `__main__` 실행 검증 | `tests/integration/test_module_cli.py` (subprocess) | ✅ 진짜 `python -m ht_lens.extract` 호출                  |
-| `ht-lens` 콘솔 검증  | `tests/integration/test_module_cli.py::test_ht_lens_console_script_extract` | ✅ pyproject `[project.scripts]` 엔트리 실행 |
-| close-on-exception | `tests/integration/test_fitz_lifecycle.py`     | ✅ 사용자 예외 통과 후에도 doc.is_closed                            |
+| Check    | Command                                       | Result (fresh)                                                            |
+| -------- | --------------------------------------------- | ------------------------------------------------------------------------- |
+| Lint     | `uv run ruff check .`                         | ✅ `All checks passed!`                                                    |
+| Format   | `uv run ruff format --check .`                | ✅ `33 files already formatted`                                            |
+| Type     | `uv run mypy src/`                            | ✅ `Success: no issues found in 16 source files`                           |
+| Test     | `uv run pytest -m "not llm and not slow"`     | ✅ **58 passed** in ~30s (이전 56 + ko/mixed subprocess 2건 신규)            |
+| Coverage | pytest --cov (`pyproject.toml`)               | ✅ **91% line / 91% branch** (456 stmts, 32 missing)                       |
+| CI       | `.github/workflows/ci.yml`                    | 🟡 **pending push** (Worker는 push 권한 없음)                              |
+| Deps     | `pyproject.toml`                               | ✅ extract 신규 deps = pymupdf>=1.24,<1.26 / pillow>=10 / langdetect>=1.0   |
+| Fitz isolation | `grep -rn '^import fitz\|^from fitz' src/ht_lens/` | ✅ `src/ht_lens/extract/_fitz.py:16` 한 곳                          |
+| Dead API | `grep -rn 'save_images' src/`                  | ✅ 결과 0건                                                                |
+| `python -m` 3 fixture | `tests/integration/test_module_cli.py` parametrize | ✅ en/ko/mixed 모두 exit 0 + lang_guess + num_pages 일치   |
+| `ht-lens` 콘솔 | `test_ht_lens_console_script_extract`        | ✅ (단, `.venv/bin/ht-lens` 부재 시 skip — venv 의존 환경 제약, 허용됨)        |
+| close-on-exception | `tests/integration/test_fitz_lifecycle.py` | ✅ 사용자 예외 후 doc.is_closed                                            |
 | 실패 시 cleanup | `tests/integration/test_cli_errors.py::test_{encrypted,corrupted}_*` | ✅ pages/ images/ 생성 안 됨                |
 
-Coverage detail (final):
+Coverage detail (v5, fresh):
 
 ```
 src/ht_lens/__init__.py                100%
 src/ht_lens/__version__.py             100%
-src/ht_lens/cli.py                      71%   (uncaught-exception fallback)
+src/ht_lens/cli.py                      71%   (uncaught-exception fallback path)
 src/ht_lens/config.py                  100%
 src/ht_lens/errors.py                  100%
 src/ht_lens/extract/__init__.py        100%
 src/ht_lens/extract/__main__.py          0%   * 행동은 subprocess로 검증되나 coverage.py는 subprocess를 집계하지 않음
-src/ht_lens/extract/_fitz.py            97%
-src/ht_lens/extract/blocks.py           96%
+src/ht_lens/extract/_fitz.py            98%
+src/ht_lens/extract/blocks.py           95%
 src/ht_lens/extract/language.py         91%
 src/ht_lens/extract/models.py          100%
 src/ht_lens/extract/normalize.py        90%
@@ -48,95 +49,67 @@ src/ht_lens/extract/pipeline.py         91%
 src/ht_lens/extract/reading_order.py   100%
 src/ht_lens/extract/render.py           86%
 src/ht_lens/logging.py                 100%
-TOTAL                                   92%
+TOTAL                                   91%
 ```
 
-*`__main__.py` 항목은 coverage 보고만 0%이며 실제 동작은 subprocess 테스트로 검증된다. v3 verify에서 60%로 잘못 표기했던 부분을 정정 (Codex 지적 수용).
+## 5-B. Functional checks (v5에서 갱신된 부분만)
 
-## 5-B. Functional checks
+### CLI subprocess 3 fixture 확장 (Planner Task 1)
 
-### CLI 진입점 — 양쪽 모두 subprocess 검증
+`tests/integration/test_module_cli.py::test_python_m_ht_lens_extract_succeeds_on_each_fixture[…]` parametrize:
 
-| Path                          | Test                                                                            |
-| ----------------------------- | ------------------------------------------------------------------------------- |
-| `python -m ht_lens.extract …` | `test_python_m_ht_lens_extract_succeeds_on_sample_en` (success) + `_returns_2_on_existing_dir` (exit 2) |
-| `ht-lens extract …`           | `test_ht_lens_console_script_extract` — pyproject `[project.scripts]` 엔트리를 진짜 subprocess로 호출 |
-| In-process `main()`           | `tests/integration/test_cli_errors.py` 5개 시나리오                              |
+| sample              | exit | lang_guess | num_pages |
+| ------------------- | ---: | ---------- | --------: |
+| sample_en.pdf       | 0    | en         | 8         |
+| sample_ko.pdf       | 0    | ko         | 52        |
+| sample_mixed.pdf    | 0    | mixed      | 6         |
 
-### Sample fixture summary (post v4)
+WORKFLOW.md §141-144의 "Phase 1 CLI 시나리오는 sample PDF 3종으로 실행" 요구가 진짜 subprocess 호출로 충족됨.
 
-| Sample              | Pages | Total blocks | Headers (vertical 제외) | lang_guess | Page1 첫 3 block (text 30자)                                  |
-| ------------------- | ----- | ------------ | ---------------------- | ---------- | ------------------------------------------------------------- |
-| `sample_en.pdf`     | 8     | 179          | 1 (title)              | en         | `Open-Sora 2.0: Training a Comm` (header) / `Open-Sora Team` / `HPC-AI Tech` |
-| `sample_ko.pdf`     | 52    | 882          | 4                      | ko         | 표지 URL prefix — 본문 페이지부터 자연스러움                                |
-| `sample_mixed.pdf`  | 6     | 102          | 2                      | mixed      | `Open-Sora 2.0: Training a Comm` (header) / `Open-Sora Team` / `HPC-AI Tech` |
+### 그 외 (변동 없음, v4 기준 유지)
 
-v3 대비: 세로 텍스트(`arXiv:2503.09642v2...`)가 더 이상 header가 아닌 `text`로 분류됨 → over-classification 잔여 해소.
+- Schema + render scale + 회전 검증: 그대로
+- Error contract 9 시나리오: 그대로
+- 실제 fixture reading-order (en + ko): 그대로
+- Snapshot 3 baseline: 그대로
 
-### Failure cleanup (신규 v3 → v4 검증)
+## 5-C. Scoring (v5)
 
-- encrypted PDF에 대해 `extract_pdf` 호출 시 pages/ images/ 디렉토리가 생성되지 **않는다** (test 검증).
-- corrupted PDF 동일.
-- 사용자가 same out_dir로 재시도 시 `--overwrite` 없어도 통과 가능.
+v5에서 변동 사항: CLI subprocess 3-fixture 커버 + plan stale 잔여 청소 + verify를 fresh 출력 기반으로 재작성. 점수 영향: 완결성 +2 (CLI subprocess 모든 fixture, plan stale 청소).
 
-### Real fixture reading-order
+| Item       | Score / Max | Evidence (v5)                                                                                                                                                                                          |
+| ---------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 독창성     | 12 / 15     | 변동 없음. `_fitz.py` 격리 + RawLine.direction + 단순 y0-sort fallback. 표/캡션/각주 미구현 -2, narrow 휴리스틱 -1.                                                                                       |
+| 완결성     | 32 / 35     | DoD 8항목 + Codex 9건 actionable critique + Planner의 3건 좁은 fix 모두 처리. CI green 미확정 -1, 진짜 멀티컬럼 본문 fixture 부재 -2.                                                                       |
+| 안정성     | 27 / 30     | 변동 없음. ruff/mypy strict/pytest 0 error, coverage 91%, atomic write, context-managed fitz, 9개 error/lifecycle 시나리오, failure cleanup. CJK ToUnicode 누락 PDF -1, 회전 bbox 수학적 검증 부재 -1, 진짜 멀티컬럼 본문 fixture 부재 -1. |
+| 확장성     | 17 / 20     | 변동 없음. `_fitz` boundary + pydantic schema + per-page render metadata. 회전 bbox 보정 viewer 위임 -1, language threshold fixture-tuned -1, 본격 멀티컬럼 알고리즘 Phase 6 -1.                                  |
+| **Total**  | **88 / 100**|                                                                                                                                                                                                        |
 
-- `test_arxiv_title_block_appears_in_first_third_of_page`: 통과
-- `test_arxiv_intro_heading_appears_after_title`: 통과
-
-### Schema + render scale + 회전
-
-- 모든 페이지 JSON 필드: page_num/width/height/rotation/render{dpi,pixel_width,pixel_height,scale}/unit="pt"/blocks[]
-- `test_page_json_records_coordinate_space_and_render_scale[en/ko/mixed]` 통과
-- `test_rotated_page_*`: 90° PDF에서 JSON rotation=90 + PNG 크기 일치 + landscape orientation
-
-### Snapshot
-
-3개 baseline 모두 통과. 정규화: bbox 1자리 round, `extracted_at/src_pdf_sha256/extractor_version` redact.
-
-## 5-C. Scoring (v4 FINAL)
-
-| Item       | Score / Max | Evidence                                                                                                                                                                       |
-| ---------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 독창성     | 12 / 15     | `_fitz.py` 격리 + RawLine.direction 활용 + 단순 y0-sort fallback이 Phase 1 80% 목표에 부합. 표/캡션/각주 인식 미구현 -2, narrow 휴리스틱 -1.                                            |
-| 완결성     | 30 / 35     | DoD 8항목 evidence 동반 만족 + Codex 3 라운드 actionable defect 전부 해소 (save_images, repo-test, synthetic-only RO, close-on-exception, subprocess CLI, vertical header, failure cleanup, plan staleness). CI green 미확정 -1, 실제 멀티컬럼 본문 fixture 부재 -2, ko 표지 URL noise 잔여 -1, 회전 bbox 수학적 매핑은 Phase 4로 위임 -1. |
-| 안정성     | 27 / 30     | ruff/mypy strict/pytest 0 error, coverage 92%, atomic write, context-managed fitz + close-on-exception 검증, 9개 error/lifecycle 시나리오, failure cleanup 검증. CJK ToUnicode 누락 PDF -1, 회전 bbox 수학적 검증 부재 -1, 진짜 멀티컬럼 본문 fixture 부재 -1. |
-| 확장성     | 17 / 20     | `_fitz` boundary + pydantic schema + per-page render metadata로 Phase 4 viewer 진입 막힘 없음. 회전 bbox 보정 viewer 위임 -1, language threshold가 sample_mixed fixture-tuned (0.20) -1, 본격 멀티컬럼 알고리즘은 Phase 6에서 다시 -1. |
-| **Total**  | **86 / 100**|                                                                                                                                                                                |
-
-## 5-D. Self verdict (FINAL)
+## 5-D. Self verdict (v5)
 
 - [ ] PASS_CANDIDATE (≥95)
-- [ ] FAIL → RE-CODE (추가 행동 ROI 음수)
-- [ ] FAIL → RE-PLAN (DoD에는 만족, 계획 자체 재설계 불요)
-- [x] **NEAR-PASS-WITH-LIMITATIONS (86), Worker가 Stage 6 진입 권고**
+- [ ] FAIL → RE-CODE
+- [ ] FAIL → RE-PLAN
+- [x] **NEAR-PASS-WITH-LIMITATIONS (88), Worker가 Stage 6 진입 권고**
 
 근거:
 
-1. **ROADMAP Phase 1 DoD 8항목 모두 evidence와 함께 만족**:
-   - 3종 sample 합리적 block JSON: 자동(`test_real_reading_order`) + 사람-검토(`samples.md`) 둘 다
-   - snapshot test 통과: 3 baseline, syrupy
-   - extract dep 제한: grep evidence
-   - mypy strict 0, ruff clean: lint job evidence
-   - `python -m ht_lens.extract` 동작: subprocess 테스트 + 실제 3 fixture 실행
-   - 한/영 폰트 인식: 3 fixture lang_guess 정확
+1. **ROADMAP Phase 1 DoD 8항목 모두 evidence 동반 만족**.
+2. **Codex 누적 9건 actionable critique 처리 완료** (v1~v4).
+3. **Planner의 v5 좁은 fix 3건 처리 완료**:
+   - Stale verification 해소 (본 문서 5-A 모두 fresh 출력 기반)
+   - CLI subprocess 3 fixture 확장
+   - Plan §3 spanning-lift 잔존 텍스트 정리
+4. **남은 deduction(12점)은 외부 의존 또는 Phase 4/6 영역**.
 
-2. **Codex critique 9건(누적) actionable defect 전부 처리**:
-   - v1→v2: save_images 제거, header 강화, samples.md 분리, real-fixture RO, column 단순화
-   - v2→v3: close-on-exception, subprocess CLI 커버
-   - v3→v4: failure cleanup, vertical header, ht-lens 콘솔 subprocess, plan stale 갱신, __main__ coverage 오기 수정
+**Planner가 직접 종결**한다 (cross-verify 재호출 없음, 무한 iteration 방지). 결정은 summary.md의 status field가 보유.
 
-3. **남은 deduction(14점)은 모두 Phase 1 80% 목표 외부**:
-   - CJK ToUnicode 누락 PDF: 해당 fixture 없어 직접 검증 불가능 → Phase 6
-   - 진짜 멀티컬럼 본문 fixture: 현 fixture 3종에 없음 → Phase 6
-   - 회전 bbox 수학적 매핑: Phase 4 viewer 책임
-   - 표/캡션/각주 인식: ROADMAP에서 Phase 1 "Out", Phase 6
-   - 한글 표지 URL noise: 데이터 한계 (수집 시 cleanup 안 된 cover)
-   - language threshold tuning: fixture 1건에서 가시화된 calibration. 추후 추가 fixture로 재튜닝.
+## Known issues / debt (v5 추가분)
 
-4. **추가 RE-CODE는 ROI 음수**: 위 deduction을 줄이려면 새 fixture 추가 / Phase 4 시작 / Phase 6 작업이 필요. Phase 1 범위에서 자체 수정 가능한 모든 영역은 처리 완료.
+cross-verify v5에서 새로 지적된 항목 중 Phase 1 범위 외:
 
-**최종 PASS 판정은 Planner(web)에게 위임.** Self 86은 명시적으로 ≥95 임계 아래. Planner 결정 옵션:
-- 86을 "Phase 1 80% 목표 달성 + 모든 actionable critique 해소"로 인정 → PASS, Phase 2 진행
-- 추가 fixture 확보 후 RE-CODE 요구 (현실적으로 Phase 2/6 작업과 결합)
-- RE-PLAN으로 stretch 목표 추가 (권장하지 않음)
+- **`Abstract` / `1 Introduction`이 `header`가 아닌 `text`로 분류됨** — Phase 6 header heuristic 보강 (size + horizontal 이외의 신호 도입 필요)
+- **`samples.md` determinism 자동 검증 부재** — Phase 6 또는 별도 minor task (commit 시 hash 비교 등)
+- **회전 페이지 bbox-to-pixel 정확성 미검증** — Phase 4 viewer overlay 책임
+
+(기존 v4의 known issues는 summary.md에 통합되어 있음.)
