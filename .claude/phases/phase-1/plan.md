@@ -42,30 +42,41 @@ class RawSpan:
     flags: int  # bold/italic 비트마스크
 
 @dataclass(frozen=True)
+class RawLine:
+    bbox: tuple[float, float, float, float]
+    spans: tuple[RawSpan, ...]
+    direction: tuple[float, float]  # writing direction unit vector
+
+@dataclass(frozen=True)
 class RawBlock:
     bbox: tuple[float, float, float, float]
     block_type: Literal["text", "image"]
-    spans: tuple[RawSpan, ...]  # type="image"면 빈 tuple
+    lines: tuple[RawLine, ...]  # type="image"면 빈 tuple
 
 @dataclass(frozen=True)
 class RawPage:
-    page_num: int  # 1-indexed
-    width: float
-    height: float
-    blocks: tuple[RawBlock, ...]
+    page_num: int        # 1-indexed
+    width: float         # points
+    height: float        # points
+    rotation: int        # 0/90/180/270
+    blocks: tuple[RawBlock, ...]  # PyMuPDF sort=True 순서 그대로
 
-def open_pdf(path: Path) -> "FitzDoc": ...
+@contextmanager
+def open_pdf(path: Path) -> Iterator["FitzDoc"]:
+    """Context manager — 페이지 처리 중 예외에도 close 보장."""
+
 def render_png(doc: FitzDoc, page_idx: int, dpi: int) -> bytes: ...
 def iter_pages(doc: FitzDoc) -> Iterator[RawPage]: ...
-def close(doc: FitzDoc) -> None: ...
 ```
 
-`FitzDoc`은 opaque newtype (`NewType("FitzDoc", object)`). 내부에선 `cast(fitz.Document, ...)`로 좁힘.
-`# type: ignore`는 이 파일에서만 허용. 다른 모듈에서 사용 시 review에서 reject.
+`FitzDoc`은 opaque newtype. 내부에선 `cast(fitz.Document, ...)`로 좁힘.
+`# type: ignore`는 이 파일에서만 허용.
+
+**Baseline source**: `page.get_text("dict", sort=True)`로 PyMuPDF 자체 정렬 결과를 받는다. Phase 1에서는 이 정렬을 **신뢰**하고, 컬럼 휴리스틱은 fallback으로만 적용 (§3 참조).
 
 ### 2. Block grouping (`extract/blocks.py`)
 
-PyMuPDF는 이미 block을 주지만 한 paragraph가 여러 block으로 쪼개지거나 한 block에 여러 paragraph가 섞이는 경우가 흔하다. 다음 휴리스틱:
+PyMuPDF block 단위에서는 한 paragraph가 여러 block으로 쪼개지거나 한 block에 여러 paragraph가 섞이는 경우가 흔하다. `RawLine` 단위로 다음 휴리스틱:
 
 - **Paragraph 묶기 기준** (단일 RawBlock 안에서 line-by-line):
   - y-gap ≤ `0.5 * median_line_height` → 같은 paragraph
@@ -76,19 +87,22 @@ PyMuPDF는 이미 block을 주지만 한 paragraph가 여러 block으로 쪼개�
   - 그 외 텍스트는 `type="text"`
 - **빈 block** (`text=""` and `type="text"`) → 폐기
 - **Image block**: `type="image"`, text="", bbox 유지
+- **Line bbox**가 없는 경우 (rotation 등): span bbox union으로 대체
 
 ### 3. Reading order (`extract/reading_order.py`)
 
-멀티컬럼 인식은 **x 좌표 1D-cluster**:
+**Phase 1 baseline은 PyMuPDF `sort=True`의 출력을 그대로 사용한다.** 도메인 휴리스틱은 다음 조건일 때만 fallback:
 
-1. 페이지의 모든 text block의 x0(좌상단 x) 리스트
-2. 1D agglomerative clustering (gap threshold = `0.05 * page_width`)
-3. 클러스터 개수 = 추정 컬럼 수 (cap=3)
-4. **단일 컬럼**: y0 오름차순
-5. **N컬럼**: 컬럼 별로 분류 (block의 중심 x로 컬럼 결정) → 컬럼별로 y0 오름차순 → 컬럼 순서(좌→우)대로 이어붙임
-6. Header는 컬럼 위에 걸치는 경우 많음 — bbox width > `0.7 * page_width`면 전 컬럼 가로지르는 것으로 보고 최상단으로
+1. PyMuPDF 결과의 인접 block 사이에 y가 뒤로 가는 곳이 2회 이상 = 멀티컬럼 신호.
+2. 이 경우만 **x 좌표 1D-cluster**:
+   - 모든 text block의 중심 x 리스트
+   - 1D agglomerative clustering (gap threshold = `0.10 * page_width`)
+   - 클러스터 개수 cap = 3
+   - Header(bbox width > `0.7 * page_width`)는 컬럼화에서 제외 → 최상단 y0 순으로 먼저
+   - 컬럼별 y0 오름차순 → 좌→우로 이어붙임
+3. 단일 컬럼 신호면 PyMuPDF 순서 유지.
 
-이 알고리즘은 80% 목표 (ROADMAP 명시). 실패 케이스는 known issue로 기록.
+이 알고리즘은 80% 목표 (ROADMAP 명시). 실패 케이스(indented bullet, sidebar, 표 캡션 등)는 known issue로 기록.
 
 ### 4. Page renderer (`extract/render.py`)
 
@@ -109,20 +123,52 @@ PyMuPDF의 `page.get_pixmap(dpi=dpi).tobytes("png")` 결과를 atomic write (tem
 ### 6. Pipeline (`extract/pipeline.py`)
 
 ```python
-def extract_pdf(pdf_path: Path, out_dir: Path, *, dpi: int = 200, save_images: bool = False) -> ExtractResult
+def extract_pdf(pdf_path: Path, out_dir: Path, *, dpi: int = 200, save_images: bool = False, overwrite: bool = False) -> ExtractResult
 ```
 
 흐름:
-1. `out_dir`/`pages`/`images` 디렉토리 생성 (없으면)
-2. fitz 열기 → for each page (1-indexed):
+1. `out_dir` 존재 + 비어있지 않음 + `overwrite=False` → `OutputDirNotEmptyError` (exit 2).
+   `overwrite=True`이면 `out_dir/{pages,images,doc_meta.json}`만 정밀 삭제 (외부 파일 보호).
+2. `out_dir`/`pages`/`images` 디렉토리 생성 (없으면)
+3. fitz 열기 (`open_pdf` context manager) → for each page (1-indexed):
    a. `render_page_png` → `pages/page_NNNN.png`
    b. `iter_pages` 결과로 grouping → reading order → block 리스트
    c. block id를 `p{N}_b{ORDER:03d}` 형식으로 부여
    d. bbox 소수점 1자리 round
    e. `pages/page_NNNN.json` 저장 (atomic write)
-   f. image block의 픽셀 추출은 `save_images=True`일 때만 (기본 False — 디스크 절약, Phase 4 viewer에서 페이지 PNG로 대체 가능)
-3. 문서 단위 lang 집계
-4. `doc_meta.json` 저장 (sha256은 streaming hash, ISO 8601 UTC, version은 `ht_lens.__version__`)
+   f. image block의 픽셀 추출은 `save_images=True`일 때만 (기본 False)
+4. 문서 단위 lang 집계
+5. `doc_meta.json` 저장 (sha256은 streaming hash, ISO 8601 UTC, version은 `ht_lens.__version__`)
+
+**부분 실패 정책**: 페이지 처리 중 예외 발생 시 context manager가 닫고, 부분 출력은 그대로 둔다 (사용자는 `--overwrite`로 재시도). 모든 페이지 PNG/JSON 저장은 atomic temp-rename이라 corruption은 없다.
+
+### 6.5. Per-page JSON 스키마 확장 (prompt-fixed 베이스 + 좌표 메타)
+
+prompt에 명시된 스키마는 다음 필드를 가진다:
+```
+page_num, width, height, blocks[]
+```
+
+debate §2(coordinate unit)와 §3(rotation)을 수용해 다음 필드를 **추가**한다 (제거는 없음):
+
+```json
+{
+  "page_num": 1,
+  "width": 612.0,            // PDF points (변경 없음)
+  "height": 792.0,           // PDF points
+  "rotation": 0,             // [추가] 0/90/180/270 — viewer가 회전 보정에 사용
+  "render": {                // [추가] 200dpi PNG 좌표계 정보
+    "dpi": 200,
+    "pixel_width": 1700,
+    "pixel_height": 2200,
+    "scale": 2.777           // = dpi / 72
+  },
+  "unit": "pt",              // [추가] bbox 단위 명시 (항상 "pt")
+  "blocks": [...]            // 변경 없음
+}
+```
+
+근거: Phase 4 viewer가 PNG 픽셀과 PDF point bbox를 일치시키려면 dpi/rotation을 알아야 한다. prompt 스키마는 필수 필드만 명시했으므로 추가는 호환 가능.
 
 ### 7. CLI (`extract/__main__.py`, `cli.py`)
 
@@ -166,9 +212,13 @@ def extract_pdf(pdf_path: Path, out_dir: Path, *, dpi: int = 200, save_images: b
 | `tests/unit/test_reading_order.py` | new | 컬럼 인식 unit |
 | `tests/unit/test_language.py` | new | mixed 판정 unit |
 | `tests/unit/test_normalize.py` | new | snapshot 정규화 |
-| `tests/integration/test_extract_pipeline.py` | new | 3 fixture × 통합 (page count, lang, block 존재) |
+| `tests/integration/test_extract_pipeline.py` | new | 3 fixture × 통합 (page count, lang, schema, render scale) |
 | `tests/integration/test_extract_snapshot.py` | new | syrupy snapshot (정규화된 block 구조) |
+| `tests/integration/test_cli_errors.py` | new | overwrite / encrypted / corrupted / scanned 시나리오 |
+| `tests/integration/test_rotated_page.py` | new | 합성 회전 PDF의 bbox↔픽셀 일치 |
+| `tests/integration/test_human_review.py` | new | `docs/phases/phase-1/samples.md` 생성 (DoD evidence) |
 | `tests/integration/__snapshots__/` | new (generated) | snapshot baseline |
+| `docs/phases/phase-1/samples.md` | new (generated) | 사람-검토용 block 트리 dump |
 
 ## Dependencies (new)
 
@@ -184,19 +234,34 @@ def extract_pdf(pdf_path: Path, out_dir: Path, *, dpi: int = 200, save_images: b
 ## Test strategy
 
 ### Unit
-- `test_blocks.py`: synthetic spans로 paragraph 묶기 / header 판정 검증
-- `test_reading_order.py`: 1/2/3컬럼 synthetic block 리스트 → 기대 순서
+- `test_blocks.py`: synthetic lines로 paragraph 묶기 / header 판정 검증
+- `test_reading_order.py`:
+  - 1/2/3컬럼 synthetic block 리스트 → 기대 순서
+  - `test_reading_order_indented_bullets_do_not_create_columns` — 들여쓰기 bullet은 컬럼이 아님
+  - `test_reading_order_spanning_header_then_two_columns` — width>0.7 헤더가 컬럼 위에 옴
 - `test_language.py`: 짧은 텍스트, 한글, 영문, 혼재 케이스
 - `test_normalize.py`: bbox round, 비결정 필드 redact
 
 ### Integration
-- `test_extract_pipeline.py` (3 sample × 5 assertion = 15):
-  - num_pages > 0
-  - `doc_meta.json` 존재 + lang_guess가 기대 값
-  - 모든 페이지 PNG 존재 + PIL로 열 수 있고 dpi-derived size 일치
-  - 모든 페이지 JSON 존재 + 최소 1 block (단, mixed의 표지 페이지는 image-only일 수 있어 그건 별도 assertion 안 함)
+- `test_extract_pipeline.py` (3 sample 공통):
+  - `test_fixture_pdfs_exist_and_are_nonempty` — fixture가 실제 존재 (skip 회피 방지)
+  - `num_pages > 0`, `doc_meta.json` 존재, `lang_guess`가 기대 값(en/ko/mixed)
+  - 모든 페이지 PNG 존재, PIL로 열기, pixel size가 `render.pixel_width/height`와 일치
+  - 모든 페이지 JSON 존재, schema(page_num/width/height/rotation/render/unit/blocks) 모두 채워짐
+  - 적어도 한 페이지 이상에 block ≥ 1 (전체-이미지 페이지 허용)
   - 모든 block id가 `p{N}_b{NNN}` 패턴
+  - `test_page_json_records_coordinate_space_and_render_scale` — render.dpi/pixel_*/scale 일치 검증
 - `test_extract_snapshot.py` (3 sample): 정규화된 block 구조를 syrupy로 비교
+- `test_cli_errors.py`:
+  - `test_cli_rejects_existing_non_empty_out_dir_without_overwrite` (exit 2)
+  - `test_cli_overwrite_replaces_previous_output` (exit 0, 이전 파일 사라짐)
+  - `test_encrypted_pdf_exit_code_2` (synthetic encrypted PDF in tmp)
+  - `test_corrupted_pdf_exit_code_3` (bytes garbage)
+  - `test_scanned_page_writes_empty_blocks_json` (synthetic image-only PDF)
+- `test_rotated_page.py`:
+  - `test_rotated_page_bbox_matches_rendered_png_dimensions` — fitz로 합성 회전 PDF 생성, render 픽셀 크기 = (page.rect after rotation) × scale 검증
+- Human-review artifact:
+  - `tests/integration/test_human_review.py`에서 3 sample에 대해 `docs/phases/phase-1/samples.md` 생성 — 페이지별 block 트리(id/type/bbox/text 60자) 덤프. DoD "사람이 봐도 합리적" evidence.
 
 ### Snapshot 정규화 (`normalize.py`)
 - bbox: 소수점 1자리 round
