@@ -1,12 +1,18 @@
-"""Shared pytest fixtures (Phase 0 placeholders).
+"""Shared pytest fixtures."""
 
-실제 fixture PDF는 Phase 1에서 추가된다. 그 전까지는 파일이 없으면 skip.
-"""
+from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any
 
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from ht_lens.db.base import Base
+from ht_lens.db.session import make_engine, make_session_factory
+from ht_lens.llm.client import LLMClient
+from ht_lens.llm.mock import MockLLMClient
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -41,16 +47,31 @@ def sample_mixed_pdf() -> Path:
     return _fixture_pdf("sample_mixed.pdf")
 
 
-class _LLMMock:
-    """Placeholder LLM client. Phase 2에서 실제 fake로 교체된다."""
-
-    def __call__(self, *_args: Any, **_kwargs: Any) -> Any:
-        raise NotImplementedError("LLM mock은 Phase 2에서 구현된다")
-
-    def complete(self, *_args: Any, **_kwargs: Any) -> Any:
-        raise NotImplementedError("LLM mock은 Phase 2에서 구현된다")
+@pytest.fixture
+def llm_mock() -> LLMClient:
+    """Deterministic mock LLM client. Replaces the Phase 0 placeholder."""
+    return MockLLMClient()
 
 
 @pytest.fixture
-def llm_mock() -> _LLMMock:
-    return _LLMMock()
+def tmp_db_path(tmp_path: Path) -> Path:
+    """Disposable SQLite path under pytest tmp_path."""
+    return tmp_path / "test.db"
+
+
+@pytest_asyncio.fixture
+async def async_session_factory(
+    tmp_db_path: Path,
+) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """Fresh async session factory bound to an empty ORM-created schema.
+
+    Alembic itself is exercised separately by ``integration/test_alembic.py``.
+    """
+    engine = make_engine(tmp_db_path)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = make_session_factory(engine)
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
