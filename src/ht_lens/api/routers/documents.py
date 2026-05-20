@@ -1,0 +1,87 @@
+"""``/documents`` router — Phase 3."""
+
+from __future__ import annotations
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ht_lens.api.deps import get_session
+from ht_lens.api.schemas import DocumentRead
+from ht_lens.db.models import Document, Page
+
+router = APIRouter(prefix="/documents", tags=["documents"])
+
+
+async def _document_with_page_count(
+    session: AsyncSession, doc_id: int
+) -> tuple[Document, int] | None:
+    doc = (
+        await session.execute(select(Document).where(Document.id == doc_id))
+    ).scalar_one_or_none()
+    if doc is None:
+        return None
+    count_row = await session.execute(
+        select(func.count()).select_from(Page).where(Page.doc_id == doc_id)
+    )
+    return doc, int(count_row.scalar_one())
+
+
+@router.get("", response_model=list[DocumentRead])
+async def list_documents(
+    session: Annotated[AsyncSession, Depends(get_session)],
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> list[DocumentRead]:
+    stmt = select(Document).order_by(Document.id.asc())
+    if status_filter is not None:
+        stmt = stmt.where(Document.status == status_filter)
+    stmt = stmt.offset(offset).limit(limit)
+    docs = (await session.execute(stmt)).scalars().all()
+    if not docs:
+        return []
+    doc_ids = [d.id for d in docs]
+    count_rows = await session.execute(
+        select(Page.doc_id, func.count()).where(Page.doc_id.in_(doc_ids)).group_by(Page.doc_id)
+    )
+    counts: dict[int, int] = {doc_id: int(c) for doc_id, c in count_rows.all()}
+    return [
+        DocumentRead(
+            id=d.id,
+            filename=d.filename,
+            src_lang=d.src_lang,
+            tgt_lang=d.tgt_lang,
+            status=d.status,
+            src_pdf_sha256=d.src_pdf_sha256,
+            num_pages=counts.get(d.id, 0),
+            created_at=d.created_at,
+        )
+        for d in docs
+    ]
+
+
+@router.get("/{doc_id}", response_model=DocumentRead)
+async def get_document(
+    doc_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> DocumentRead:
+    pair = await _document_with_page_count(session, doc_id)
+    if pair is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
+    doc, num_pages = pair
+    return DocumentRead(
+        id=doc.id,
+        filename=doc.filename,
+        src_lang=doc.src_lang,
+        tgt_lang=doc.tgt_lang,
+        status=doc.status,
+        src_pdf_sha256=doc.src_pdf_sha256,
+        num_pages=num_pages,
+        created_at=doc.created_at,
+    )
+
+
+__all__ = ["router"]

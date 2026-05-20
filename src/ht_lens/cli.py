@@ -41,6 +41,48 @@ def _root() -> None:
     """ht_lens — PDF layout-preserving translator + chat tool."""
 
 
+@app.command("serve")
+def serve_command(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8080, "--port", min=1, max=65535),
+    reload: bool = typer.Option(
+        False, "--reload/--no-reload", help="Enable uvicorn auto-reload (dev only)."
+    ),
+    db: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--db",
+        resolve_path=True,
+        help="SQLite DB path. Sets HT_LENS_DB_URL for the lifespan.",
+    ),
+    skip_llm_check: bool = typer.Option(
+        False,
+        "--skip-llm-check/--no-skip-llm-check",
+        help="Skip the LLM health check during startup (use for dev/test).",
+    ),
+) -> None:
+    """Run the FastAPI server."""
+    import uvicorn
+
+    if db is not None:
+        os.environ["HT_LENS_DB_URL"] = f"sqlite+aiosqlite:///{db}"
+    if skip_llm_check:
+        os.environ["HT_LENS_SKIP_LLM_CHECK"] = "1"
+
+    if reload:
+        uvicorn.run(
+            "ht_lens.api.app:create_app",
+            host=host,
+            port=port,
+            factory=True,
+            reload=True,
+        )
+        return
+
+    from ht_lens.api.app import create_app
+
+    uvicorn.run(create_app(), host=host, port=port)
+
+
 @app.command("extract")
 def extract_command(
     pdf: Path = typer.Argument(  # noqa: B008
