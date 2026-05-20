@@ -9,7 +9,6 @@ import shutil
 import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from math import ceil
 from pathlib import Path
 
 from ht_lens.__version__ import __version__
@@ -81,16 +80,10 @@ def _build_page_doc(
     raw: RawPage,
     ordered: list[GroupedBlock],
     dpi: int,
+    pixel_width: int,
+    pixel_height: int,
 ) -> PageDoc:
     scale = dpi / 72.0
-    if raw.rotation in (90, 270):
-        # rendered pixels swap when rotation is portrait/landscape transition
-        pixel_w = ceil(raw.height * scale)
-        pixel_h = ceil(raw.width * scale)
-    else:
-        pixel_w = ceil(raw.width * scale)
-        pixel_h = ceil(raw.height * scale)
-
     blocks: list[Block] = []
     for idx, gb in enumerate(ordered, start=1):
         blocks.append(
@@ -110,8 +103,8 @@ def _build_page_doc(
         rotation=raw.rotation,
         render=RenderInfo(
             dpi=dpi,
-            pixel_width=pixel_w,
-            pixel_height=pixel_h,
+            pixel_width=pixel_width,
+            pixel_height=pixel_height,
             scale=round(scale, 3),
         ),
         unit="pt",
@@ -144,11 +137,17 @@ def extract_pdf(
         for raw in iter_pages(doc):
             page_idx = raw.page_num - 1
             png_path = pages_dir / f"page_{raw.page_num:04d}.png"
-            render_page_png(doc, page_idx, png_path, dpi=dpi)
+            render = render_page_png(doc, page_idx, png_path, dpi=dpi)
 
             grouped = group_page(raw)
             ordered = order_blocks(grouped, page_width=raw.width)
-            page_doc = _build_page_doc(raw, ordered, dpi=dpi)
+            page_doc = _build_page_doc(
+                raw,
+                ordered,
+                dpi=dpi,
+                pixel_width=render.pixel_width,
+                pixel_height=render.pixel_height,
+            )
 
             json_path = pages_dir / f"page_{raw.page_num:04d}.json"
             _atomic_write_json(json_path, page_doc.model_dump_json(indent=2))

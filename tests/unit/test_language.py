@@ -11,9 +11,7 @@ def test_short_text_is_unknown() -> None:
 
 
 def test_english_paragraph_detected() -> None:
-    text = (
-        "The quick brown fox jumps over the lazy dog. " * 4
-    )
+    text = "The quick brown fox jumps over the lazy dog. " * 4
     assert detect_page_lang(text) == "en"
 
 
@@ -24,9 +22,7 @@ def test_korean_paragraph_detected() -> None:
 
 def test_aggregate_majority_english_below_mixed_threshold() -> None:
     # 1 ko among 6 detectable (~0.167) is below the 0.20 mixed threshold.
-    assert (
-        aggregate_doc_lang(["en", "en", "en", "en", "en", "ko", "unknown"]) == "en"
-    )
+    assert aggregate_doc_lang(["en", "en", "en", "en", "en", "ko", "unknown"]) == "en"
 
 
 def test_aggregate_pure_korean() -> None:

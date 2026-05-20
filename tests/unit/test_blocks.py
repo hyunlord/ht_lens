@@ -24,9 +24,7 @@ def _text_block(lines: list[RawLine]) -> RawBlock:
 
 
 def _page(blocks: list[RawBlock]) -> RawPage:
-    return RawPage(
-        page_num=1, width=612.0, height=792.0, rotation=0, blocks=tuple(blocks)
-    )
+    return RawPage(page_num=1, width=612.0, height=792.0, rotation=0, blocks=tuple(blocks))
 
 
 def test_consecutive_lines_merge_into_single_paragraph() -> None:

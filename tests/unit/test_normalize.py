@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ht_lens.extract.normalize import (
     REDACTED,
     normalize_doc_meta,
@@ -15,12 +17,18 @@ def test_round_bbox_to_one_decimal() -> None:
 
 
 def test_normalize_page_rounds_block_bboxes() -> None:
-    page = {
+    page: dict[str, Any] = {
         "page_num": 1,
         "width": 612.0,
         "height": 792.0,
         "blocks": [
-            {"id": "p1_b001", "type": "text", "bbox": [72.123, 90.999, 540.0, 105.555], "order": 1, "text": "x"}
+            {
+                "id": "p1_b001",
+                "type": "text",
+                "bbox": [72.123, 90.999, 540.0, 105.555],
+                "order": 1,
+                "text": "x",
+            }
         ],
     }
     out = normalize_page(page)
@@ -30,7 +38,7 @@ def test_normalize_page_rounds_block_bboxes() -> None:
 
 
 def test_normalize_doc_meta_redacts_nondeterministic_fields() -> None:
-    meta = {
+    meta: dict[str, Any] = {
         "filename": "x.pdf",
         "num_pages": 3,
         "lang_guess": "en",

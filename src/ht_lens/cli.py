@@ -67,11 +67,13 @@ def extract_command(
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        app(argv if argv is not None else sys.argv[1:], standalone_mode=False)
-    except typer.Exit as exc:
-        return int(exc.exit_code)
+        app(argv if argv is not None else sys.argv[1:], standalone_mode=True)
     except SystemExit as exc:
-        return int(exc.code) if isinstance(exc.code, int) else 1
+        if isinstance(exc.code, int):
+            return exc.code
+        if exc.code is None:
+            return 0
+        return 1
     return 0
 
 
