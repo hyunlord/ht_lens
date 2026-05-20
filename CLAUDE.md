@@ -31,6 +31,26 @@ codex --version || { echo "Codex CLI not installed"; exit 1; }
 - **품질 기준**: 매 커밋마다 mypy strict 위반 0, ruff clean, `make test-fast` green 유지.
 - **산출물 추적**: plan/debate/challenge/verify/verify-cross/summary 모두 파일로 남김.
 
+## verify.md 작성 타이밍 (Phase 1 stale verify 사후 추가)
+
+verify.md는 **마지막 code commit 이후에 작성**한다. 다음을 반드시 지켜라:
+
+1. verify 작성 직전 `git status` 가 clean이어야 함
+2. verify 작성 후 코드를 수정하면 (RE-CODE, plan stale 정리 등) **verify를 새 버전으로 다시 작성**해야 한다
+   - 같은 파일을 덮어쓰거나 (`verify.md` v2 등으로 history는 git이 추적)
+   - 5-A의 모든 검사 명령을 **다시 실행**한 출력을 기준으로
+3. "expected" 라는 단어를 verify의 결과 칸에 쓰지 마라. CI green은 push 후 확정되는 거고, 그 외엔 모두 실측값.
+
+이 규칙을 어기면 cross-verify가 stale을 즉시 잡아낸다.
+
+## Cross-verify round 상한 (Phase 1 사후 도입)
+
+한 phase 안에서 `bash scripts/run_verify_cross.sh` 호출은 **최대 2회**. WORKFLOW.md Stage 5-B 참조.
+
+- Round 1: 첫 verify 후 자동 호출
+- Round 2: Round 1에서 REJECT/DOWNGRADE → RE-CODE 후 1회만 더
+- Round 3 이상은 호출하지 마라. summary.md에 양측 의견 명시하고 Planner에게 escalate.
+
 ## Phase 시작 시 절차
 
 사용자가 `phase_N_prompt.md` 내용을 주면:
@@ -44,9 +64,10 @@ codex --version || { echo "Codex CLI not installed"; exit 1; }
    - Decision `PASS`면 진행, `RE-PLAN`이면 Stage 1로
 7. **Stage 4**: 코드 작업, 작은 commit들
 8. **Stage 5a**: verify.md (self-score) → commit (`chore(phase-N): verify`)
-9. **Stage 5b**: `bash scripts/run_verify_cross.sh N` → verify-cross.md → commit (`chore(phase-N): verify-cross`)
-10. **Stage 5c**: 두 verify 종합 판정. FAIL이면 RE-CODE or RE-PLAN.
-11. **Stage 6**: summary.md → commit (`chore(phase-N): summary`)
+   - `git status` clean 확인 필수
+9. **Stage 5b**: `bash scripts/run_verify_cross.sh N` (Round 1) → commit
+10. **Stage 5c**: round 1 결과 종합. DOWNGRADE/REJECT면 RE-CODE → 새 verify.md → Round 2 cross-verify (마지막). Round 2 이후엔 호출하지 마라.
+11. **Stage 6**: summary.md → commit
 12. `git push` → 작업 종료. summary 내용을 Human에게 보고.
 
 ## 커밋 메시지 규칙 (Conventional Commits)
@@ -56,8 +77,10 @@ codex --version || { echo "Codex CLI not installed"; exit 1; }
 - `chore(phase-N): challenge` — Stage 3 직후
 - `feat(phase-N): <기능>` — Stage 4 본 구현
 - `test(phase-N): <대상>` — 테스트 추가
-- `chore(phase-N): verify` — Stage 5a
-- `chore(phase-N): verify-cross` — Stage 5b
+- `chore(phase-N): verify` — Stage 5a (또는 verify v2, v3로 RE-CODE 후 재작성)
+- `chore(phase-N): verify-cross` — Stage 5b Round 1
+- `chore(phase-N): verify-cross r2` — Round 2 발생 시
+- `fix(phase-N): <fix>` — RE-CODE 라운드
 - `chore(phase-N): summary` — Stage 6
 
 ## 막힐 때
@@ -72,6 +95,8 @@ codex --version || { echo "Codex CLI not installed"; exit 1; }
 - `prompts/`, `scripts/` 내용 임의 수정 (사람이 한다)
 - 다른 phase 산출물 수정
 - 사용자 prompt에 없는 기능 추가
-- **debate.md, verify-cross.md 직접 작성** — 이건 Codex의 산출물이다
+- **debate.md, verify-cross.md 직접 작성** — Codex의 산출물이다
 - `bash scripts/run_*.sh` 호출 생략
+- cross-verify 3라운드 이상 자체 호출
 - self-score를 95+로 매기되 evidence가 부실한 경우 (Planner가 reject한다)
+- verify.md 작성 후 코드 수정하고 verify는 그대로 두는 행위 (stale)

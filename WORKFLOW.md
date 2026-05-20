@@ -32,9 +32,9 @@ Planner ──prompt──► Worker (Claude Code)
                        ├─ 5b. [auto] bash scripts/run_verify_cross.sh N
                        │     └─► Critic (Codex) ─► verify-cross.md
                        │
-                       ├─ 5c. 두 verify 종합 판정
+                       ├─ 5c. 두 verify 종합 판정 (cross-verify 라운드 상한 적용)
                        │     ├─ both PASS → next
-                       │     └─ disagreement → RE-CODE or RE-PLAN
+                       │     └─ disagreement → RE-CODE / Planner escalation
                        │
                        └─ 6. summary.md ──► Planner (web)
                                               │
@@ -125,6 +125,14 @@ plan에서 벗어나는 결정이 생기면:
 
 **산출물**: `.claude/phases/phase-N/verify.md`
 
+**중요**: verify.md는 **마지막 code commit 이후에 작성**한다. verify 작성 후 코드를 더 수정하면 verify는 stale 상태가 된다. 그 경우 verify.md를 **새 버전으로 다시 작성**해야 한다 (예: `verify.md` v2로 덮어쓰기). 이 규칙은 Phase 1의 stale verify 사건 이후 추가.
+
+검증 직전 체크:
+```bash
+git status   # working tree clean이어야 함
+git log -1   # 마지막 commit이 code/test commit인지 확인
+```
+
 **Automated checks (전 phase 공통)**
 
 | 항목     | 명령                                       | 통과 기준    |
@@ -141,7 +149,8 @@ plan에서 벗어나는 결정이 생기면:
 | Phase     | 검증 방식                                              |
 | --------- | ------------------------------------------------------ |
 | 1 (CLI)   | sample PDF 3종으로 실행 + snapshot                     |
-| 2 (CLI)   | end-to-end ingest+translate + 캐시/재시도              |
+| 2a (CLI)  | extract 결과 3종 ingest, DB 행 검증, mock LLM 동작     |
+| 2b (CLI)  | short fixture 실제 sglang 호출 번역 + 캐시 + 재시도    |
 | 3 (API)   | `scripts/verify_api.sh` httpie 시나리오                |
 | 4 (UI)    | 실문서 1권 + 스크린샷 3장 (`docs/phases/phase-4/`)     |
 | 5 (UI)    | 10개 질문 시나리오 + 스크린샷                          |
@@ -158,7 +167,7 @@ plan에서 벗어나는 결정이 생기면:
 
 **각 항목 점수에는 evidence 필수**. Worker self-score는 "통과 후보" 상태.
 
-### 5-B. Cross-verify (자동, Codex)
+### 5-B. Cross-verify (자동, Codex) — round 상한 적용
 
 Worker는 verify.md 작성 직후 **반드시 호출**:
 
@@ -167,26 +176,40 @@ bash scripts/run_verify_cross.sh <phase-num>
 ```
 
 이 스크립트가:
-1. ROADMAP.md, verify.md, git diff/log를 컨텍스트로 모음
+1. ROADMAP.md, verify.md, 이전 라운드의 verify-cross.md (있으면), git diff/log를 컨텍스트로 모음
 2. `prompts/codex_verify.md`를 instruction으로 Codex에 전달
 3. Codex가 read-only로 코드 검사
-4. 결과를 `.claude/phases/phase-N/verify-cross.md`에 저장
+4. 결과를 `.claude/phases/phase-N/verify-cross.md`에 저장 (라운드별 누적: `verify-cross-rN.md`)
 
 Codex 출력 verdict:
 - `CONFIRM_PASS`: self-assessment 신뢰
 - `DOWNGRADE`: 점수 하향 + 사유
 - `REJECT`: 심각한 이슈 + RE-CODE or RE-PLAN 추천
 
+#### **Cross-verify 라운드 상한 (Phase 1 사후 도입)**
+
+한 phase 안에서 **cross-verify 호출은 최대 2회**. 그 이상은 Planner에게 escalate.
+
+- **Round 1**: 첫 verify 후 자동 호출
+- **Round 2**: Round 1에서 REJECT/DOWNGRADE → RE-CODE 후 1회만 더 호출
+- **Round 3 이상**: Worker가 호출하지 않는다. 다음 두 가지 중 하나:
+  - Round 2에서 `CONFIRM_PASS` → 정상 진행
+  - Round 2에서도 REJECT/DOWNGRADE → `summary.md`에 양쪽 의견 명시 + Planner에게 escalate (Worker는 Stage 6로 진행)
+
+**이유**: Phase 1에서 cross-verify가 4라운드 돌면서 같은 영역을 다른 각도로 계속 지적. 무한 iteration 위험. 인간(Planner)이 끊어주는 게 시스템 정합성에 더 좋음.
+
 ### 5-C. Verdict (Worker)
 
-두 verify 종합:
+두 verify 종합 (라운드 상한 내):
 
-| Self (Worker) | Cross (Codex)        | 결과                                              |
-| ------------- | -------------------- | ------------------------------------------------- |
-| ≥95           | CONFIRM_PASS         | **PASS_CANDIDATE** → Stage 6 진입                 |
-| ≥95           | DOWNGRADE            | 점수 재산정, 95 이상이면 진입, 아니면 RE-CODE    |
-| ≥95           | REJECT               | **RE-CODE or RE-PLAN** (Codex 추천 따름)         |
-| <95           | -                    | RE-CODE or RE-PLAN (Worker 판단)                  |
+| Self (Worker) | Cross (Codex)        | Round | 결과                                              |
+| ------------- | -------------------- | ----- | ------------------------------------------------- |
+| ≥95           | CONFIRM_PASS         | any   | **PASS_CANDIDATE** → Stage 6 진입                 |
+| ≥95           | DOWNGRADE            | 1     | RE-CODE → Round 2                                 |
+| ≥95           | DOWNGRADE            | 2     | summary에 양측 명시 + Stage 6 진입 (Planner 판정) |
+| ≥95           | REJECT               | 1     | RE-CODE or RE-PLAN (Codex 추천 따름)              |
+| ≥95           | REJECT               | 2     | summary에 양측 명시 + Stage 6 진입 (Planner 판정) |
+| <95           | -                    | any   | RE-CODE or RE-PLAN (Worker 판단)                  |
 
 **최종 PASS 판정은 Planner(web)가 한다.** Worker의 "PASS_CANDIDATE"는 web 검토 대기 상태.
 
@@ -199,7 +222,8 @@ Codex 출력 verdict:
 **필수 섹션**
 - **Status**: PASS_CANDIDATE / FAIL
 - **Score**: self 항목별 + 합계
-- **Cross-verify verdict**: CONFIRM_PASS / DOWNGRADE / REJECT
+- **Cross-verify verdict**: round별 (CONFIRM_PASS / DOWNGRADE / REJECT)
+- **Round limit 도달 여부**: round 2 이후 양측 disagreement면 그 사유 정확히
 - **What was built**: 3~5 bullet
 - **Files changed**: `git diff --stat` 요약
 - **Deviations from plan**: 있으면
@@ -254,6 +278,11 @@ Phase 1부터 풀 사이클 적용.
 
 Worker는 작업 시작 전에 `codex --version`으로 Codex 가용성을 확인한다. 없으면 작업 멈추고 Human에게 알린다.
 
+**LLM endpoint (Phase 2b부터)**:
+- OpenAI-compatible endpoint 필요 (기본: sglang Qwen3.6 27B at `http://localhost:8081/v1`)
+- `.env`의 `LLM_BASE_URL`, `LLM_MODEL` 사용
+- `enable_thinking=false` 필수 (chat template 변경 감지를 위해 회귀 체크 코드 포함)
+
 ---
 
 ## 산출물 디렉토리 구조
@@ -270,10 +299,11 @@ Worker는 작업 시작 전에 `codex --version`으로 Codex 가용성을 확인
       summary.md
     phase-N/
       plan.md
-      debate.md            # 자동 생성
+      debate.md            # 자동 생성 (Stage 2)
       challenge.md
-      verify.md
-      verify-cross.md      # 자동 생성
+      verify.md            # 마지막 code commit 이후 작성
+      verify-cross.md      # 자동 생성 (Stage 5-B Round 1)
+      verify-cross-r2.md   # Round 2 발생 시
       summary.md
 
 prompts/
