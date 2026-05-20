@@ -33,7 +33,13 @@ def from_env() -> LLMClient:
         base_url = os.environ["LLM_BASE_URL"]
         model = os.environ["LLM_MODEL"]
         api_key = os.environ.get("LLM_API_KEY", "EMPTY")
-        return OpenAICompatibleClient(base_url=base_url, model=model, api_key=api_key)
+        try:
+            timeout = float(os.environ.get("LLM_TIMEOUT", "60"))
+        except ValueError:
+            timeout = 60.0
+        return OpenAICompatibleClient(
+            base_url=base_url, model=model, api_key=api_key, timeout=timeout
+        )
     raise NotImplementedError(
         f"LLM provider {provider!r} is not implemented. "
         "Set LLM_PROVIDER=mock, LLM_PROVIDER=mock_fail, or LLM_PROVIDER=openai_compat."
