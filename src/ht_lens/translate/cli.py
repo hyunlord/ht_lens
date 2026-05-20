@@ -14,6 +14,7 @@ from pathlib import Path
 import typer
 
 from ht_lens.errors import SchemaVersionMismatch
+from ht_lens.llm.errors import LLMHealthCheckFailed
 
 app = typer.Typer(add_completion=False)
 
@@ -54,6 +55,9 @@ def translate_command(
     llm = from_env()
 
     async def _run() -> None:
+        # Verify endpoint health before starting (reasoning_tokens == 0 regression guard).
+        await llm.health_check()
+
         engine = make_engine(db_path)
         factory = make_session_factory(engine)
         try:
@@ -67,6 +71,12 @@ def translate_command(
                     retry_failed=retry_failed,
                     dry_run=dry_run,
                 )
+            if not dry_run and stats.failed > 0:
+                typer.echo(
+                    f"warning: {stats.failed} block(s) failed translation",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
             if dry_run:
                 total = stats.translated + stats.cached
                 typer.echo(
@@ -85,6 +95,11 @@ def translate_command(
 
     try:
         asyncio.run(_run())
+    except typer.Exit:
+        raise
+    except LLMHealthCheckFailed as exc:
+        typer.echo(f"error: health_check failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     except SchemaVersionMismatch as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=3) from exc

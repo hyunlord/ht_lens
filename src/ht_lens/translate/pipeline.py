@@ -91,16 +91,21 @@ async def _dry_run_stats(
     stats: TranslateStats,
 ) -> TranslateStats:
     model_name: str = getattr(llm, "model_name", "unknown")
+    seen: set[str] = set()  # dedup within this dry-run pass (mirrors pending_cache)
     for block in blocks:
         if block.type not in block_types:
             stats.skipped += 1
             continue
         ck = make_cache_key(block.original_text, doc.src_lang, doc.tgt_lang, model_name)
+        if ck in seen:
+            stats.cached += 1
+            continue
         hit = await _db_cache_lookup(session, ck)
         if hit is not None:
             stats.cached += 1
         else:
             stats.translated += 1
+        seen.add(ck)
     return stats
 
 

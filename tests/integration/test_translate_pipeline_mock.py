@@ -417,6 +417,48 @@ async def test_dry_run_counts_cache_hits(
     assert stats.translated == 0
 
 
+@pytest.mark.asyncio
+async def test_dry_run_deduplicates_duplicate_blocks(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Dry-run must not overcount estimated_llm_calls for duplicate texts."""
+    llm = MockLLMClient()
+    async with db_factory() as session:
+        doc_id, _ = await _seed_doc(
+            session, blocks=[("text", "same"), ("text", "same"), ("text", "different")]
+        )
+
+    async with db_factory() as session:
+        stats = await translate_document(doc_id, session, llm, dry_run=True)
+
+    # "same" x 2 + "different" x 1 = 3 blocks; second "same" is deduped
+    assert stats.translated == 2  # "same" once + "different"
+    assert stats.cached == 1  # second "same" is in-run dedup
+
+
+@pytest.mark.asyncio
+async def test_translate_stats_failed_count(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """stats.failed counts blocks that end up with status='failed'."""
+
+    class FailLLM(MockLLMClient):
+        async def translate(self, text: str, src: str, tgt: str, *, context: object = None) -> str:
+            raise LLMPermanentError("always fail")
+
+    async with db_factory() as session:
+        doc_id, block_ids = await _seed_doc(session, blocks=[("text", "a"), ("text", "b")])
+
+    async with db_factory() as session:
+        stats = await translate_document(doc_id, session, FailLLM(), max_retries=0)
+
+    assert stats.failed == 2
+    async with db_factory() as session:
+        for bid in block_ids:
+            tr = await session.get(Translation, bid)
+            assert tr is not None and tr.status == "failed"
+
+
 # ---------------------------------------------------------------------------
 # Schema check
 # ---------------------------------------------------------------------------
