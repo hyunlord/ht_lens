@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ht_lens.api.deps import get_session
-from ht_lens.api.schemas import BlockRead, PageRead, PageRender
+from ht_lens.api.schemas import BlockRead, BlockType, PageRead, PageRender
 from ht_lens.db.models import Block, Document, Page, Thread
 
 router = APIRouter(prefix="/documents", tags=["pages"])
@@ -57,7 +57,7 @@ async def get_page(
         BlockRead(
             id=b.id,
             block_local_id=b.block_local_id,
-            type=b.type,
+            type=cast(BlockType, b.type),
             bbox=list(json.loads(b.bbox_json)),
             order=b.order_idx,
             original_text=b.original_text,

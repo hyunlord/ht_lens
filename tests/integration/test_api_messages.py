@@ -208,3 +208,13 @@ async def test_messages_empty_content_returns_422(api_db_path: Path, tmp_path: P
     with make_test_client(api_db_path) as client:
         resp = client.post(f"/threads/{thread_id}/messages", json={"content": ""})
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_messages_whitespace_only_content_returns_422(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    thread_id, _ = await _make_seed_and_thread(api_db_path, tmp_path)
+    with make_test_client(api_db_path) as client:
+        resp = client.post(f"/threads/{thread_id}/messages", json={"content": "   \t\n  "})
+    assert resp.status_code == 422

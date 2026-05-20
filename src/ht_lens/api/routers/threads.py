@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from ht_lens.api.deps import get_session
 from ht_lens.api.schemas import (
     BlockRead,
+    BlockType,
     MessageRead,
     ThreadCreate,
     ThreadDetail,
@@ -28,7 +29,7 @@ def _block_to_schema(block: Block, *, has_thread: bool) -> BlockRead:
     return BlockRead(
         id=block.id,
         block_local_id=block.block_local_id,
-        type=block.type,
+        type=cast(BlockType, block.type),
         bbox=list(json.loads(block.bbox_json)),
         order=block.order_idx,
         original_text=block.original_text,
@@ -108,6 +109,32 @@ async def create_thread(
         messages=[],
         created_at=thread.created_at,
     )
+
+
+@router.get("/{thread_id}/messages", response_model=list[MessageRead])
+async def list_thread_messages(
+    thread_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[MessageRead]:
+    """List messages of a thread in id-ascending order.
+
+    Phase 3 returns the full history; pagination is Phase 5.
+    """
+    exists = (
+        await session.execute(select(Thread.id).where(Thread.id == thread_id))
+    ).scalar_one_or_none()
+    if exists is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="thread not found")
+    rows = (
+        (
+            await session.execute(
+                select(Message).where(Message.thread_id == thread_id).order_by(Message.id.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [MessageRead.model_validate(m) for m in rows]
 
 
 @router.get("/{thread_id}", response_model=ThreadDetail)

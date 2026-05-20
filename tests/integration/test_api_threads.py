@@ -117,6 +117,40 @@ async def test_get_thread_includes_block_and_messages_in_order(
 
 
 @pytest.mark.asyncio
+async def test_get_thread_messages_route_returns_history_in_order(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """``GET /threads/{id}/messages`` is a dedicated history endpoint."""
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    async with factory() as session:
+        seeded = await seed_minimal_document(session, tmp_dir=tmp_path)
+    await engine.dispose()
+
+    with make_test_client(api_db_path) as client:
+        thread = client.post("/threads", json={"block_id": seeded.block_ids[0]}).json()
+        client.post(f"/threads/{thread['id']}/explain")
+        client.post(
+            f"/threads/{thread['id']}/messages",
+            json={"content": "follow-up"},
+        )
+
+        resp = client.get(f"/threads/{thread['id']}/messages")
+        assert resp.status_code == 200
+        msgs = resp.json()
+
+    assert [m["role"] for m in msgs] == ["user", "assistant", "user", "assistant"]
+    assert [m["id"] for m in msgs] == sorted(m["id"] for m in msgs)
+
+
+@pytest.mark.asyncio
+async def test_get_thread_messages_route_404_when_thread_missing(api_db_path: Path) -> None:
+    with make_test_client(api_db_path) as client:
+        resp = client.get("/threads/9999/messages")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_thread_summary_includes_message_count(api_db_path: Path, tmp_path: Path) -> None:
     engine = make_engine(api_db_path)
     factory = make_session_factory(engine)

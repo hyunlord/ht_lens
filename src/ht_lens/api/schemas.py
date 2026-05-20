@@ -2,13 +2,22 @@
 
 These are intentionally separate from ORM models. ``BlockRead.bbox`` exposes
 the JSON-encoded ``bbox_json`` as a list of floats; routers do the conversion.
+
+Finite-domain attributes (``BlockRead.type``, ``MessageRead.role``) are typed
+as :class:`Literal` so Phase 4/5 clients can rely on the contract. ``status``
+fields remain ``str`` because the project still introduces new values across
+phases.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+BlockType = Literal["text", "image", "header"]
+MessageRole = Literal["user", "assistant", "system"]
 
 
 class DocumentRead(BaseModel):
@@ -27,7 +36,7 @@ class DocumentRead(BaseModel):
 class BlockRead(BaseModel):
     id: int
     block_local_id: str
-    type: str
+    type: BlockType
     bbox: list[float]
     order: int
     original_text: str
@@ -55,7 +64,7 @@ class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    role: str
+    role: MessageRole
     content: str
     model: str | None = None
     created_at: datetime
@@ -86,14 +95,25 @@ class ThreadCreate(BaseModel):
 
 
 class MessageCreate(BaseModel):
+    """User message body. Rejects empty / whitespace-only content."""
+
     content: str = Field(..., min_length=1)
+
+    @field_validator("content")
+    @classmethod
+    def _non_whitespace(cls, value: str) -> str:
+        if value.strip() == "":
+            raise ValueError("content must not be empty or whitespace-only")
+        return value
 
 
 __all__ = [
     "BlockRead",
+    "BlockType",
     "DocumentRead",
     "MessageCreate",
     "MessageRead",
+    "MessageRole",
     "PageRead",
     "PageRender",
     "ThreadCreate",

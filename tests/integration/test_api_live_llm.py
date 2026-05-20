@@ -41,6 +41,11 @@ async def test_explain_and_followup_returns_korean_text(
         assistant1 = explain_resp.json()
         assert assistant1["role"] == "assistant"
         assert len(assistant1["content"].strip()) > 0
+        # We requested a Korean explanation in /explain; assert at least one
+        # Hangul syllable is present so we know the model honored the language.
+        assert any("가" <= ch <= "힣" for ch in assistant1["content"]), (
+            "no Hangul characters in /explain response: " + assistant1["content"][:200]
+        )
 
         followup = client.post(
             f"/threads/{thread['id']}/messages",
