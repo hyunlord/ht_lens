@@ -31,7 +31,7 @@ SQLite + SQLAlchemy 2.0 async DB 스키마, `LLMClient` Protocol + `MockLLMClien
 1. **Async engine 셋업**
    - URL: `sqlite+aiosqlite:///<absolute path>`. 상대경로는 `Path.resolve()`로 절대화 후 사용.
    - `create_async_engine(url, echo=False, future=True)`. SQLite는 동시 writer가 1이라 pool 튜닝 불필요 (기본).
-   - PRAGMA: `event.listens_for(engine.sync_engine, "connect")`로 `journal_mode=WAL`, `foreign_keys=ON`, `synchronous=NORMAL` 설정. Phase 2b의 동시 read 부하 대비.
+   - PRAGMA: `event.listens_for(engine.sync_engine, "connect")`로 **`foreign_keys=ON`만** 설정. cascade test 정합성에 필수. WAL/`synchronous=NORMAL`은 Phase 2b/3에서 부하 측정 후 결정 (Phase 2a serial CLI에 불필요).
    - `async_sessionmaker(engine, expire_on_commit=False)`로 session factory.
    - CLI는 직접 sessionmaker 사용. FastAPI(Phase 3)에서 dependency로 재사용 가능.
 
@@ -42,14 +42,20 @@ SQLite + SQLAlchemy 2.0 async DB 스키마, `LLMClient` Protocol + `MockLLMClien
 
 3. **재진입성**
    - 기본 동작: `documents.filename`이 이미 존재하면 `--overwrite` 없이는 exit 2 + 메시지 ("document already ingested; use --overwrite").
-   - `--overwrite`: 기존 document(filename 기준) cascade 삭제 후 재적재. doc_meta의 `src_pdf_sha256`가 기존 DB에 없으면 비교 생략, 향후 sha256 컬럼은 Phase 6+ 추가 시 alembic add column.
+   - `--overwrite`: 기존 document(filename 기준) cascade 삭제 후 재적재. **CLI help + stderr 진입 시 경고** ("WARNING: --overwrite matches by filename only; two different PDFs sharing a name will destroy data"). sha256 컬럼은 schema에 없어 in-memory 비교 불가; Phase 6 known debt로 column 추가 + 검증 강화 예정.
+   - 단일 transaction으로 delete + insert. 도중 실패 시 rollback → 기존 doc survive (overwrite rollback safety).
    - 이로써 idempotent하진 않지만 명시적 (silent skip이 더 위험).
 
-4. **Phase 1 page JSON 스키마 변동 대비**
-   - ingest는 Phase 1의 `ht_lens.extract.models.PageDoc` / `DocMeta` Pydantic 모델을 **재사용해 parse**한다. 새 의존성 없고 정합성 자동 보장.
-   - 필수 필드 누락 시 Pydantic `ValidationError` → ingest는 `IngestError`로 wrap, exit 2 + 구체 메시지 (page 번호 포함).
+4. **Phase 1 page JSON 스키마 변동 대비 + 매니페스트 무결성**
+   - ingest는 Phase 1의 `ht_lens.extract.models.PageDoc` / `DocMeta` Pydantic 모델을 **재사용해 parse**한다. 새 의존성 없고 schema 정합성 자동 보장.
+   - 그러나 Pydantic parse만으로는 매니페스트 무결성 보장 안 됨 → ingest pipeline에 **명시적 검증** 추가 (debate §2 accept):
+     - `doc_meta.num_pages == len(<extract_dir>/pages/page_*.json)`
+     - page_num 시퀀스가 `1..doc_meta.num_pages` contiguous
+     - 각 page에 대응 `<extract_dir>/pages/page_{page_num:04d}.png` 존재
+   - 위반 시 `IngestError` raise, exit 2 + 구체 메시지 (어떤 page가 누락/잉여/번호 깨짐).
+   - Pydantic `ValidationError`도 `IngestError`로 wrap, exit 2 + 구체 메시지 (page 번호 포함).
    - `render` 필드는 `PageDoc` 정의상 필수이므로 누락 case는 발생하지 않음.
-   - `bg_image_path`는 Phase 1 산출물에 명시되어 있지 않으므로 ingest가 `<extract_dir>/pages/page_{page_num:04d}.png`로 도출하고 존재성 검증.
+   - `bg_image_path`는 Phase 1 산출물에 명시되어 있지 않으므로 ingest가 `<extract_dir>/pages/page_{page_num:04d}.png`로 도출 후 존재성 검증.
 
 5. **`bbox_json` 직렬화 헬퍼**
    - `Block` ORM 모델에 read-only property `bbox` 추가:
@@ -62,17 +68,26 @@ SQLite + SQLAlchemy 2.0 async DB 스키마, `LLMClient` Protocol + `MockLLMClien
    - setter는 추가 안 함 (혼란 방지). 쓰기는 ingest가 명시적으로 `bbox_json=json.dumps(list(bbox))`.
 
 6. **Alembic migration 자동 적용 정책**
-   - **ingest 시작 시 자동 적용 안 함**. 사용자가 명시적으로 적용해야 함. 편의용 `ht-lens db migrate` (= `alembic upgrade head`) 제공.
-   - 이유: ingest가 silently schema change를 적용하면 다중 DB 환경에서 surprise. Phase 2a에서는 사용자 책임으로 명시.
-   - ingest 시작 시 schema version 체크: `alembic_version` 테이블 없거나 head와 불일치 → `SchemaVersionMismatch` raise, exit 3 + 메시지 ("run: ht-lens db migrate --db-path <path>").
+   - **ingest 시작 시 자동 적용 안 함**. 사용자가 명시적으로 적용해야 함.
+   - 편의 명령 `ht-lens db migrate`는 **제공하지 않음** (debate §1 partial accept — minimal). 사용자에게 `uv run alembic upgrade head` 안내.
+   - ingest 시작 시 schema version 체크: `alembic_version` 테이블 없거나 head와 불일치 → `SchemaVersionMismatch` raise, exit 3 + 메시지 ("run: uv run alembic upgrade head"). runtime gate는 유지 (사용자 UX/디버깅 명확성).
 
 7. **DB 파일 위치**
    - 기본값 `./data/ht_lens.db` (`Path.cwd() / "data" / "ht_lens.db"`).
    - `--db-path`가 절대경로면 그대로, 상대경로면 `cwd` 기준 resolve.
    - 부모 디렉토리 없으면 `mkdir(parents=True, exist_ok=True)`로 자동 생성.
-   - `.gitignore`에 `data/` 패턴이 없으면 plan revision으로 추가 (Phase 0 산출물 확인 단계에서 결정).
+   - `.gitignore`는 이미 `data/*` + `!data/.gitkeep`로 처리되어 있음 (Phase 0). 추가 수정 불필요 (확인 완료).
+
+8. **`--src` / `--tgt` 처리 (debate §2 accept)**
+   - `--tgt` default `ko`.
+   - `--src` default = `DocMeta.lang_guess` 값이 `"en"` 또는 `"ko"`면 그 값.
+   - `lang_guess`가 `"mixed"`/`"unknown"`인데 `--src`가 미지정이면 exit 2 + 메시지 ("source language ambiguous; pass --src explicitly").
+   - sample_mixed.pdf는 `--src en` 또는 `--src ko`로 명시 ingest (Phase 2b 번역 단계에서 정교화 가능).
 
 ### 부가 결정
+
+- **PK 전략**: 모든 테이블 surrogate int (`Mapped[int] = mapped_column(primary_key=True)`). Phase 1 식별자(`p1_b001`)는 `Block.block_local_id`(string)에 보존, **글로벌 unique 가정 없음** (debate §2 accept 강조 보완).
+- **`translations.block_id` PK 한계**: prompt schema 고정. 멀티모델 캐시·재번역은 Phase 2b는 단일 모델 가정으로 진행. Phase 6에서 schema migration 예정 (known debt, debate §2 partial accept).
 
 - **Datetime**: 모든 `created_at`/`updated_at`은 timezone-aware UTC (`datetime.now(UTC)`). DB는 SQLite naive로 저장하지만 application layer가 항상 UTC로 다룬다.
 - **`Translation.status`**: ingest 시점에는 translation 행을 생성하지 않는다. Phase 2b 책임.
@@ -101,7 +116,7 @@ SQLite + SQLAlchemy 2.0 async DB 스키마, `LLMClient` Protocol + `MockLLMClien
 | `src/ht_lens/ingest/__init__.py` | Create | empty marker |
 | `src/ht_lens/ingest/__main__.py` | Create | `from ht_lens.cli import app; app()` — typer 단일 entry 통일 |
 | `src/ht_lens/ingest/pipeline.py` | Create | `async def ingest_extract_dir(extract_dir, session, *, src, tgt, overwrite) -> IngestStats` |
-| `src/ht_lens/cli.py` | Modify | `ingest`, `db_migrate` subcommand 추가 |
+| `src/ht_lens/cli.py` | Modify | `ingest` subcommand 추가 (debate §1 partial accept — `db_migrate` 제거). |
 | `src/ht_lens/errors.py` | Modify | `IngestError`, `SchemaVersionMismatch`, `DocumentAlreadyIngested` 추가 (`HtLensError` 패턴 재사용) |
 | `tests/conftest.py` | Modify | `llm_mock` → 실제 `MockLLMClient`. `tmp_db_url`, `async_session_factory` fixture 추가 |
 | `tests/unit/test_db_models.py` | Create | 7 모델 instantiation + relationship + cascade |
@@ -146,14 +161,21 @@ SQLite + SQLAlchemy 2.0 async DB 스키마, `LLMClient` Protocol + `MockLLMClien
   - 3 fixture 각각에 대해:
     1. `extract_pdf` 실행 (in-process) → temp extract_dir
     2. ORM `create_all`로 스키마 초기화 후 `ingest_extract_dir(...)` 실행
-    3. assertions: `documents`=1, `pages`=doc_meta.num_pages, `blocks`>0, 첫 block의 `original_text` 비어있지 않음, `Block.bbox` tuple[4]
+    3. assertions: `documents`=1, `pages`=doc_meta.num_pages, `blocks`>0, **첫 text-type block**의 `original_text` 비어있지 않음 (image block은 빈 텍스트 허용 — debate §3 accept), `Block.bbox` tuple[4]
   - 두 번 ingest (overwrite=False) → `DocumentAlreadyIngested` raise
   - 두 번째 overwrite=True → cascade 삭제 + 재적재 OK (`documents` 여전히 1)
+  - **신규 (debate §3, §5 accept)**:
+    - `test_ingest_accepts_empty_text_image_blocks`: image block + `text=""` 정상 적재
+    - `test_ingest_detects_manifest_mismatch`: page json 누락 / num_pages 불일치 → `IngestError`, exit 2
+    - `test_overwrite_rollback_preserves_existing_document_on_failure`: 정상 ingest 후, tamper된 extract_dir로 overwrite 실패 → 기존 row 그대로
+    - `test_ingest_rejects_or_disambiguates_duplicate_filenames_with_different_sha256`: 같은 filename + 다른 sha256 두 번째 → overwrite 없으면 거부, overwrite 시 stderr 경고
 
 - `test_ingest_cli.py`
   - `subprocess.run([sys.executable, "-m", "ht_lens.ingest", str(extract_dir), "--db-path", str(tmp_db)])` exit 0
   - 존재하지 않는 디렉토리 → exit 2
-  - migration 안 한 DB → exit 3 + 메시지에 "ht-lens db migrate"
+  - migration 안 한 DB → exit 3 + 메시지에 "uv run alembic upgrade head"
+  - **신규 (debate §5 accept)**:
+    - `test_ht_lens_console_script_ingest`: `subprocess.run(["ht-lens", "ingest", ...])` (Phase 1 `test_module_cli.py` 패턴 따라)
 
 - `test_alembic.py`
   - 빈 SQLite에 `alembic upgrade head` (subprocess) → exit 0
