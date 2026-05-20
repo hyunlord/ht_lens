@@ -1,8 +1,15 @@
 """Reading order resolution.
 
-Phase 1 baseline: trust PyMuPDF ``get_text(sort=True)`` order. Only fall
-back to column-aware heuristics when the input ordering is clearly broken
-(two or more vertical regressions).
+Phase 1 baseline: trust PyMuPDF ``get_text(sort=True)`` order. When that
+order regresses vertically — which can happen on cover pages with rotated
+margin text or on layouts that PyMuPDF misorders — fall back to a simple
+y0 sort with page-spanning headers lifted to the top.
+
+Aggressive column detection was tried and abandoned for Phase 1: on the
+arXiv cover fixture, single-block marginalia (vertical stamps) plus a few
+isolated labels generated spurious "columns" that scrambled the order
+worse than no fallback at all. ROADMAP Phase 1 targets only 80%; we
+intentionally keep the fallback humble.
 """
 
 from __future__ import annotations
@@ -10,13 +17,7 @@ from __future__ import annotations
 from ht_lens.extract.blocks import GroupedBlock
 
 _HEADER_WIDTH_RATIO = 0.7
-_COLUMN_GAP_RATIO = 0.10
-_MAX_COLUMNS = 3
-_REGRESSION_THRESHOLD = 2
-
-
-def _center_x(bbox: tuple[float, float, float, float]) -> float:
-    return (bbox[0] + bbox[2]) / 2
+_REGRESSION_THRESHOLD = 1  # any backward jump in y triggers fallback
 
 
 def _vertical_regressions(blocks: list[GroupedBlock]) -> int:
@@ -28,30 +29,6 @@ def _vertical_regressions(blocks: list[GroupedBlock]) -> int:
             count += 1
         prev_y = y0
     return count
-
-
-def _cluster_columns(centers: list[float], page_width: float) -> list[float]:
-    """1D agglomerative clustering — returns sorted cluster centers."""
-    if not centers:
-        return []
-    sorted_c = sorted(centers)
-    clusters: list[list[float]] = [[sorted_c[0]]]
-    gap_threshold = _COLUMN_GAP_RATIO * page_width
-    for c in sorted_c[1:]:
-        if c - clusters[-1][-1] > gap_threshold:
-            clusters.append([c])
-        else:
-            clusters[-1].append(c)
-    if len(clusters) > _MAX_COLUMNS:
-        # Merge smallest-gap pairs until we hit the cap.
-        merged = clusters
-        while len(merged) > _MAX_COLUMNS:
-            gaps = [(merged[i + 1][0] - merged[i][-1], i) for i in range(len(merged) - 1)]
-            _, idx = min(gaps)
-            merged[idx] = merged[idx] + merged[idx + 1]
-            merged.pop(idx + 1)
-        clusters = merged
-    return [sum(c) / len(c) for c in clusters]
 
 
 def order_blocks(blocks: list[GroupedBlock], page_width: float) -> list[GroupedBlock]:
@@ -72,27 +49,5 @@ def order_blocks(blocks: list[GroupedBlock], page_width: float) -> list[GroupedB
             body.append(blk)
 
     spanning.sort(key=lambda b: b.bbox[1])
-
-    centers = [_center_x(b.bbox) for b in body]
-    column_centers = _cluster_columns(centers, page_width)
-    if len(column_centers) <= 1:
-        body.sort(key=lambda b: (b.bbox[1], b.bbox[0]))
-        return spanning + body
-
-    def _column_index(b: GroupedBlock) -> int:
-        cx = _center_x(b.bbox)
-        return min(
-            range(len(column_centers)),
-            key=lambda i: abs(cx - column_centers[i]),
-        )
-
-    columns: list[list[GroupedBlock]] = [[] for _ in column_centers]
-    for b in body:
-        columns[_column_index(b)].append(b)
-    for col in columns:
-        col.sort(key=lambda b: (b.bbox[1], b.bbox[0]))
-
-    ordered: list[GroupedBlock] = list(spanning)
-    for col in columns:
-        ordered.extend(col)
-    return ordered
+    body.sort(key=lambda b: (b.bbox[1], b.bbox[0]))
+    return spanning + body

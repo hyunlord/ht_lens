@@ -13,6 +13,8 @@ GroupedType = Literal["text", "image", "header"]
 
 _HEADER_SIZE_RATIO = 1.4
 _HEADER_MAX_LINES = 2
+_HEADER_MIN_SIZE_PT = 13.0
+_HEADER_MIN_CHARS = 3
 _PARA_GAP_SAME = 0.5
 _PARA_GAP_BREAK = 1.2
 _FONT_SIZE_BREAK = 0.20
@@ -105,7 +107,9 @@ def group_page(page: RawPage) -> list[GroupedBlock]:
             avg_size = median(sizes) if sizes else median_size
             is_header = (
                 avg_size >= _HEADER_SIZE_RATIO * median_size
+                and avg_size >= _HEADER_MIN_SIZE_PT
                 and len(para_lines) <= _HEADER_MAX_LINES
+                and len(text.replace("\n", "").strip()) >= _HEADER_MIN_CHARS
             )
             grouped.append(
                 GroupedBlock(

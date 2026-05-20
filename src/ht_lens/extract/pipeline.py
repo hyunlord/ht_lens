@@ -117,7 +117,6 @@ def extract_pdf(
     out_dir: Path,
     *,
     dpi: int = 200,
-    save_images: bool = False,
     overwrite: bool = False,
 ) -> ExtractResult:
     """Extract a PDF into ``out_dir``: page PNGs, page JSONs, doc_meta.json."""

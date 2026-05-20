@@ -42,16 +42,13 @@ def extract_command(
         help="Output directory.",
     ),
     dpi: int = typer.Option(200, "--dpi", min=72, max=600),
-    save_images: bool = typer.Option(
-        False, "--save-images/--no-save-images", help="Extract image blocks to images/."
-    ),
     overwrite: bool = typer.Option(
         False, "--overwrite/--no-overwrite", help="Replace managed files in out dir."
     ),
 ) -> None:
     """Extract a PDF to page PNGs + block JSONs + doc_meta.json."""
     try:
-        result = extract_pdf(pdf, out, dpi=dpi, save_images=save_images, overwrite=overwrite)
+        result = extract_pdf(pdf, out, dpi=dpi, overwrite=overwrite)
     except (EncryptedPDFError, OutputDirNotEmptyError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=2) from exc
