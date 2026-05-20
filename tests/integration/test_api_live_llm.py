@@ -54,6 +54,11 @@ async def test_explain_and_followup_returns_korean_text(
         assert followup.status_code == 202
         assistant2 = followup.json()
         assert len(assistant2["content"].strip()) > 0
+        # Follow-up should also be in Korean since prior context is Korean
+        # and the user asked again in Korean.
+        assert any("가" <= ch <= "힣" for ch in assistant2["content"]), (
+            "no Hangul characters in /messages response: " + assistant2["content"][:200]
+        )
 
         detail = client.get(f"/threads/{thread['id']}").json()
         assert len(detail["messages"]) == 4
