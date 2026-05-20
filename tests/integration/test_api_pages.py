@@ -150,3 +150,34 @@ async def test_get_page_bbox_is_list_of_floats(api_db_path: Path, tmp_path: Path
     assert all(isinstance(v, int | float) for v in bbox)
     # round-trip with json so we make sure schema accepts list (not tuple)
     json.dumps(bbox)
+
+
+@pytest.mark.asyncio
+async def test_get_page_serializes_table_block_type(api_db_path: Path, tmp_path: Path) -> None:
+    """``BlockRead.type`` Literal must include ``table`` (roadmap §schema).
+
+    Phase 1 does not yet emit ``table`` blocks, but Phase 6 will. This locks
+    the API response schema so future ingest does not silently 500 on
+    pydantic validation.
+    """
+    from sqlalchemy import update
+
+    from ht_lens.db.models import Block
+
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    async with factory() as session:
+        seeded = await seed_minimal_document(session, tmp_dir=tmp_path, blocks_per_page=2)
+        # Force the first block's type to "table" — simulates Phase 6 ingest.
+        await session.execute(
+            update(Block).where(Block.id == seeded.block_ids[0]).values(type="table")
+        )
+        await session.commit()
+    await engine.dispose()
+
+    with make_test_client(api_db_path) as client:
+        resp = client.get(f"/documents/{seeded.doc_id}/pages/1")
+    assert resp.status_code == 200
+    body = resp.json()
+    types = [b["type"] for b in body["blocks"]]
+    assert "table" in types
