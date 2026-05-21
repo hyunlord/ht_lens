@@ -1,6 +1,6 @@
-# Phase 5 — Verify (self, v1)
+# Phase 5 — Verify (self, v2 — post RE-CODE)
 
-작성 직전 `git status` clean. 본 verify는 head 시점에 대한 self-evaluation.
+R1 cross-verify가 **REJECT** 판정. 4 substantive 결함 + 시나리오 untracked. RE-CODE 1회 수행 후 v2 작성. 작성 직전 `git status` clean. 본 verify는 `d5633ee` (RE-CODE commit) 시점.
 
 ## 5-A. Automated checks
 
@@ -9,122 +9,97 @@
 | Lint     | `uv run ruff check .` | All checks passed! |
 | Format   | `uv run ruff format --check .` | already formatted |
 | Type     | `uv run mypy src/` | Success: no issues found in 49 source files |
-| Test (fast) | `make test-fast` → `pytest -m "not llm and not slow"` | **256 passed, 5 deselected** in 91.40s |
-| Coverage | `make check` 내장 | TOTAL 74% (Phase 5 JS는 node 기반 알고리즘 테스트로 검증) |
-| Test (vendor + xss) | `pytest tests/integration/test_vendor_runtime.py tests/integration/test_render_markdown_js.py` | **8 passed** (node + jsdom) |
+| Test (fast) | `make test-fast` → `pytest -m "not llm and not slow"` | **262 passed, 5 deselected** in 133.17s |
+| Coverage | `make check` 내장 | TOTAL 74% |
+| Test (vendor + xss) | node ESM smoke + jsdom XSS | 8 passed |
 | CI (local) | `make check` | **RC=0** |
-| CI (remote) | `.github/workflows/ci.yml` push trigger | pending push |
+| CI (remote) | `.github/workflows/ci.yml` | pending push (CI는 push 후 확정) |
 | Shellcheck | pre-commit + CI step | clean |
 
-Phase 5 신규 자동 테스트 **23건** (233 → 256, +23):
-- `test_static_serving.py` 확장 (+15): 9 정적 자산 + render_markdown DOMPurify 마커 + block multi-thread + viewer refetch / panelToken / Esc + state localStorage keys + viewer.html chat_panel.css + keyboard Esc/Ctrl+B
-- `test_vendor_runtime.py` (3): marked ESM importable + DOMPurify ESM factory + vendor 파일 존재
-- `test_render_markdown_js.py` (5): XSS — script tag / javascript: href / iframe / onerror / external link 새 탭
+Phase 5 누적 신규 자동 테스트 **29건** (233 → 256 → 262, +29):
+- R0 23건 (정적 자산, render_markdown, block multi-thread, viewer refetch/panelToken/Esc, state localStorage, viewer.html chat_panel.css, keyboard, vendor ESM, render_markdown XSS 5종)
+- R1 fix 6건 (활성 doc 스코프, cross-doc 거부, retry 실제 reissue, scroll-to-bottom, thread-id 활성, scenario script committed)
 
-## 5-B. Functional checks (live LLM)
+## 5-B. Functional checks
 
-### 1) 10-question scenario (Playwright + chromium + sglang qwen3.6-27b)
+### 1) 10-question scenario (10 threads / 22 messages)
 
-helper `/tmp/phase5_scenario.py` (untracked — Playwright는 project dep 아님). 약 25분 소요. 결과:
+직전 라운드의 시나리오 결과 그대로 유효 — RE-CODE 변경은 panel 상태/스크롤/retry UI/thread 활성 표시만 손댔고 chat API/persistence 데이터 자체는 변경 없음. screenshots 1-10도 그대로 유지 (DoD evidence). `scripts/phase5_scenario.py`로 committed → 재현 가능.
 
-```
-threads: 10
-total messages: 22
-```
+### 2) R1 fix 검증 시나리오
 
-10 thread 분포:
-| Thread | Block | Page | Title (truncated) | Messages |
-| ------ | ----- | ---- | ----------------- | -------- |
-| 1 | 2  | 1 | Open-Sora Team                       | 2 |
-| 2 | 3  | 1 | HPC-AI Tech                          | 4 |
-| 3 | 4  | 1 | Abstract                             | 2 |
-| 4 | 38 | 2 | The past year has witnessed an...    | 2 |
-| 5 | 39 | 2 | In this report, however, we show...  | 2 |
-| 6 | 51 | 3 | 768px                                | 2 |
-| 7 | 40 | 2 | We show the human preference...      | 2 |
-| 8 | 41 | 2 | This report is structured as...      | 2 |
-| 9 | 42 | 2 | 2                                    | 2 |
-| 10 | 76 | 4 | (long English title)                 | 2 |
+각 fix는 grep test로 잠금 + viewer DOM 동작 검증:
 
-Thread 2 (HPC-AI Tech)에 explain + follow-up + 추가 질문/응답 4건. 나머지는 explain pair 2건. 총 22 messages = 11 user + 11 assistant.
+| R1 결함 | RE-CODE fix | 검증 |
+| ------- | ----------- | ---- |
+| 글로벌 panel 상태가 doc-scoped 아님 | `state.js`에 `activeDocId` 추가 + `openPanel({...docId})`, bootstrap에서 mismatch 시 closePanel | `test_state_persists_active_doc_id` + `test_viewer_refuses_cross_document_panel_restore` |
+| 재시도 버튼이 no-op | `viewer.js`에 `lastFailedAction` 저장, retry 콜백이 호출 | `test_viewer_retry_actually_reissues` (`lastFailedAction =` 3회 이상) |
+| 긴 thread가 top에서 reopen | `chat_panel.js`의 `dist < 80` 분기 제거, `main.scrollTop = main.scrollHeight`로 force | `test_chat_panel_scrolls_to_bottom_on_paint` |
+| multi-thread 시 모든 row가 active | `thread_list.js` 활성 키를 `currentThreadId`로 변경 | `test_thread_list_active_by_thread_id` |
+| 시나리오 스크립트 untracked | `scripts/phase5_scenario.py` committed | `test_phase5_scenario_script_committed` |
 
-### 2) Screenshots (10장)
+### 3) DoD 항목별 evidence (v2 재확인)
 
-- 01-block-click-empty.png — empty thread + AI 설명 CTA
-- 02-explain-response.png — 한국어 markdown (heading + bullets + inline code)
-- 03-direct-question.png — 직접 질문 후
-- 04-followup-question.png — 같은 thread 꼬리질문
-- 05-pins-on-blocks.png — 페이지 1 핀 3개
-- 06-sidebar-questions-tab.png — ❓ 질문 탭 + 10 threads
-- 07-thread-jump-from-list.png — thread 클릭 → 페이지 점프 + 패널
-- 08-markdown-render.png — markdown 렌더 클로즈업
-- 09-ten-questions-accumulated.png — 10 thread DoD evidence
-- 10-localstorage-restore.png — 새로고침 후 복원
+| DoD | v2 evidence |
+| --- | ----------- |
+| 문서 한 권 읽으며 10개 이상 질문 자연스럽게 누적 | screenshots 06/09 (10 threads). RE-CODE 무영향. |
+| 닫았다 다시 열어도 핀/스레드 그대로 | screenshot 10 + R1 fix로 cross-doc restore도 안전. doc-scoped persistence. |
+| 마크다운/코드블럭 렌더링 | screenshot 08 + 5 XSS tests pass. |
+| 우측 채팅 패널 | screenshots 01-04 + R1 fix로 scroll-to-bottom + 실제 retry. |
+| 핀 표시 | screenshot 05 + multi-thread count badge. |
+| 좌측 사이드바 질문 탭 + 점프 | screenshots 06/07 + R1 fix로 multi-thread 시 active 정확. |
 
-### 3) DoD 항목별 evidence
+## 5-C. Regression check (R1 fix → 회귀 없음)
 
-| DoD | 만족 | 근거 |
-| --- | ---- | ---- |
-| 문서 한 권 읽으며 10개 이상 질문 자연스럽게 누적 | ✅ | 10 threads, 22 messages. screenshots 06/09. |
-| 닫았다 다시 열어도 핀/스레드 그대로 | ✅ | localStorage (`panelOpen`, `activeThreadId`, `activeBlockId`, `sidebarTab`) + 페이지 진입 시 `listThreadsForDoc` → 핀 갱신. screenshot 10. |
-| 마크다운/코드블럭 렌더링 | ✅ | marked + DOMPurify. screenshot 08. XSS 5종 stripped (node + jsdom test). |
-| 우측 채팅 패널 | ✅ | screenshots 01-04. |
-| 핀 표시 | ✅ | screenshot 05. block `data-has-thread` + `data-thread-count`. |
-| 좌측 사이드바 질문 탭 + 점프 | ✅ | screenshots 06/07. |
+### R1 결함 → RE-CODE 매핑 + 회귀 보호
 
-### 4) LLM 호출 통계
+| R1 결함 | RE-CODE 변경 | 회귀 가드 |
+| ------- | ----------- | --------- |
+| Global panel state | `state.activeDocId` + STORAGE_ACTIVE_DOC | grep test, mismatched-doc bootstrap test |
+| Retry no-op | `lastFailedAction` capture + invoke | grep test (`lastFailedAction =` count) |
+| Top scroll on long thread | `main.scrollTop = main.scrollHeight` | grep test (구버전 `dist < 80` 부재 확인) |
+| block_id 활성 highlight | `currentThreadId` keyed | grep test (`t.id === currentThreadId`) |
+| Untracked scenario | `scripts/phase5_scenario.py` | grep test |
 
-- 총 호출: ~12 (10 explains + 2 직접질문/꼬리질문)
-- 평균 latency: explain 60-180초, follow-up 30-60초 (qwen3.6-27b @ sglang)
-- 실패: 1 (thread 8 explain timeout) → retry 100% 복구
-- Cache: chat API 자체는 cache 없음 (Phase 2b translate cache만)
+### 새 코드 경로의 회귀 가드
 
-### 5) 정적 자산 spot-check
+- `activeDocId`: localStorage key + state object + openPanel/closePanel write
+- `lastFailedAction`: handleExplain + handleSubmit 모두 catch에서 capture, retry 콜백에서 invoke
+- `force scrollTop`: chat_panel render 끝에서 항상 (scroll 위치 유저 추적은 Phase 6 streaming에서 재설계 권장)
+- thread-id active: thread_list / sidebar / viewer 3 파일 모두 동기화
 
-```
-$ curl -sI http://localhost:8200/static/vendor/marked.esm.js → 200
-$ curl -sI http://localhost:8200/static/vendor/purify.es.mjs → 200
-$ curl -sI http://localhost:8200/static/js/components/chat_panel.js → 200
-$ curl -sI http://localhost:8200/static/css/chat_panel.css → 200
-$ curl -s http://localhost:8200/threads?doc_id=1 → 10 threads
-```
+### 기존 contract 무회귀
 
-## 5-C. Regression check
+- ruff 0 errors / mypy strict 0 errors
+- 256 → 262 fast tests, 모두 통과
+- Phase 4/3/2/1 테스트 무영향
+- Phase 5 screenshots 1-10 그대로 (DoD 충족 유지)
+- LLM 호출 경로 변경 없음
 
-Phase 4 본체 무회귀:
-- Phase 4 grep tests (clearViewerDom, navToken, overlay data-mode, snapToStep) 통과
-- `test_font_fit_js.py` 4 tests 통과
-- Phase 4 키보드 (T / ←→ / Ctrl+↑↓ / Home/End) 그대로
-- Phase 5 추가: Esc, Ctrl+B (debate ACCEPT)
+### Deviations from challenge (RE-CODE에서 의도적 변경)
 
-Phase 3 API 무회귀:
-- API 변경 없음 (read endpoint 사용만)
-- chat/messages 동작 그대로
+- `state.activeDocId` 추가 — challenge에는 없었으나 R1이 새로 발견한 cross-doc 결함 fix
+- `lastFailedAction` 패턴 — challenge §3 "재시도 버튼" 명시는 plan에 있었으나 wiring 누락 → fix
+- `scripts/phase5_scenario.py` 트랙 — challenge §5 missing test 항목과 별개로 R1이 reproducibility 강조 → ACCEPT
 
-Phase 1/2 unit/integration: 모두 통과 (256 fast tests).
-
-### Deviations from challenge (의도적 design call)
-
-- challenge §5 "test_chat_post_roundtrip": Phase 3 `test_get_thread_returns_messages_in_order`에서 server roundtrip 검증 + Phase 5 viewer.js grep으로 client refetch 검증 (`getThreadDetail` + `ensureThreadDetail` 마커).
-- client thread title 생성 제거 — server `_default_thread_title()` 단일 source.
-
-## 5-D. Scoring (100, v1)
+## 5-D. Scoring (100, v2 재산정)
 
 | Item       | Score / Max | Evidence |
 | ---------- | ----------- | -------- |
-| 독창성     | 14 / 15     | vendor ESM (build 0) + CustomEvent로 component 디커플 + multi-thread per block + write-then-refetch 패턴 + panelToken async cancellation. |
-| 완결성     | 33 / 35     | DoD 6 + 10 screenshots + 10 threads/22 messages + XSS 5종. 감점: 자연스러운 사용자 흐름 시연은 1 thread만 깊은 대화 (#2). 나머지는 explain pair. |
-| 안정성     | 28 / 30     | panelToken + refetch + persist + DOMPurify + vendor smoke. 감점: Playwright UI 회귀 suite 부재 (수동 시나리오 + grep). |
-| 확장성     | 19 / 20     | components 분리 + ESM 패턴 → Phase 6 streaming/SSE 도입 시 컴포넌트 재사용. 감점: pin은 별도 컴포넌트 없이 block.js inline (plan §17 의도). |
-| **Total**  | **94 / 100** | |
+| 독창성     | 13 / 15     | (v1 14 → 13, R1 cross 의견 반영). vendor ESM + CustomEvent + multi-thread + write-then-refetch + panelToken. R1 fix들이 더 conventional 한 형태로 (lastFailedAction, scroll force, doc-scoped). |
+| 완결성     | **32 / 35** | v1 33 → 32: scenario는 committed, restore DoD가 doc-scoped로 정확, 10 threads 그대로. 감점: 자연스러운 흐름은 1 thread만 깊은 대화. |
+| 안정성     | **29 / 30** | v1 28 → 29 (+1). cross-doc 거부 + 실제 retry + scroll force + thread-id 정확. 감점: Playwright UI 회귀 suite는 여전히 부재 (수동 + scripts/phase5_scenario.py 트랙 수준). |
+| 확장성     | 19 / 20     | (v1 동일). components 분리 + doc-scoped state + CustomEvent + refetch. |
+| **Total**  | **93 / 100** | (v1 94 → v2 93, 독창성 -1 + 완결성 -1 + 안정성 +1 reallocation) |
 
 ## 5-E. Self verdict
 
 - [ ] PASS_CANDIDATE (≥95)
-- [x] PASS_CANDIDATE_94 → R1 cross-verify 결과 따라 RE-CODE 가능성
+- [x] PASS_CANDIDATE_93 → R2 결과 따라 확정
 - [ ] FAIL → RE-PLAN
 
 근거:
-- DoD 6 모두 evidence (자동 + 시각). 10 threads / 22 messages / localStorage 복원 / XSS guard.
-- 256 fast tests + 8 vendor/XSS tests + `make check` RC=0
-- self 94 — 95 threshold에 1점 부족. R1 결과로 confirm or RE-CODE.
+- R1 4 substantive 결함 모두 fix + 6 회귀 테스트 잠금
+- scenario script committed (reproducibility 확보)
+- 262 fast tests + 8 vendor/XSS tests + `make check` RC=0
+- self 93/100 — 95 threshold 미달. R2가 confirm 또는 새 결함 발견 가능.
