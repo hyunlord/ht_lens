@@ -123,9 +123,19 @@ export async function uploadPDF(file) {
   return resp.json();
 }
 
-export function listJobs(statusFilter) {
-  const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
-  return apiGet(`/jobs${qs}`);
+/** ``opts.includeRecentTerminals=true`` (Phase 6d Planner-directed R2 fix)
+ *  layers on top of ``status=active`` and ALSO surfaces ``failed`` / ``done``
+ *  jobs whose ``finished_at`` is within the last 5 minutes. The frontend
+ *  uses this so the panel can show a job that just failed instead of
+ *  silently hiding it. */
+export function listJobs(statusFilter, opts = {}) {
+  const params = new URLSearchParams();
+  if (statusFilter) params.set("status", statusFilter);
+  if (opts.includeRecentTerminals) {
+    params.set("include_recent_terminals", "true");
+  }
+  const qs = params.toString();
+  return apiGet(`/jobs${qs ? `?${qs}` : ""}`);
 }
 
 export function getJob(jobId) {

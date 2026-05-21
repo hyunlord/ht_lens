@@ -109,6 +109,41 @@
   margin-top: 4px;
 }
 
+/* R2 fix: terminal-state row variants + dismiss button. */
+
+.job-row--failed {
+  background: rgba(248, 81, 73, 0.08);
+  border-left: 3px solid var(--danger);
+  padding-left: 8px;
+  margin-left: -8px;
+}
+
+.job-row--done {
+  opacity: 0.85;
+}
+
+.job-row--failed .job-progress-fill {
+  background: var(--danger);
+}
+
+.job-dismiss {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.job-dismiss:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 /* Document card summary preview */
 
 .summary-preview {
