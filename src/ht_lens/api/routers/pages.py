@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ht_lens.api.deps import get_session
-from ht_lens.api.schemas import BlockRead, BlockType, PageRead, PageRender
+from ht_lens.api.schemas import BlockRead, BlockType, PageRead, PageRender, PageSummary
 from ht_lens.db.models import Block, Document, Page, Thread
 
 router = APIRouter(prefix="/documents", tags=["pages"])
@@ -33,6 +33,50 @@ async def _load_page(session: AsyncSession, doc_id: int, page_num: int) -> Page 
 async def _doc_exists(session: AsyncSession, doc_id: int) -> bool:
     res = await session.execute(select(Document.id).where(Document.id == doc_id))
     return res.scalar_one_or_none() is not None
+
+
+@router.get("/{doc_id}/pages-summary", response_model=list[PageSummary])
+async def get_pages_summary(
+    doc_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[PageSummary]:
+    """Lightweight metadata for every page in a document — Phase 6b.
+
+    Used by the natural-scroll viewer to size placeholder rows up-front
+    without fetching blocks for pages off-screen. ~20 KB for 200 pages.
+    """
+    if not await _doc_exists(session, doc_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
+    rows = (
+        await session.execute(
+            select(
+                Page.page_num,
+                Page.width,
+                Page.height,
+                Page.rotation,
+                Page.render_dpi,
+                Page.pixel_width,
+                Page.pixel_height,
+            )
+            .where(Page.doc_id == doc_id)
+            .order_by(Page.page_num.asc())
+        )
+    ).all()
+    return [
+        PageSummary(
+            page_num=int(r.page_num),
+            width=float(r.width),
+            height=float(r.height),
+            rotation=int(r.rotation),
+            render=PageRender(
+                dpi=int(r.render_dpi),
+                pixel_w=int(r.pixel_width),
+                pixel_h=int(r.pixel_height),
+                scale=(float(r.pixel_width) / float(r.width)) if r.width else 1.0,
+            ),
+        )
+        for r in rows
+    ]
 
 
 @router.get("/{doc_id}/pages/{page_num}", response_model=PageRead)

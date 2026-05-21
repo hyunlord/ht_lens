@@ -51,6 +51,21 @@ class PageRender(BaseModel):
     scale: float
 
 
+class PageSummary(BaseModel):
+    """Lightweight per-page metadata for the natural-scroll viewer — Phase 6b.
+
+    Excludes blocks intentionally — placeholder rows can be sized from the
+    render dimensions alone; blocks load on demand when a page enters the
+    viewport.
+    """
+
+    page_num: int
+    width: float
+    height: float
+    rotation: int
+    render: PageRender
+
+
 class PageRead(BaseModel):
     page_num: int
     width: float
@@ -151,6 +166,7 @@ __all__ = [
     "MessageRole",
     "PageRead",
     "PageRender",
+    "PageSummary",
     "RetranslateResponse",
     "SearchHit",
     "ThreadCreate",
