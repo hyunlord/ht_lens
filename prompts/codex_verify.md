@@ -49,7 +49,10 @@ For each category:
 
 ## 4. Issues missed (new this round)
 What problems do you see in the code or design that they did not surface? Inspect actual files. Look for:
-- **Regressions introduced by RE-CODE**: if this is Round 2+, check whether the RE-CODE fixed Round 1 issues without breaking previously working code. Examples: a CLI flag stopped working, an error path now masks earlier behavior, a previously-tested branch is no longer reachable. **This is your top priority in Round 2+.**
+- **Regressions and untested new code paths introduced by RE-CODE**: if this is Round 2+, your top priority is two-fold:
+  1. **Regressions**: did the RE-CODE break previously working code?
+  2. **Untested new paths**: did the RE-CODE introduce new functions, state fields, event handlers, or migration logic that lack explicit test coverage? Look at the diff of the RE-CODE commit and grep for new identifiers in test files. **A new identifier with no test coverage is a Round 2 finding regardless of whether it visibly breaks anything.**
+  Examples from prior phases: dry-run regression (Phase 2b), Document.status cross-phase (Phase 4), retry-scope and panel-toggle migration (Phase 5).
 - Untested error paths
 - Type annotations that are technically valid but semantically loose
 - DoD items glossed over
