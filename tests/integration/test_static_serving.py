@@ -350,3 +350,75 @@ async def test_keyboard_handles_esc_and_ctrl_b(api_db_path: Path, assets_root: P
     assert "Escape" in src
     assert "onClosePanel" in src
     assert "onTogglePanel" in src
+
+
+# --- Phase 5 R1 fix regression guards ---
+
+
+@pytest.mark.asyncio
+async def test_state_persists_active_doc_id(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: panel state must be doc-scoped (activeDocId persisted) so
+    cross-document reload cannot rehydrate doc A's thread in doc B."""
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    assert "ht_lens.activeDocId" in src
+    assert "activeDocId" in src
+    # openPanel must accept and persist docId.
+    assert "docId" in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_refuses_cross_document_panel_restore(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """R1 fix: bootstrap discards persisted panel when activeDocId mismatches."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert "restoredDocId" in src
+    assert "cross-document panel restore" in src
+    # All openPanel callsites must pass docId now.
+    # Look for at least 3 openPanel({...docId...}) call sites.
+    assert src.count("docId") >= 5
+
+
+@pytest.mark.asyncio
+async def test_viewer_retry_actually_reissues(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: retry button must call the failed action again, not just clear
+    the banner."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert "lastFailedAction" in src
+    # both explain + submit set lastFailedAction on error
+    assert src.count("lastFailedAction =") >= 3
+
+
+@pytest.mark.asyncio
+async def test_chat_panel_scrolls_to_bottom_on_paint(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: long restored thread should reopen at the newest message, not
+    at scrollTop=0."""
+    src = (assets_root / "js" / "components" / "chat_panel.js").read_text(encoding="utf-8")
+    # The dist < 80 shortcut was the bug; the new code force-scrolls.
+    assert "main.scrollTop = main.scrollHeight" in src
+    assert "dist < 80" not in src
+
+
+@pytest.mark.asyncio
+async def test_thread_list_active_by_thread_id(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: multi-thread per block — active row keyed by thread.id, not
+    block_id. Otherwise multiple threads on one block all light up."""
+    src = (assets_root / "js" / "components" / "thread_list.js").read_text(encoding="utf-8")
+    assert "currentThreadId" in src
+    assert "t.id === currentThreadId" in src
+    # The buggy block_id comparison must be gone.
+    assert "block_id === currentBlockId" not in src
+
+
+@pytest.mark.asyncio
+async def test_phase5_scenario_script_committed(api_db_path: Path) -> None:
+    """R1 fix: the Playwright driver behind verify's 10-question scenario
+    must be tracked in scripts/ so reviewers can audit + rerun it."""
+    script = REPO / "scripts" / "phase5_scenario.py"
+    assert script.is_file(), "scripts/phase5_scenario.py is missing"
+    text = script.read_text(encoding="utf-8")
+    assert "10-question" in text or "10 question" in text.lower()
+    assert "playwright" in text.lower()
+
+
+REPO = Path(__file__).resolve().parents[2]

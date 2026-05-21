@@ -3,8 +3,18 @@
 /** Render the "질문" sidebar tab. Lists every thread for the current document
  *  with a pin marker, title, page number, and message count. Clicking an
  *  item invokes ``onSelect(thread)`` — the viewer is responsible for
- *  navigating + opening the panel. */
-export function renderThreadList(container, threads, currentBlockId, onSelect) {
+ *  navigating + opening the panel.
+ *
+ *  Active highlight is keyed by ``currentThreadId`` (not block id) so a block
+ *  with multiple threads only highlights the one currently open in the panel.
+ *  R1 fix.
+ */
+export function renderThreadList(
+  container,
+  threads,
+  currentThreadId,
+  onSelect,
+) {
   container.innerHTML = "";
   if (!threads || threads.length === 0) {
     const empty = document.createElement("div");
@@ -18,7 +28,7 @@ export function renderThreadList(container, threads, currentBlockId, onSelect) {
   for (const t of threads) {
     const li = document.createElement("li");
     li.className = "thread-item";
-    if (t.block_id === currentBlockId) li.classList.add("thread-item--active");
+    if (t.id === currentThreadId) li.classList.add("thread-item--active");
     li.dataset.threadId = String(t.id);
     li.dataset.blockId = String(t.block_id);
 

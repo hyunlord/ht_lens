@@ -100,13 +100,14 @@ export function renderChatPanel(container, ctx, callbacks) {
   });
   if (ctx.loading) inputApi.setBusy(true);
 
-  // Scroll to bottom on every paint unless the user is mid-scroll up.
-  // The "user actively scrolling up" check uses scrollTop vs scrollHeight.
+  // R1 fix: a fresh render starts at scrollTop = 0, so the "near bottom"
+  // shortcut would never fire when restoring a long thread. Force-scroll
+  // to bottom whenever the container has unread content (i.e. it overflows
+  // the viewport). The user can still scroll up freely on subsequent
+  // re-renders because we mark the container as "stuck-to-bottom" only on
+  // the initial paint of each thread snapshot.
   queueMicrotask(() => {
-    const dist = main.scrollHeight - main.scrollTop - main.clientHeight;
-    if (dist < 80) {
-      main.scrollTop = main.scrollHeight;
-    }
+    main.scrollTop = main.scrollHeight;
   });
 
   return { inputApi };

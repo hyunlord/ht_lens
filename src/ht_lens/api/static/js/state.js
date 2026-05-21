@@ -16,6 +16,9 @@ const STORAGE_SIDEBAR_TAB = "ht_lens.sidebarTab";
 const STORAGE_PANEL_OPEN = "ht_lens.panelOpen";
 const STORAGE_ACTIVE_BLOCK = "ht_lens.activeBlockId";
 const STORAGE_ACTIVE_THREAD = "ht_lens.activeThreadId";
+// R1 fix: panel state must be scoped to the doc so cross-document reload
+// cannot rehydrate a stale thread in the wrong document.
+const STORAGE_ACTIVE_DOC = "ht_lens.activeDocId";
 
 function safeReadFloat(key, fallback) {
   try {
@@ -91,6 +94,7 @@ export const state = {
   panelOpen: safeReadBool(STORAGE_PANEL_OPEN, false),
   activeBlockId: safeReadInt(STORAGE_ACTIVE_BLOCK),
   activeThreadId: safeReadInt(STORAGE_ACTIVE_THREAD),
+  activeDocId: safeReadInt(STORAGE_ACTIVE_DOC),
   // Runtime caches — do NOT persist.
   threadsByDoc: {}, // { [docId]: Thread[] }
   threadDetailById: {}, // { [threadId]: ThreadDetail (full incl. messages) }
@@ -148,15 +152,20 @@ export function setSidebarTab(tab) {
   notify();
 }
 
-/** Phase 5: open the chat panel for a block (and possibly a thread). */
-export function openPanel({ blockId, threadId = null }) {
+/** Phase 5: open the chat panel for a block (and possibly a thread).
+ *  ``docId`` MUST be provided so the persisted snapshot is doc-scoped — a
+ *  reload into a different document will refuse the stale restore.
+ */
+export function openPanel({ blockId, threadId = null, docId }) {
   state.panelOpen = true;
   state.activeBlockId = blockId ?? null;
   state.activeThreadId = threadId;
+  state.activeDocId = docId ?? null;
   state.panelToken++;
   safeWrite(STORAGE_PANEL_OPEN, "1");
   safeWrite(STORAGE_ACTIVE_BLOCK, blockId ?? null);
   safeWrite(STORAGE_ACTIVE_THREAD, threadId);
+  safeWrite(STORAGE_ACTIVE_DOC, docId ?? null);
   notify();
 }
 
@@ -165,10 +174,12 @@ export function closePanel() {
   state.panelOpen = false;
   state.activeBlockId = null;
   state.activeThreadId = null;
+  state.activeDocId = null;
   state.panelToken++;
   safeWrite(STORAGE_PANEL_OPEN, "0");
   safeWrite(STORAGE_ACTIVE_BLOCK, null);
   safeWrite(STORAGE_ACTIVE_THREAD, null);
+  safeWrite(STORAGE_ACTIVE_DOC, null);
   notify();
 }
 

@@ -57,6 +57,9 @@ let currentDoc = null;
 let currentPage = null;
 let panelError = null; // string | null
 let navToken = 0;
+// R1 fix: remember the last failing async action so the "재시도" button can
+// actually re-issue it instead of just clearing the error banner.
+let lastFailedAction = null; // () => Promise<void> | null
 
 function buildThreadsByBlock(docId) {
   const list = state.threadsByDoc[docId] || [];
@@ -92,6 +95,7 @@ function repaintSidebar() {
       currentPage: currentPage?.page_num,
       threads: state.threadsByDoc[currentDoc.id] || [],
       currentBlockId: state.activeBlockId,
+      currentThreadId: state.activeThreadId,
       sidebarTab: state.sidebarTab,
     },
     {
@@ -129,6 +133,14 @@ function repaintPanel() {
       onRetry: () => {
         panelError = null;
         repaintPanel();
+        // R1 fix: actually re-issue the failed action.
+        if (typeof lastFailedAction === "function") {
+          const action = lastFailedAction;
+          lastFailedAction = null;
+          action().catch((err) => {
+            console.error("retry action failed", err);
+          });
+        }
       },
     },
   );
@@ -257,15 +269,15 @@ async function handleExplain() {
   const token = state.panelToken;
   setLoadingMessage(true);
   panelError = null;
+  lastFailedAction = null;
   repaintPanel();
   try {
     const threadId = await ensureThreadForActiveBlock();
     if (state.panelToken !== token) return;
     await explainThread(threadId);
     if (state.panelToken !== token) return;
-    const detail = await ensureThreadDetail(threadId);
+    await ensureThreadDetail(threadId);
     if (state.panelToken !== token) return;
-    // Pin/sidebar update — refresh the doc-wide list.
     try {
       const refreshed = await listThreadsForDoc(currentDoc.id);
       setThreadsForDoc(currentDoc.id, refreshed);
@@ -277,6 +289,7 @@ async function handleExplain() {
   } catch (err) {
     if (state.panelToken !== token) return;
     panelError = err.message || "AI 응답 실패. 다시 시도하세요.";
+    lastFailedAction = handleExplain; // R1 fix: retry actually re-issues
     console.error("explain failed", err);
   } finally {
     if (state.panelToken === token) {
@@ -291,13 +304,14 @@ async function handleSubmit(text) {
   const token = state.panelToken;
   setLoadingMessage(true);
   panelError = null;
+  lastFailedAction = null;
   repaintPanel();
   try {
     const threadId = await ensureThreadForActiveBlock();
     if (state.panelToken !== token) return;
     await postMessage(threadId, text);
     if (state.panelToken !== token) return;
-    const detail = await ensureThreadDetail(threadId);
+    await ensureThreadDetail(threadId);
     if (state.panelToken !== token) return;
     try {
       const refreshed = await listThreadsForDoc(currentDoc.id);
@@ -310,6 +324,7 @@ async function handleSubmit(text) {
   } catch (err) {
     if (state.panelToken !== token) return;
     panelError = err.message || "메시지 전송 실패";
+    lastFailedAction = () => handleSubmit(text); // R1 fix
     console.error("submit failed", err);
   } finally {
     if (state.panelToken === token) {
@@ -326,7 +341,7 @@ async function jumpToThread(thread) {
   const docId = currentDoc.id;
   const needNav = thread.page_num !== currentPage?.page_num;
   // Open panel state ahead of navigation so the reload restores it.
-  openPanel({ blockId: thread.block_id, threadId: thread.id });
+  openPanel({ blockId: thread.block_id, threadId: thread.id, docId });
   if (needNav) {
     await loadAndRender({ docId, page: thread.page_num });
   }
@@ -341,9 +356,9 @@ async function jumpToThread(thread) {
 // Block click delegation (Phase 5).
 document.addEventListener("ht-lens:block-click", async (e) => {
   const { blockId } = e.detail;
-  openPanel({ blockId, threadId: null });
-  // If the block already has a thread, auto-select the most recent.
   const docId = currentDoc?.id;
+  openPanel({ blockId, threadId: null, docId });
+  // If the block already has a thread, auto-select the most recent.
   const existing = (state.threadsByDoc[docId] || []).filter(
     (t) => t.block_id === blockId,
   );
@@ -412,6 +427,7 @@ attachKeyboard({
       openPanel({
         blockId: state.activeBlockId,
         threadId: state.activeThreadId,
+        docId: currentDoc?.id,
       });
     }
   },
@@ -419,15 +435,31 @@ attachKeyboard({
 
 // Initial render. If localStorage restored an activeThreadId, hydrate its
 // detail snapshot in the background so the panel can paint when ready.
+//
+// R1 fix: refuse to restore the panel if the persisted ``activeDocId`` does
+// not match the document we are about to load. A cross-document restore
+// would otherwise hydrate doc A's thread inside doc B's UI and let
+// `handleSubmit` post into the wrong thread.
 async function bootstrap() {
   const initial = parseQuery();
+  const restoredDocId = state.activeDocId;
+  if (
+    state.panelOpen &&
+    restoredDocId !== null &&
+    restoredDocId !== initial.docId
+  ) {
+    console.info(
+      "discarding cross-document panel restore",
+      { restoredDocId, urlDocId: initial.docId },
+    );
+    closePanel();
+  }
   await loadAndRender({ ...initial, replaceUrl: true });
   if (state.panelOpen && state.activeThreadId) {
     try {
       await ensureThreadDetail(state.activeThreadId);
       repaintPanel();
     } catch (err) {
-      // Stale thread id — close panel cleanly.
       console.warn("restored thread no longer available", err);
       closePanel();
     }

@@ -57,7 +57,7 @@ export function renderSidebar(container, ctx, callbacks) {
     renderThreadList(
       wrap,
       ctx.threads || [],
-      ctx.currentBlockId || null,
+      ctx.currentThreadId || null,
       callbacks.onSelectThread,
     );
     container.appendChild(wrap);
