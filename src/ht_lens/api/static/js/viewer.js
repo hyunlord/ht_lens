@@ -340,6 +340,11 @@ async function jumpToThread(thread) {
   if (!currentDoc) return;
   const docId = currentDoc.id;
   const needNav = thread.page_num !== currentPage?.page_num;
+  // R2 fix: jumping to a different block clears stale retry/error.
+  if (state.activeBlockId !== thread.block_id) {
+    panelError = null;
+    lastFailedAction = null;
+  }
   // Open panel state ahead of navigation so the reload restores it.
   openPanel({ blockId: thread.block_id, threadId: thread.id, docId });
   if (needNav) {
@@ -357,6 +362,12 @@ async function jumpToThread(thread) {
 document.addEventListener("ht-lens:block-click", async (e) => {
   const { blockId } = e.detail;
   const docId = currentDoc?.id;
+  // R2 fix: clear retry/error state on block transition. Same-block re-click
+  // preserves it so the user can still hit "재시도".
+  if (state.activeBlockId !== blockId) {
+    panelError = null;
+    lastFailedAction = null;
+  }
   openPanel({ blockId, threadId: null, docId });
   // If the block already has a thread, auto-select the most recent.
   const existing = (state.threadsByDoc[docId] || []).filter(

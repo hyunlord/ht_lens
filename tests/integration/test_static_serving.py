@@ -422,3 +422,27 @@ async def test_phase5_scenario_script_committed(api_db_path: Path) -> None:
 
 
 REPO = Path(__file__).resolve().parents[2]
+
+
+# --- Planner-directed R2 fix regression guards ---
+
+
+@pytest.mark.asyncio
+async def test_block_transition_clears_retry_state(api_db_path: Path, assets_root: Path) -> None:
+    """R2 fix: switching to a different block must reset panelError +
+    lastFailedAction so the retry button cannot replay a previous failure
+    into the new conversation. Same-block re-click is preserved."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # Both block click + jumpToThread guard the transition.
+    assert "state.activeBlockId !== blockId" in src, (
+        "block click handler must compare against previous activeBlockId"
+    )
+    assert "state.activeBlockId !== thread.block_id" in src, (
+        "jumpToThread must compare against previous activeBlockId"
+    )
+    # The reset must zero both retry-related fields.
+    # We accept either ordering of the two assignments.
+    transitions = src.count("panelError = null;\n    lastFailedAction = null;")
+    assert transitions >= 2, (
+        "block transition guards should clear both panelError and lastFailedAction"
+    )
