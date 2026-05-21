@@ -95,12 +95,19 @@ export function mountPage(pageNum, ctx) {
 
 /** Drop the block overlay for a far-off-screen page so the DOM stays
  *  bounded. Page metadata stays in state.pageDataById only until the row is
- *  unmounted (so subsequent mounts still hit cache). */
+ *  unmounted (so subsequent mounts still hit cache).
+ *
+ *  Phase 6b debate §3 jsdom regression: unmountPage MUST abort + bump the
+ *  token even when the page hasn't finished mounting yet, otherwise a
+ *  late fetch resolution can write blocks into an already-unmounted row.
+ */
 export function unmountPage(pageNum, ctx) {
-  if (!_mountedPages.has(pageNum)) return;
   const controller = _abortByPage.get(pageNum);
+  const hadInflight = _mountPromiseByPage.has(pageNum) || controller;
+  // Always abort + bump so a stale fetch resolution cannot escape.
   controller?.abort();
-  _bumpToken(pageNum); // invalidate any late fetch resolution
+  _bumpToken(pageNum);
+  if (!_mountedPages.has(pageNum) && !hadInflight) return;
   const row = ctx.stageEl.querySelector(`.page-row[data-page="${pageNum}"]`);
   if (row) {
     row.innerHTML = "";
