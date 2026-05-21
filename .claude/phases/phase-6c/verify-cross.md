@@ -1,45 +1,45 @@
 ## 1. Verification of automated checks
 
-- No prior `verify-cross.md` content exists beyond the auto-generated placeholder, so there is no Round 1 carryover to re-raise. `verify.md` is not stale: `git log -1` and `git log -- .claude/phases/phase-6c/verify.md` both point to `824f25e` on 2026-05-21 23:15:48 +0900.
+- `verify.md` is not stale. It cites code head `a1da59d` at `.claude/phases/phase-6c/verify.md:3`, and the only later diff to `70e04cf` is `verify.md` itself. The two Round 1 substantive defects are genuinely fixed on current HEAD: `tests/integration/_api_helpers.py:139-140` now guards the mock pin, and `src/ht_lens/api/static/js/viewer.js:837-847` now selects the fit summary by `preferPage/currentPage`.
 
-- `lint`, `format`, `type`, and `make test-fast` are plausibly current-HEAD evidence. The table in `.claude/phases/phase-6c/verify.md:7-15` matches the repo wiring in `Makefile` and `pyproject.toml`, and there are no later code commits after the verify commit.
+- The `ruff`, `format`, `mypy`, and `make test-fast` rows in `.claude/phases/phase-6c/verify.md:7-15` are plausible current-HEAD evidence. They line up with `Makefile:7-20` and `pyproject.toml:65-76`.
 
-- The `coverage` row is weaker than presented. `make check` just runs `fmt`, `lint`, and `test-fast`; coverage is a byproduct of pytest’s default `--cov`, not a separate thresholded gate. So `TOTAL 72%` is informational, not a distinct passed check.
+- `Coverage` is overstated as a separate check. `make check` in `Makefile:20` does not enforce a coverage threshold; `TOTAL 72%` is only pytest output from `pyproject.toml:67`, not an independently passed gate.
 
-- `CI (remote)` is not verified. `.claude/phases/phase-6c/verify.md:15` says “pending push”; that is not evidence of a green remote workflow.
+- `CI (local)` is incomplete. Remote CI also runs `shellcheck scripts/*.sh` in `.github/workflows/ci.yml:15-17`, but the self-verify table never shows a local `shellcheck` run even though Phase 6c changed `scripts/dev_serve.sh`.
 
-- A missing automated check is more important: after changing `tests/integration/_api_helpers.py:120-160`, they should have rerun the existing `@pytest.mark.llm` API tests. That helper now controls provider selection, so skipping the live-LLM suite leaves the most fragile regression surface unchecked.
+- `CI (remote)` is not verified. `.claude/phases/phase-6c/verify.md:15` says `pending push`, so this row should not count toward a 97/100 pass narrative.
+
+- They also should have rerun targeted `@pytest.mark.llm` API coverage after changing provider-selection logic in `tests/integration/_api_helpers.py:127-162`. `make test-fast` excludes exactly the suite most sensitive to that change.
 
 ## 2. Verification of functional checks
 
-- The `.env` functional evidence is mostly credible. `src/ht_lens/api/app.py:95-113` loads repo-root `.env` before `from_env()`, and the manual evidence in `docs/phases/phase-6c/README.md:17-37` is consistent with the DoD.
+- The live-LLM evidence is materially better than Round 1. `src/ht_lens/api/app.py:95-113` now loads repo-root `.env` at the right level, and `docs/phases/phase-6c/README.md:17-37` shows separate `/proc` and DB/model evidence. The old screenshot-06 labeling problem is addressed and should not be re-raised.
 
-- The fit-to-width verification does not fully exercise the DoD. They only show the landing page screenshot and static/jsdom checks. There is no functional test for navigating to a later page, and no test for mixed page sizes even though the backend explicitly supports them in `tests/integration/test_api_pages_summary.py:70-100`.
+- The “6-page natural scroll” proof is unchanged since Round 1. `scripts/phase6c_scenario.py:47-65` scrolls to page 3, bumps 200px, and records `mounted_pages_mid_scroll=[1,2,3,4,5]`. That supports “next-page mount improved,” not the DoD in `ROADMAP.md:276` or the self-verify claim at `.claude/phases/phase-6c/verify.md:45`.
 
-- The natural-scroll DoD is overstated. The claim in `.claude/phases/phase-6c/verify.md:70` says “6페이지 끝까지”, but the scenario script stops at page 3, scrolls 200px, and records `mounted_pages_mid_scroll=[1,2,3,4,5]` (`scripts/phase6c_scenario.py:47-65`). That proves “next-page mount improved”, not “end-to-end through page 6”.
+- The sidebar persistence check is also unchanged since Round 1. `.claude/phases/phase-6c/verify.md:35,47` claims reload restore, but the scenario script never reloads after toggling, and no runtime test asserts persisted restoration from `ht_lens.sidebarOpen`.
 
-- The sidebar persistence claim is not actually exercised. `.claude/phases/phase-6c/verify.md:50` says reload restores `ht_lens.sidebarOpen`, but the scenario script never reloads after toggling, and there is no behavioral test covering persisted restore.
-
-- Screenshot 06 is mislabeled as if it captures a real LLM reply. In `scripts/phase6c_scenario.py:73-82`, the script only clicks a block and opens the panel; it never triggers `/threads/{id}/explain` or waits for assistant content. The README itself admits the live-LLM proof is separate curl evidence (`docs/phases/phase-6c/README.md:15,27-37`).
+- Fit-to-width evidence improved, but it still does not exercise a realistic later-page navigation flow. The new pure-function coverage in `tests/integration/test_viewport_js.py:155-176` proves heterogeneous widths matter, but nothing functionally drives the viewer to page N and checks that `viewer.js:672-675, 832-849` actually re-fits after `currentPage` changes.
 
 ## 3. Score audit
 
-- 독창성 13/15: broadly justified. The `pickActivePage` midpoint logic and the narrower `create_app()` dotenv load are sensible, phase-appropriate decisions. I would keep this at `13/15`.
+- 독창성: `13/15` is justified. The repo-root dotenv load in `src/ht_lens/api/app.py:95-113` and midpoint page selection in `src/ht_lens/api/static/js/components/stage_container.js:187-210` are clean, phase-appropriate solutions. I would keep `13/15`.
 
-- 완결성 34/35: not justified. Two DoD items are not properly evidenced: end-to-end 6-page natural scroll and sidebar state restore on reload. More importantly, the fit implementation uses the first page’s metadata only (`src/ht_lens/api/static/js/viewer.js:817-825`), so “새 페이지 진입 시 자동 fit” is not reliably true for heterogeneous documents. Suggested `28/35`.
+- 완결성: `34/35` is too high. Two DoD items are still only partially evidenced: end-to-end 6-page scrolling and sidebar reload persistence. Later-page auto-fit is implemented, but not functionally exercised. Suggested `31/35`.
 
-- 안정성 29/30: not justified. `tests/integration/_api_helpers.py:138` now hard-pins `LLM_PROVIDER=mock`, which undermines the fidelity of live API tests that set `openai_compat` (`tests/integration/test_api_live_llm.py:33-37`, `tests/integration/test_api_retranslate.py:221-224`). New UI paths like sidebar persistence and ResizeObserver behavior are mostly covered by grep/manual evidence, not runtime tests. Suggested `24/30`.
+- 안정성: `30/30` is not justified. The new provider-selection path in `tests/integration/_api_helpers.py:127-162` is environment-sensitive, and the new `_isolate_llm_env` fixture in `tests/conftest.py:21-41` has no direct regression test. They also did not rerun `@pytest.mark.llm` after touching that surface. Suggested `27/30`.
 
-- 확장성 19/20: too high. The first-page-only fit assumption couples the viewer to uniform page geometry, despite `pages-summary` already preserving per-page dimensions. The global env mutation in `_api_helpers` also creates hidden coupling between test infrastructure and provider selection. Suggested `16/20`.
+- 확장성: `20/20` is slightly high. `applyFitToWidthIfAuto({preferPage})` in `viewer.js:832-849` is a good extension point, but test infrastructure is now coupled to ambient shell env in a way that will make future LLM-path verification brittle. Suggested `18/20`.
 
-- Fair total: around `81/100`, not `95/100`.
+- Fair total: `89/100`, not `97/100`.
 
 ## 4. Issues missed (new this round)
 
-- `tests/integration/_api_helpers.py:133-138` silently forces `LLM_PROVIDER=mock` for every `make_test_client()` call. Existing live-provider tests still set `LLM_PROVIDER=openai_compat` and then call this helper (`tests/integration/test_api_live_llm.py:33-37`, `tests/integration/test_api_retranslate.py:221-224`). That means the helper now overrides the test’s intended provider, so the live-LLM API path is no longer trustworthy under pytest. This directly contradicts `.claude/phases/phase-6c/verify.md:36,89-100`.
+- New regression surface: fast API tests now depend on the caller’s shell env. `make_test_client()` only pins `LLM_PROVIDER=mock` when `prev_provider is None` (`tests/integration/_api_helpers.py:129-140`), while `_isolate_llm_env` preserves the pre-test snapshot instead of clearing it (`tests/conftest.py:21-41`). If pytest starts with `LLM_PROVIDER=openai_compat` already exported, default `make_test_client()` paths will use the live provider. There is no explicit test for this path; `test_make_test_client_only_pins_mock_when_unset` at `tests/integration/test_static_serving.py:1073-1090` is only a source grep.
 
-- `src/ht_lens/api/static/js/viewer.js:817-825` computes fit-to-width from `state.pageSummaries[0]` only. The repo already preserves per-page width/scale differences (`tests/integration/test_api_pages_summary.py:70-100`), so navigating to a later larger page will reuse page 1’s fit and can overflow or under-fit. There is no automated or manual verification of this path.
+- New untested viewer path: the RE-CODE added `_lastCurrentPage` and a `currentPage`-driven refit in `src/ht_lens/api/static/js/viewer.js:647-675`, but no runtime test exercises it. `tests/integration/test_static_serving.py:1050-1070` only greps for the strings, and `tests/integration/test_viewport_js.py:155-176` only tests `computeFitZoom()` in isolation. Round 2 policy treats this as an uncovered new path.
 
 ## 5. Verdict
 
-REJECT. The self-verify is on current `HEAD`, but the scoring is not credible because it misses one real code defect and one verification-surface regression: fit-to-width is keyed off the first page instead of the current page, and the new `_api_helpers` behavior can silently force mock mode in existing live API tests. The manual evidence also overclaims two DoD items it did not actually exercise. This needs RE-CODE plus targeted verification: fix provider selection in `make_test_client()`, compute fit from the active/target page summary, and add behavioral checks for page-6 natural scroll completion and sidebar reload persistence.
+DOWNGRADE. Round 1’s two substantive code defects are fixed, so this is not a REJECT on the original findings. But the self-score of 97 is not credible: local/remote automated evidence is incomplete, two functional verification gaps remain unchanged since Round 1, and RE-CODE introduced a new environment-sensitive test-helper path plus an uncovered viewer refit path. A fair assessment is closer to `89/100`.
