@@ -64,6 +64,8 @@ RE-CODE 라운드에서 **새 결함을 도입하는** 케이스가 실제로 �
 
 3. **fix가 의도한 영역 외 추가 변경**: 작은 정합성 정리(예: exit code 통일)는 OK이지만 summary.md의 "Deviations from plan"에 명시.
 
+4. **RE-CODE에서 새로 도입한 함수/state field/event handler는 명시적 단위 테스트 잠금** 의무. Phase 2b/4/5 패턴: R1 결함 fix가 새 코드 경로 (CLI exit dispatch, Document.status update, retry scope, panel toggle) 도입 → 검증 부족 → R2에서 발견. RE-CODE 후 verify.md의 "Regression check" 섹션에는 **각 RE-CODE 변경의 새 코드 경로 → 어떤 단위 테스트로 잠금** 표를 포함하라. 새 함수 이름과 새 state field 이름이 grep으로 테스트 파일에 나타나야 한다.
+
 ## Phase 시작 시 절차
 
 사용자가 `phase_N_prompt.md` 내용을 주면:
