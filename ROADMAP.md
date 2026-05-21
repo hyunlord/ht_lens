@@ -218,7 +218,7 @@ messages      (id, thread_id, role, content, model, created_at)
 
 ---
 
-### Phase 6a — Critical UX gaps ⬜
+### Phase 6a — Critical UX gaps ✅
 **Deliverable**
 - Cmd+K 전체 검색 (원문+번역 동시)
 - 질문 → markdown export
@@ -229,16 +229,39 @@ messages      (id, thread_id, role, content, model, created_at)
 - 질문 export markdown 한 파일로 받기 가능 + 사람이 읽기 좋음
 - block 우클릭 → 재번역 → 캐시 무효화 + 새 번역 표시
 
-**위험**
-- 검색 latency (SQLite LIKE vs FTS5)
-- export markdown 형식의 정합성 (10+ thread를 깔끔하게)
-- 재번역 중 다른 block 작업과 충돌
-
-**Versioning**: v0.4 달성
+**완료 노트**
+- 96/100 Planner-adjusted (Worker 98 vs Codex R2 95 절충)
+- 305 fast tests + 6 LLM tests + 7 screenshots + tracked scenario
+- R1 4 substantive 결함 모두 fix (cache pollution / multiline export / whitespace search / confirm modal behavioural)
+- R2 verify-scope critique 4건은 Phase 6d 위임
+- v0.4 마일스톤 달성
 
 ---
 
-### Phase 6b — Extraction Quality Debt ⬜
+### Phase 6b — Viewer Rework ⬜
+**Deliverable**
+- 좌우 분할 비교 뷰 (원문 | 번역 동시 표시)
+- 자연 스크롤 페이지 네비 (PDF처럼 연속 스크롤)
+- View mode 토글: `translation` / `original` / `both`
+- 채팅 패널 + 좌우 비교 충돌 회피 (자동 single-pane)
+
+**DoD**
+- 200 페이지 PDF에서 스크롤 부드러움 (메모리 < 500MB)
+- 좌우 비교에서 페이지/zoom/scroll 정확히 동기화
+- block hover/click이 양쪽 pane에 동기 반영
+- 검색/사이드바 점프가 자연 스크롤 위치로 정확히
+
+**위험**
+- intersection observer + lazy ±1 페이지 마운트 정확도
+- side-by-side scroll 동기화
+- 메모리 누수 (스크롤 멀어진 페이지의 DOM unmount)
+- 검색/사이드바 점프 시 lazy mount 대기 race
+
+**Versioning**: v0.5
+
+---
+
+### Phase 6c — Extraction Quality Debt ⬜
 **Deliverable**
 - header heuristic 보강 (Phase 1 known issue)
 - 멀티컬럼 reading order (Phase 1 known issue)
@@ -251,24 +274,25 @@ messages      (id, thread_id, role, content, model, created_at)
 - samples.md 두 번 생성 시 diff 0
 - 회전 페이지 viewer에서 정확한 block 위치
 
-**Versioning**: v0.5
+**Versioning**: v0.6
 
 ---
 
-### Phase 6c — Infrastructure Polish ⬜
+### Phase 6d — Infrastructure Polish ⬜
 **Deliverable**
 - 백그라운드 작업 패널 (ingest/translate 진행 상태)
 - 모델 빠른 토글 (Qwen ↔ Gemma ↔ OpenRouter)
 - streaming response (SSE)
 - Playwright 자동 시나리오 (Phase 5 debt)
-- CI jsdom 설치 (Phase 5 debt)
+- CI jsdom 설치 (Phase 5/6a debt)
 - LLM-driven thread title (Phase 5 debt)
+- Phase 6a R2 위임: multiline translated test, search 200ms 엄격 단언, LLM live re-run after RE-CODE 워크플로우 보강
 
 **DoD**
 - viewer에서 진행 상태 표시
 - 환경변수 1줄 변경으로 모델 swap
 - AI 응답이 token by token 표시
-- Phase 5 시나리오 자동 실행 + 스크린샷
+- Phase 5 + 6a 시나리오 자동 실행 + 스크린샷
 - README에 일주일 실사용 사례 캡처
 
 **Versioning**: v1.0 달성
@@ -282,9 +306,10 @@ messages      (id, thread_id, role, content, model, created_at)
 | v0.1 ✅ | Phase 2a + 2b 완료 | CLI로 번역 가능                   |
 | v0.2 ✅ | Phase 3~4 완료     | 브라우저에서 읽기 가능            |
 | v0.3 ✅ | Phase 5 완료       | Q&A 동작, 핀                      |
-| v0.4 ⬜ | Phase 6a 완료      | 검색 + 질문 export + 재번역       |
-| v0.5 ⬜ | Phase 6b 완료      | 추출 품질 보강                    |
-| v1.0 ⬜ | Phase 6c 완료      | 일상 도구로 사용 가능             |
+| v0.4 ✅ | Phase 6a 완료      | 검색 + 질문 export + 재번역       |
+| v0.5 ⬜ | Phase 6b 완료      | 좌우 분할 + 자연 스크롤           |
+| v0.6 ⬜ | Phase 6c 완료      | 추출 품질 보강                    |
+| v1.0 ⬜ | Phase 6d 완료      | 일상 도구로 사용 가능             |
 
 ---
 
