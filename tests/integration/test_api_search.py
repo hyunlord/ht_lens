@@ -168,3 +168,13 @@ async def test_search_10k_blocks_latency_under_budget(api_db_path: Path, tmp_pat
     assert elapsed < 0.5, f"LIKE search over 10K blocks took {elapsed * 1000:.1f}ms"
     # Surface the actual number for the verify report.
     print(f"\n[bench] search 10K blocks: {elapsed * 1000:.1f}ms")
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_whitespace_only_query(api_db_path: Path) -> None:
+    """R1 fix: ``q="   "`` passes ``min_length=2`` but trims to "" — the
+    handler must reject after-trim emptiness, not return all rows."""
+    with make_test_client(api_db_path) as client:
+        resp = client.get("/search?q=%20%20%20%20")  # 4 spaces, URL-encoded
+    assert resp.status_code == 422
+    assert "non-whitespace" in resp.json()["detail"]

@@ -11,7 +11,7 @@ from __future__ import annotations
 import html
 from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,15 @@ async def search(
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[SearchHit]:
     needle = q.strip()
+    # R1 fix: the FastAPI ``Query(min_length=2)`` runs on the raw ``q`` BEFORE
+    # whitespace trim. Without a post-strip guard, a whitespace-only query
+    # collapses to an empty ``needle`` and the LIKE pattern becomes ``%%``
+    # which matches every row. Reject after-trim emptiness explicitly.
+    if len(needle) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="query must contain at least 2 non-whitespace characters",
+        )
     needle_low = needle.lower()
     pat = f"%{needle_low}%"
 

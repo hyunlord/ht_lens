@@ -82,9 +82,14 @@ async def build_questions_markdown(session: AsyncSession, doc_id: int) -> str | 
         translation = block.translation
         lines.append(f"## p.{page.page_num} — {block.block_local_id}")
         lines.append("")
-        lines.append(f"> 원문: {_truncate(block.original_text)}")
+        # R1 fix: multi-line original/translated must stay inside the
+        # blockquote. ``_quote`` prefixes every line; the leading "원문:" /
+        # "번역:" label sits on its own line so the body keeps indentation.
+        lines.append("> 원문:")
+        lines.append(_quote(_truncate(block.original_text)))
         if translation is not None and translation.translated_text:
-            lines.append(f"> 번역: {_truncate(translation.translated_text)}")
+            lines.append("> 번역:")
+            lines.append(_quote(_truncate(translation.translated_text)))
         lines.append("")
         lines.append(f"### {thread.title}")
         lines.append("")

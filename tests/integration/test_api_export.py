@@ -176,6 +176,9 @@ async def test_export_handles_multiline_block_text(api_db_path: Path, tmp_path: 
     with make_test_client(api_db_path) as client:
         resp = client.get(f"/documents/{seeded.doc_id}/export.md")
     text = resp.text
-    # Truncation may apply; we only need the first line to be present and
-    # safely contained inside the > 원문 blockquote line.
-    assert "> 원문: 첫째 줄" in text
+    # R1 fix: every line of a multi-line ``original_text`` must remain
+    # inside the blockquote. The old single-line ``> 원문: …`` form would
+    # let embedded newlines spill out of the section structure.
+    assert "> 원문:" in text
+    for line in ("첫째 줄", "둘째 줄", "셋째 줄"):
+        assert f"> {line}" in text, f"multi-line original not quoted: {line}"

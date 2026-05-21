@@ -87,7 +87,8 @@ async def test_retranslate_updates_existing_translation(api_db_path: Path, tmp_p
     body = resp.json()
     assert body["block_id"] == bid
     assert body["translation"]["translated_text"] == "[KO-NEW] manual"
-    assert body["translation"]["model"] == "mock-retranslate"
+    # R1 fix: model carries manual-retranslate provenance, not just the bare name.
+    assert body["translation"]["model"].startswith("manual-retranslate:mock-retranslate:")
     assert body["translation"]["status"] == "translated"
 
     # Confirm the row was updated, not duplicated.
@@ -227,3 +228,43 @@ async def test_retranslate_live_replaces_translation(
     # We at least expect a non-empty answer with Hangul.
     assert out
     assert any("가" <= ch <= "힣" for ch in out), out
+
+
+@pytest.mark.asyncio
+async def test_retranslate_clears_cache_key_to_prevent_cache_reuse(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """R1 fix: manual retranslate must NOT pollute the global cache. Phase 2b's
+    translate pipeline does ``WHERE cache_key = :ck AND cache_key IS NOT NULL``
+    lookups, so storing the same cache_key after a manual override would let
+    sibling blocks with identical ``original_text`` read the manual text back
+    out of context.
+
+    Policy: the retranslated row stores ``cache_key=None`` and a
+    ``manual-retranslate:`` model prefix.
+    """
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    async with factory() as session:
+        seeded = await seed_minimal_document(session, tmp_dir=tmp_path, blocks_per_page=1)
+    await engine.dispose()
+    bid = seeded.block_ids[0]
+
+    llm = _RecordingMockLLM(reply="[KO-NEW] manual")
+    with make_test_client(api_db_path, llm_override=llm) as client:
+        resp = client.post(f"/blocks/{bid}/retranslate")
+    assert resp.status_code == 202
+
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    async with factory() as session:
+        row = (
+            await session.execute(select(Translation).where(Translation.block_id == bid))
+        ).scalar_one()
+    await engine.dispose()
+    assert row.cache_key is None, (
+        "manual retranslate must NULL the cache_key to keep the row out of the global cache lookup"
+    )
+    assert row.model.startswith("manual-retranslate:"), (
+        f"model must carry manual-retranslate provenance; got {row.model!r}"
+    )

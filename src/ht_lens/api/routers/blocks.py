@@ -84,9 +84,19 @@ async def retranslate_block(
         _log.warning("retranslate LLM error block_id=%s: %s", block_id, exc)
         raise _map_llm_error(exc) from exc
 
-    model = str(getattr(llm, "model_name", "unknown"))
-    ck = make_cache_key(block.original_text, doc.src_lang, doc.tgt_lang, model)
+    # R1 fix: manual retranslate must NOT pollute the global cache. The
+    # translate pipeline (Phase 2b) looks up translations by ``cache_key``,
+    # so reusing the same key after a manual retranslate could leak the
+    # override into sibling blocks with identical ``original_text``. Instead:
+    #   - tag ``model`` with a ``manual-retranslate:`` prefix so provenance
+    #     is preserved
+    #   - set ``cache_key = None`` so the cache lookup in
+    #     ``translate/pipeline.py::_db_cache_lookup`` skips this row
+    base_model = str(getattr(llm, "model_name", "unknown"))
     now = datetime.now(UTC)
+    model = f"manual-retranslate:{base_model}:{int(now.timestamp())}"
+    # Compute the would-be key only for forensic logging; never store it.
+    _ = make_cache_key(block.original_text, doc.src_lang, doc.tgt_lang, base_model)
 
     existing = await session.get(Translation, block_id)
     if existing is None:
@@ -94,7 +104,7 @@ async def retranslate_block(
             block_id=block_id,
             translated_text=new_text,
             model=model,
-            cache_key=ck,
+            cache_key=None,
             status="translated",
             updated_at=now,
         )
@@ -102,7 +112,7 @@ async def retranslate_block(
     else:
         existing.translated_text = new_text
         existing.model = model
-        existing.cache_key = ck
+        existing.cache_key = None
         existing.status = "translated"
         existing.updated_at = now
         translation = existing
