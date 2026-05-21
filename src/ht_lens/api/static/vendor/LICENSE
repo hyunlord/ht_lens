@@ -1,0 +1,49 @@
+ht_lens vendor directory — third-party licenses
+================================================
+
+This directory contains pre-built ES module bundles downloaded from
+the upstream projects, vendored into the repo so the static viewer
+works without a build step or a runtime CDN dependency.
+
+The originals were obtained from jsDelivr CDN and are unmodified.
+
+---
+
+marked (v11.2.0) — Markdown parser
+-----------------------------------
+Source: https://cdn.jsdelivr.net/npm/marked@11/lib/marked.esm.js
+File:   marked.esm.js
+License: MIT
+Copyright (c) 2018+, MarkedJS
+Copyright (c) 2011-2018, Christopher Jeffrey
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+  THE SOFTWARE.
+
+---
+
+DOMPurify (v3.4.5) — HTML sanitizer
+------------------------------------
+Source: https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.es.mjs
+File:   purify.es.mjs
+License: Apache 2.0 / Mozilla Public License 2.0 (dual)
+Copyright (c) 2024 Cure53 and other contributors
+
+Distributed under the Apache License, Version 2.0 OR the Mozilla Public
+License, Version 2.0 (you may pick either at your option). Full text at:
+https://github.com/cure53/DOMPurify/blob/3.4.5/LICENSE
