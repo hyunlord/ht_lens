@@ -914,3 +914,126 @@ async def test_history_state_carries_thread_id(api_db_path: Path, assets_root: P
     assert "activateThreadId: target.threadId" in src
     # Cross-doc popstate path: loadDocument accepts initialThreadId.
     assert "initialThreadId" in src
+
+
+# --- Phase 6c: viewer polish (sidebar toggle / fit-to-width / logo / scroll) ---
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/js/utils/viewport.js",
+    ],
+)
+@pytest.mark.asyncio
+async def test_phase6c_assets_served(api_db_path: Path, path: str) -> None:
+    with make_test_client(api_db_path) as client:
+        resp = client.get(path)
+    assert resp.status_code == 200, path
+
+
+@pytest.mark.asyncio
+async def test_viewer_html_has_logo_link_and_sidebar_toggle(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """Phase 6c: the app logo links to index.html, and the sidebar toggle
+    lives in the static header (NOT inside sidebar.js which is rebuilt on
+    every setCurrentPage tick — debate §3 fix)."""
+    html = (assets_root / "viewer.html").read_text(encoding="utf-8")
+    assert 'class="app-logo"' in html
+    assert 'href="/static/index.html"' in html
+    assert 'id="sidebar-toggle"' in html
+    assert 'class="sidebar-toggle"' in html
+    # Toggle button comes before the sidebar aside in source order.
+    assert html.index('class="sidebar-toggle"') < html.index('<aside class="sidebar"')
+
+
+@pytest.mark.asyncio
+async def test_state_exposes_phase6c_helpers(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    for name in (
+        "sidebarOpen",
+        "setSidebarOpen",
+        "toggleSidebar",
+        "setZoomAutoFit",
+        "zoomIsAuto",
+        "STORAGE_SIDEBAR_OPEN",
+    ):
+        assert name in src, f"state.js should export '{name}'"
+    # User Ctrl+ArrowUp/Down (setZoom) flips zoomIsAuto -> false.
+    set_zoom_idx = src.find("export function setZoom(")
+    assert set_zoom_idx > 0
+    body = src[set_zoom_idx : set_zoom_idx + 400]
+    assert "zoomIsAuto = false" in body
+
+
+@pytest.mark.asyncio
+async def test_viewport_js_exports_compute_fit_zoom(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "utils" / "viewport.js").read_text(encoding="utf-8")
+    assert "export function computeFitZoom" in src
+    # Snap-down rule (debate §2 fix).
+    assert "<= target" in src or "step <= target" in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_wires_resize_observer_and_fit_on_load(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert "ResizeObserver" in src
+    assert "computeFitZoom" in src or "applyFitToWidthIfAuto" in src
+    # fit-to-width call must come AFTER buildPlaceholderRows and BEFORE scrollToPage
+    # so the deep-link target lands on the right row height (debate §3 fix).
+    build_idx = src.find("buildPlaceholderRows(stageEl")
+    fit_idx = src.find("applyFitToWidthIfAuto()")
+    scroll_idx = src.find("scrollToPage(stageEl, clampedPage")
+    assert build_idx > 0 and fit_idx > 0 and scroll_idx > 0
+    assert build_idx < fit_idx < scroll_idx, "loadDocument order must be build -> fit -> scroll"
+    # The auto-fit must key off viewModeActual (not viewMode) so chat-panel
+    # collapse doesn't fit for the wrong pane count (debate §3).
+    fit_helper_idx = src.find("function applyFitToWidthIfAuto(")
+    assert fit_helper_idx > 0
+    helper = src[fit_helper_idx : fit_helper_idx + 500]
+    assert "state.viewModeActual" in helper
+
+
+@pytest.mark.asyncio
+async def test_sidebar_toggle_is_static_not_inside_sidebar_render(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """Phase 6c debate §3: the toggle button must NOT be appended in
+    renderSidebar() because renderSidebar wipes its container on every
+    setCurrentPage repaint."""
+    sidebar_js = (assets_root / "js" / "components" / "sidebar.js").read_text(encoding="utf-8")
+    assert "sidebar-toggle" not in sidebar_js, (
+        "sidebar.js must not create the toggle button — it lives in viewer.html"
+    )
+    viewer_js = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert 'getElementById("sidebar-toggle")' in viewer_js
+    assert "toggleSidebar()" in viewer_js
+
+
+@pytest.mark.asyncio
+async def test_viewer_css_has_sidebar_collapsed_and_app_logo(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "css" / "viewer.css").read_text(encoding="utf-8")
+    assert ".viewer-shell--sidebar-closed" in src
+    assert ".app-logo" in src
+    assert ".sidebar-toggle" in src
+    # Sidebar transition (200ms) for smooth open/close.
+    assert "transition" in src
+
+
+@pytest.mark.asyncio
+async def test_stage_container_rootmargin_widened_for_scroll_fix(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """Phase 6c user feedback: scrolling down past large pages sometimes
+    fails to mount the next page. rootMargin widened from 100% to 200% +
+    pickActivePage uses viewport midpoint instead of intersectionRatio."""
+    src = (assets_root / "js" / "components" / "stage_container.js").read_text(encoding="utf-8")
+    assert '"200% 0px 200% 0px"' in src
+    assert "export function pickActivePage" in src
+    # Midpoint logic
+    assert "midY" in src or "viewport midpoint" in src

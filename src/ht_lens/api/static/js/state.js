@@ -22,6 +22,8 @@ const STORAGE_ACTIVE_DOC = "ht_lens.activeDocId";
 // Phase 6b: view mode (translation/original/both).
 const STORAGE_VIEW_MODE = "ht_lens.viewMode";
 const VIEW_MODES = ["translation", "original", "both"];
+// Phase 6c: sidebar open/closed toggle.
+const STORAGE_SIDEBAR_OPEN = "ht_lens.sidebarOpen";
 
 function safeReadFloat(key, fallback) {
   try {
@@ -164,6 +166,12 @@ export const state = {
   pageSummaries: [],
   // currentPage: scroll-driven active page (intersection observer winner).
   currentPage: 1,
+  // Phase 6c: sidebar open/closed (persisted) and zoom-was-user-set flag.
+  // ``zoomIsAuto`` tracks whether the current zoom came from auto-fit or
+  // from an explicit user action (Ctrl+ArrowUp/Down). The ResizeObserver
+  // re-fits only when the zoom is still auto.
+  sidebarOpen: safeReadBool(STORAGE_SIDEBAR_OPEN, true),
+  zoomIsAuto: true,
   listeners: new Set(),
 };
 
@@ -186,11 +194,25 @@ function notify() {
   for (const fn of state.listeners) fn(state);
 }
 
-/** Set zoom to the nearest step. */
+/** Set zoom to the nearest step. Explicit user action — persists, and
+ *  flips off the auto-fit flag so the ResizeObserver stops fighting the
+ *  user (Phase 6c). */
 export function setZoom(z) {
   const clamped = snapToStep(z);
   state.zoom = clamped;
+  state.zoomIsAuto = false;
   safeWrite(STORAGE_ZOOM, clamped);
+  notify();
+}
+
+/** Phase 6c: auto-fit zoom set by ResizeObserver / loadDocument. Does NOT
+ *  persist (session-only) and keeps ``zoomIsAuto = true`` so subsequent
+ *  layout changes can still re-fit. */
+export function setZoomAutoFit(z) {
+  if (z === state.zoom) return;
+  state.zoom = z;
+  state.zoomIsAuto = true;
+  // Intentionally NOT persisted — the next document load recomputes fit.
   notify();
 }
 
@@ -207,6 +229,20 @@ export function zoomOut() {
   const idx = ZOOM_STEPS.indexOf(state.zoom);
   const next = idx === -1 ? 1.0 : ZOOM_STEPS[Math.max(0, idx - 1)];
   setZoom(next);
+}
+
+// Phase 6c — sidebar toggle
+
+export function setSidebarOpen(open) {
+  const flag = Boolean(open);
+  if (state.sidebarOpen === flag) return;
+  state.sidebarOpen = flag;
+  safeWrite(STORAGE_SIDEBAR_OPEN, flag ? "1" : "0");
+  notify();
+}
+
+export function toggleSidebar() {
+  setSidebarOpen(!state.sidebarOpen);
 }
 
 /** Flip translation <-> original. */

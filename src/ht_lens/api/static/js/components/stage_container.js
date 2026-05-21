@@ -172,10 +172,54 @@ export function resizePlaceholderRows(stageEl, pageSummaries, zoom, viewMode) {
   }
 }
 
+/** Pick the active page from the currently-intersecting rows.
+ *
+ *  Phase 6c fix (cross-verify R0/§3 + user feedback): pages whose pixel
+ *  height (~2200px) is larger than the viewport (~1000px) report a small
+ *  ``intersectionRatio`` even when they dominate the visible area, which
+ *  delayed ``currentPage`` updates and stalled neighbour prefetch on
+ *  scroll. The robust signal is "which page row contains the viewport
+ *  midpoint" — fall back to the highest ratio only when no row spans the
+ *  midpoint (top of doc or empty stage).
+ *
+ *  Exported so the jsdom regression test can drive it directly.
+ */
+export function pickActivePage(stageEl, visibility) {
+  if (!stageEl || visibility.size === 0) return -1;
+  const stageRect = stageEl.getBoundingClientRect?.();
+  const midY = stageRect
+    ? stageRect.top + stageRect.height / 2
+    : Number.NaN;
+  if (Number.isFinite(midY)) {
+    for (const pageNum of visibility.keys()) {
+      const row = stageEl.querySelector?.(`.page-row[data-page="${pageNum}"]`);
+      if (!row?.getBoundingClientRect) continue;
+      const r = row.getBoundingClientRect();
+      if (r.top <= midY && r.bottom >= midY) return pageNum;
+    }
+  }
+  // Fallback: largest intersectionRatio.
+  let bestPage = -1;
+  let bestRatio = -1;
+  for (const [page, ratio] of visibility) {
+    if (ratio > bestRatio) {
+      bestRatio = ratio;
+      bestPage = page;
+    }
+  }
+  return bestPage;
+}
+
 /** Initialise the intersection observer that drives lazy mount/unmount and
- *  tracks the currently-most-visible page. Returns a disconnect function. */
+ *  tracks the currently-most-visible page. Returns a disconnect function.
+ *
+ *  Phase 6c fix (user feedback "next page doesn't mount when scrolling
+ *  down"): rootMargin widened from 100% to 200% so the next page enters
+ *  the observer well before it would normally be visible. Combined with
+ *  the midpoint-based active page selection above, this makes the
+ *  prefetch fire reliably on slower scroll cadences too.
+ */
 export function attachIntersectionObserver(stageEl, ctx) {
-  // Track the most visible page for currentPage updates.
   const visibility = new Map();
   let urlReplaceTimer = null;
 
@@ -185,42 +229,29 @@ export function attachIntersectionObserver(stageEl, ctx) {
         const pageNum = Number(entry.target.dataset.page);
         if (entry.isIntersecting) {
           visibility.set(pageNum, entry.intersectionRatio);
-          // Mount target page + ±FAR_PAGE_KEEP_RADIUS around it.
           mountPage(pageNum, ctx);
         } else {
           visibility.delete(pageNum);
         }
       }
-      // Compute the most-visible page among current entries.
-      if (visibility.size > 0) {
-        let bestPage = -1;
-        let bestRatio = -1;
-        for (const [page, ratio] of visibility) {
-          if (ratio > bestRatio) {
-            bestRatio = ratio;
-            bestPage = page;
-          }
+      const bestPage = pickActivePage(stageEl, visibility);
+      if (bestPage > 0) {
+        setCurrentPage(bestPage);
+        for (let d = 1; d <= FAR_PAGE_KEEP_RADIUS; d++) {
+          mountPage(bestPage + d, ctx);
+          mountPage(bestPage - d, ctx);
         }
-        if (bestPage > 0) {
-          setCurrentPage(bestPage);
-          // Phase 6b: pre-fetch ±KEEP_RADIUS neighbours.
-          for (let d = 1; d <= FAR_PAGE_KEEP_RADIUS; d++) {
-            mountPage(bestPage + d, ctx);
-            mountPage(bestPage - d, ctx);
-          }
-          // Schedule unmount sweep + URL replaceState.
-          scheduleFarPageUnmount(bestPage, ctx);
-          if (urlReplaceTimer) clearTimeout(urlReplaceTimer);
-          urlReplaceTimer = setTimeout(() => {
-            ctx.onScrollPageChange?.(bestPage);
-          }, 500);
-        }
+        scheduleFarPageUnmount(bestPage, ctx);
+        if (urlReplaceTimer) clearTimeout(urlReplaceTimer);
+        urlReplaceTimer = setTimeout(() => {
+          ctx.onScrollPageChange?.(bestPage);
+        }, 500);
       }
     },
     {
       root: stageEl,
-      rootMargin: "100% 0px 100% 0px",
-      threshold: [0, 0.25, 0.5, 0.75, 1],
+      rootMargin: "200% 0px 200% 0px",
+      threshold: [0, 0.1, 0.25, 0.5, 0.75, 1],
     },
   );
 

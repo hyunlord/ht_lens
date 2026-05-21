@@ -126,9 +126,16 @@ def make_test_client(
     """Return a TestClient with lifespan executed (DB path via env)."""
     prev_db = os.environ.get("HT_LENS_DB_URL")
     prev_skip = os.environ.get("HT_LENS_SKIP_LLM_CHECK")
+    prev_provider = os.environ.get("LLM_PROVIDER")
     os.environ["HT_LENS_DB_URL"] = f"sqlite+aiosqlite:///{db_path}"
     if skip_llm_check:
         os.environ["HT_LENS_SKIP_LLM_CHECK"] = "1"
+    # Phase 6c: create_app() now calls load_dotenv() so the operator's .env
+    # (LLM_PROVIDER=openai_compat) leaks into the process os.environ. Pin
+    # the mock provider unconditionally here — tests that need a different
+    # provider (e.g. @pytest.mark.llm) inject via ``llm_override`` or set
+    # the env outside this helper.
+    os.environ["LLM_PROVIDER"] = "mock"
     try:
         from ht_lens.api.app import create_app
         from ht_lens.api.deps import get_llm_client
@@ -147,6 +154,10 @@ def make_test_client(
             os.environ.pop("HT_LENS_SKIP_LLM_CHECK", None)
         else:
             os.environ["HT_LENS_SKIP_LLM_CHECK"] = prev_skip
+        if prev_provider is None:
+            os.environ.pop("LLM_PROVIDER", None)
+        else:
+            os.environ["LLM_PROVIDER"] = prev_provider
 
 
 __all__ = ["SeededDoc", "make_test_client", "seed_minimal_document"]

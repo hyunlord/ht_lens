@@ -32,12 +32,15 @@ import {
   setSidebarTab,
   setThreadDetail,
   setThreadsForDoc,
+  setZoomAutoFit,
   state,
   subscribe,
   togglePanel,
+  toggleSidebar,
   zoomIn,
   zoomOut,
 } from "./state.js";
+import { computeFitZoom } from "./utils/viewport.js";
 import { renderSidebar } from "./components/sidebar.js";
 import { renderChatPanel } from "./components/chat_panel.js";
 import { renderSearchModal } from "./components/search_modal.js";
@@ -57,6 +60,7 @@ import { attachKeyboard } from "./utils/keyboard.js";
 
 // --- DOM refs ---
 const shellEl = document.querySelector(".viewer-shell");
+const sidebarToggleEl = document.getElementById("sidebar-toggle");
 const headerMeta = document.querySelector(".app-header .meta");
 const sidebarEl = document.querySelector(".sidebar");
 const stageEl = document.getElementById("stage");
@@ -280,6 +284,11 @@ async function loadDocument({
     repaintSidebar();
     repaintPanel();
     setStatus("");
+
+    // Phase 6c: auto-fit AFTER placeholders are in place (so stageEl has a
+    // measurable width) and BEFORE scrollToPage (so the row heights are
+    // settled when we scroll the deep-link target into view).
+    applyFitToWidthIfAuto();
 
     const clampedPage = Math.max(1, Math.min(doc.num_pages, initialPage || 1));
     // First scroll uses ``auto`` (instant) — the page is already loading
@@ -777,6 +786,62 @@ attachKeyboard({
   },
   onTogglePanel: () => togglePanel(),
 });
+
+// --- Phase 6c: sidebar toggle wiring + fit-to-width ResizeObserver ---
+
+function applySidebarOpen() {
+  if (!shellEl) return;
+  shellEl.classList.toggle("viewer-shell--sidebar-closed", !state.sidebarOpen);
+  if (sidebarToggleEl) {
+    sidebarToggleEl.textContent = state.sidebarOpen ? "◀" : "▶";
+    sidebarToggleEl.setAttribute(
+      "aria-expanded",
+      state.sidebarOpen ? "true" : "false",
+    );
+  }
+}
+applySidebarOpen();
+sidebarToggleEl?.addEventListener("click", () => {
+  toggleSidebar();
+  // applySidebarOpen runs via subscribe() — but call once now for instant feedback.
+  applySidebarOpen();
+});
+
+/** Compute + apply a fit-to-width zoom based on the current ``#stage``
+ *  width and the document's page-size metadata. No-op when the user has
+ *  manually set a zoom (``state.zoomIsAuto === false``) so we don't
+ *  override an explicit Ctrl+ArrowUp/Down. */
+function applyFitToWidthIfAuto() {
+  if (!state.zoomIsAuto) return;
+  if (!stageEl) return;
+  const summary = state.pageSummaries?.[0];
+  if (!summary) return;
+  const stageWidthPx = stageEl.clientWidth;
+  if (!stageWidthPx) return;
+  const fit = computeFitZoom({
+    pageWidthPt: summary.width,
+    stageWidthPx,
+    scale: summary.render?.scale ?? 1,
+    viewMode: state.viewModeActual,
+  });
+  if (fit !== state.zoom) setZoomAutoFit(fit);
+}
+
+// Debounced re-fit on container resize.
+let _fitDebounce = null;
+function scheduleFit() {
+  if (_fitDebounce) clearTimeout(_fitDebounce);
+  _fitDebounce = setTimeout(() => applyFitToWidthIfAuto(), 150);
+}
+
+if (typeof ResizeObserver !== "undefined" && stageEl) {
+  const ro = new ResizeObserver(() => scheduleFit());
+  ro.observe(stageEl);
+}
+
+// Keep sidebar class in sync when state changes elsewhere (e.g. localStorage
+// rehydration in another tab).
+subscribe(() => applySidebarOpen());
 
 async function bootstrap() {
   const initial = parseQuery();

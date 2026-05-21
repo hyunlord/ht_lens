@@ -10,9 +10,17 @@
     <link rel="stylesheet" href="css/search_modal.css" />
   </head>
   <body>
-    <div class="viewer-shell">
+    <div class="viewer-shell" id="viewer-shell">
       <header class="app-header">
-        <h1>ht_lens</h1>
+        <button
+          type="button"
+          class="sidebar-toggle"
+          id="sidebar-toggle"
+          aria-label="사이드바 토글"
+          title="사이드바 토글"
+        >◀</button>
+        <a class="app-logo" href="/static/index.html" title="문서 목록으로"
+          ><h1>ht_lens</h1></a>
         <span class="meta">no document loaded</span>
         <div class="key-hints">
           <span><kbd>←</kbd>/<kbd>→</kbd> page</span>
