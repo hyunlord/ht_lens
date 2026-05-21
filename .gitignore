@@ -47,6 +47,7 @@ data/*
 docs/phases/phase-*/screenshots/
 !docs/phases/phase-4/screenshots/
 !docs/phases/phase-5/screenshots/
+!docs/phases/phase-6a/screenshots/
 
 # OMC orchestration state
 .omc/
