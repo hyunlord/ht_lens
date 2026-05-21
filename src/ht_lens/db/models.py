@@ -29,6 +29,10 @@ class Document(Base):
     status: Mapped[str]
     created_at: Mapped[datetime]
     src_pdf_sha256: Mapped[str | None]
+    # Phase 6d: auto-generated abstract (300~500 단어 한국어), null until the
+    # summarize stage of process_upload_job finishes.
+    summary: Mapped[str | None] = mapped_column(default=None)
+    summarized_at: Mapped[datetime | None] = mapped_column(default=None)
 
     pages: Mapped[list[Page]] = relationship(
         back_populates="document",
@@ -134,10 +138,39 @@ class Message(Base):
     thread: Mapped[Thread] = relationship(back_populates="messages")
 
 
+class Job(Base):
+    """Background-job tracking — Phase 6d.
+
+    Drives the ``POST /uploads`` → extract → ingest → translate → summarize
+    pipeline. One row per upload; the linear status machine is
+    ``pending → extracting → ingesting → translating → summarizing → done``
+    (``failed`` from anywhere). ``document_id`` is set once ingest succeeds.
+    """
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    type: Mapped[str]
+    status: Mapped[str]
+    document_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), default=None
+    )
+    upload_path: Mapped[str | None] = mapped_column(default=None)
+    upload_filename: Mapped[str | None] = mapped_column(default=None)
+    upload_sha256: Mapped[str | None] = mapped_column(default=None)
+    progress_pct: Mapped[int] = mapped_column(default=0)
+    progress_message: Mapped[str | None] = mapped_column(default=None)
+    error_message: Mapped[str | None] = mapped_column(default=None)
+    started_at: Mapped[datetime | None] = mapped_column(default=None)
+    finished_at: Mapped[datetime | None] = mapped_column(default=None)
+    created_at: Mapped[datetime]
+
+
 __all__ = [
     "Base",
     "Block",
     "Document",
+    "Job",
     "Message",
     "Page",
     "Thread",
