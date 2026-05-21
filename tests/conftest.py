@@ -18,6 +18,29 @@ from ht_lens.llm.mock import MockLLMClient
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_llm_env() -> object:
+    """Phase 6c R1 fix: ``create_app()`` calls ``load_dotenv()`` which
+    writes ``LLM_*`` / ``OLLAMA_*`` keys directly into ``os.environ``.
+    Those writes bypass pytest's monkeypatch tracking and persist across
+    tests — cross-verify R1 caught the leak between
+    ``test_api_startup::test_startup_fails_when_llm_health_check_returns_false``
+    (which calls create_app without pinning LLM_PROVIDER) and the
+    downstream ``test_api_threads`` suite (which then fell through to the
+    leaked real provider and timed out).
+
+    Snapshot LLM_*/OLLAMA_* before each test, restore after."""
+    snapshot = {k: os.environ[k] for k in list(os.environ) if k.startswith(("LLM_", "OLLAMA_"))}
+    try:
+        yield
+    finally:
+        for k in [k for k in os.environ if k.startswith(("LLM_", "OLLAMA_"))]:
+            if k not in snapshot:
+                del os.environ[k]
+        for k, v in snapshot.items():
+            os.environ[k] = v
+
+
 @pytest.fixture
 def tmp_workdir(tmp_path: Path) -> Path:
     """Isolated working directory rooted under pytest tmp_path."""

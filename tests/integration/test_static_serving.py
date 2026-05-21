@@ -985,7 +985,9 @@ async def test_viewer_wires_resize_observer_and_fit_on_load(
     # fit-to-width call must come AFTER buildPlaceholderRows and BEFORE scrollToPage
     # so the deep-link target lands on the right row height (debate §3 fix).
     build_idx = src.find("buildPlaceholderRows(stageEl")
-    fit_idx = src.find("applyFitToWidthIfAuto()")
+    # R1 fix: applyFitToWidthIfAuto now takes {preferPage: clampedPage} so
+    # heterogeneous documents fit the target page, not the first one.
+    fit_idx = src.find("applyFitToWidthIfAuto({ preferPage:")
     scroll_idx = src.find("scrollToPage(stageEl, clampedPage")
     assert build_idx > 0 and fit_idx > 0 and scroll_idx > 0
     assert build_idx < fit_idx < scroll_idx, "loadDocument order must be build -> fit -> scroll"
@@ -993,7 +995,9 @@ async def test_viewer_wires_resize_observer_and_fit_on_load(
     # collapse doesn't fit for the wrong pane count (debate §3).
     fit_helper_idx = src.find("function applyFitToWidthIfAuto(")
     assert fit_helper_idx > 0
-    helper = src[fit_helper_idx : fit_helper_idx + 500]
+    # R1 fix widened the helper (preferPage / currentPage selection) so we
+    # take a generous window.
+    helper = src[fit_helper_idx : fit_helper_idx + 900]
     assert "state.viewModeActual" in helper
 
 
@@ -1037,3 +1041,51 @@ async def test_stage_container_rootmargin_widened_for_scroll_fix(
     assert "export function pickActivePage" in src
     # Midpoint logic
     assert "midY" in src or "viewport midpoint" in src
+
+
+# --- Phase 6c R1 Cross-verify fixes (mixed page sizes + provider pin) ---
+
+
+@pytest.mark.asyncio
+async def test_fit_to_width_uses_current_page_summary_not_first(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """R1 fix (cross-verify §4): heterogeneous documents have per-page
+    dimensions (pages-summary contract). applyFitToWidthIfAuto must select
+    the summary matching the active/preferred page, NOT pageSummaries[0]
+    blindly."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    idx = src.find("function applyFitToWidthIfAuto(")
+    assert idx > 0
+    body = src[idx : idx + 800]
+    # Must accept preferPage opt + fall back to state.currentPage, not [0].
+    assert "preferPage" in body, "applyFitToWidthIfAuto must accept preferPage"
+    assert "state.currentPage" in body
+    # No naive ``pageSummaries[0]`` lookup remains.
+    assert "pageSummaries[0]" not in body, "fit-to-width must not hard-code first page metadata"
+    # loadDocument passes the deep-link target as preferPage.
+    load_idx = src.find("applyFitToWidthIfAuto({ preferPage:")
+    assert load_idx > 0, "loadDocument must pass preferPage to applyFitToWidthIfAuto"
+    # subscribe() re-fits when currentPage changes.
+    assert "state.currentPage !== _lastCurrentPage" in src
+
+
+@pytest.mark.asyncio
+async def test_make_test_client_only_pins_mock_when_unset(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """R1 fix (cross-verify §4): the test helper must NOT silently override
+    a caller-supplied LLM_PROVIDER. @pytest.mark.llm tests set
+    openai_compat then expect the live provider to survive the helper."""
+    helpers_src = (Path(__file__).resolve().parent / "_api_helpers.py").read_text(encoding="utf-8")
+    # The pin must be guarded by ``prev_provider is None``.
+    assert "if prev_provider is None:" in helpers_src
+    pin_idx = helpers_src.find('os.environ["LLM_PROVIDER"] = "mock"')
+    assert pin_idx > 0
+    # The preceding (non-blank) line must be the guard, not an unconditional set.
+    head = helpers_src[:pin_idx].rstrip()
+    last_line = head.split("\n")[-1].strip()
+    assert last_line.startswith("if prev_provider is None:"), (
+        f"LLM_PROVIDER pin must sit inside the prev_provider None guard; "
+        f"found preceding line: {last_line!r}"
+    )

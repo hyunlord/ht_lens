@@ -150,3 +150,27 @@ def test_pick_active_page_returns_minus_one_when_empty() -> None:
     """
     out = _run_node(script)
     assert out["picked"] == -1
+
+
+def test_compute_fit_zoom_handles_heterogeneous_pages() -> None:
+    """R1 fix (cross-verify §4): a page with non-standard width must get
+    its own fit computation. Demonstrates viewMode + per-page width
+    independence."""
+    script = f"""
+    const {{ computeFitZoom }} = await import("{VIEWPORT.as_uri()}");
+    // Page 1: letter (612pt @ scale 2.78)
+    const small = computeFitZoom({{
+        pageWidthPt: 612, scale: 2.78, stageWidthPx: 1400, viewMode: "translation"
+    }});
+    // Page 2: A3 (1191pt @ scale 2.78) — fit should be much smaller.
+    const large = computeFitZoom({{
+        pageWidthPt: 1191, scale: 2.78, stageWidthPx: 1400, viewMode: "translation"
+    }});
+    console.log(JSON.stringify({{ small, large }}));
+    """
+    out = _run_node(script)
+    # Larger page fits a smaller zoom — proves per-page metadata matters.
+    assert out["small"] >= out["large"], (
+        f"small page should fit larger zoom than A3-sized page: "
+        f"small={out['small']} large={out['large']}"
+    )

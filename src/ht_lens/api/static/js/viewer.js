@@ -288,9 +288,10 @@ async function loadDocument({
     // Phase 6c: auto-fit AFTER placeholders are in place (so stageEl has a
     // measurable width) and BEFORE scrollToPage (so the row heights are
     // settled when we scroll the deep-link target into view).
-    applyFitToWidthIfAuto();
-
+    // R1 fix: fit for the *target* page (deep-link or initial), not the
+    // first page — heterogeneous documents have per-page dimensions.
     const clampedPage = Math.max(1, Math.min(doc.num_pages, initialPage || 1));
+    applyFitToWidthIfAuto({ preferPage: clampedPage });
     // First scroll uses ``auto`` (instant) — the page is already loading
     // bg+blocks via IO so we want to land users on the right page without
     // a smooth-scroll delay that re-fires IO entries.
@@ -645,6 +646,7 @@ window.addEventListener("popstate", (e) => {
 // Re-render derived UI when state changes.
 let _lastViewMode = state.viewModeActual;
 let _lastZoom = state.zoom;
+let _lastCurrentPage = state.currentPage;
 subscribe(() => {
   repaintSearch();
   if (!currentDoc) return;
@@ -662,6 +664,14 @@ subscribe(() => {
       state.viewModeActual,
     );
     repaintAllMountedPages(stageContext());
+  }
+  // R1 fix: when the IO observer moves currentPage and the document has
+  // heterogeneous page sizes, recompute fit for the new page metadata.
+  // No-op when the user has set zoom manually (zoomIsAuto === false) and
+  // when the pages have identical dimensions.
+  if (state.currentPage !== _lastCurrentPage) {
+    _lastCurrentPage = state.currentPage;
+    applyFitToWidthIfAuto();
   }
   repaintSidebar();
   repaintPanel();
@@ -810,12 +820,23 @@ sidebarToggleEl?.addEventListener("click", () => {
 /** Compute + apply a fit-to-width zoom based on the current ``#stage``
  *  width and the document's page-size metadata. No-op when the user has
  *  manually set a zoom (``state.zoomIsAuto === false``) so we don't
- *  override an explicit Ctrl+ArrowUp/Down. */
-function applyFitToWidthIfAuto() {
+ *  override an explicit Ctrl+ArrowUp/Down.
+ *
+ *  R1 fix: pick the summary for the **currently-active** page, not the
+ *  first page, so heterogeneous documents (mixed page sizes per the
+ *  pages-summary contract) fit the page the user is actually viewing.
+ *  ``opts.preferPage`` lets callers (e.g. loadDocument with a deep-link
+ *  page) force the initial fit to use the target page's metadata before
+ *  the IntersectionObserver has fired.
+ */
+function applyFitToWidthIfAuto(opts = {}) {
   if (!state.zoomIsAuto) return;
   if (!stageEl) return;
-  const summary = state.pageSummaries?.[0];
-  if (!summary) return;
+  const summaries = state.pageSummaries;
+  if (!summaries || summaries.length === 0) return;
+  const preferPage = opts.preferPage ?? state.currentPage ?? 1;
+  const summary =
+    summaries.find((s) => s.page_num === preferPage) || summaries[0];
   const stageWidthPx = stageEl.clientWidth;
   if (!stageWidthPx) return;
   const fit = computeFitZoom({

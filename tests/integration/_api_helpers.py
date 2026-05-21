@@ -130,12 +130,14 @@ def make_test_client(
     os.environ["HT_LENS_DB_URL"] = f"sqlite+aiosqlite:///{db_path}"
     if skip_llm_check:
         os.environ["HT_LENS_SKIP_LLM_CHECK"] = "1"
-    # Phase 6c: create_app() now calls load_dotenv() so the operator's .env
-    # (LLM_PROVIDER=openai_compat) leaks into the process os.environ. Pin
-    # the mock provider unconditionally here — tests that need a different
-    # provider (e.g. @pytest.mark.llm) inject via ``llm_override`` or set
-    # the env outside this helper.
-    os.environ["LLM_PROVIDER"] = "mock"
+    # Phase 6c R1 fix: pin mock provider when the caller hasn't opted in
+    # to something else. The autouse ``_isolate_llm_env`` fixture in
+    # tests/conftest.py snapshots LLM_*/OLLAMA_* at test entry, so by the
+    # time we reach here ``prev_provider`` reflects either the test's own
+    # ``monkeypatch.setenv("LLM_PROVIDER", ...)`` or nothing — never a
+    # leak from an earlier test.
+    if prev_provider is None:
+        os.environ["LLM_PROVIDER"] = "mock"
     try:
         from ht_lens.api.app import create_app
         from ht_lens.api.deps import get_llm_client
@@ -158,6 +160,9 @@ def make_test_client(
             os.environ.pop("LLM_PROVIDER", None)
         else:
             os.environ["LLM_PROVIDER"] = prev_provider
+        # The autouse ``_isolate_llm_env`` fixture in tests/conftest.py
+        # restores LLM_*/OLLAMA_* keys to their pre-test snapshot, so we
+        # don't need to redo that work here.
 
 
 __all__ = ["SeededDoc", "make_test_client", "seed_minimal_document"]
