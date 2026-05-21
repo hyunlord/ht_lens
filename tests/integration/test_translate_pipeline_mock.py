@@ -479,3 +479,51 @@ async def test_translate_raises_schema_mismatch_without_alembic(
                 await translate_document(1, session, MockLLMClient())
     finally:
         await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Document.status (Planner-directed Phase 4 cross-phase fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_translate_sets_document_status_translated_on_full_success(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    llm = MockLLMClient()
+    async with db_factory() as session:
+        doc_id, _ = await _seed_doc(session)
+        # Sanity: ingest sets the initial status to "ready_for_translation".
+        before = await session.get(Document, doc_id)
+        assert before is not None and before.status == "ready_for_translation"
+
+    async with db_factory() as session:
+        await translate_document(doc_id, session, llm)
+
+    async with db_factory() as session:
+        doc = await session.get(Document, doc_id)
+        assert doc is not None
+        assert doc.status == "translated"
+
+
+@pytest.mark.asyncio
+async def test_translate_sets_document_status_partial_on_failures(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    class FailLLM(MockLLMClient):
+        async def translate(self, text: str, src: str, tgt: str, *, context: object = None) -> str:
+            raise LLMPermanentError("auth failure")
+
+    async with db_factory() as session:
+        # Mixed: one text block fails (LLM raises), one image is skipped.
+        doc_id, _ = await _seed_doc(session, blocks=[("text", "hello"), ("image", "")])
+
+    async with db_factory() as session:
+        stats = await translate_document(doc_id, session, FailLLM(), max_retries=0)
+
+    assert stats.failed == 1
+
+    async with db_factory() as session:
+        doc = await session.get(Document, doc_id)
+        assert doc is not None
+        assert doc.status == "partial_translated"

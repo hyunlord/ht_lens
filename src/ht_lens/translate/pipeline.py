@@ -79,6 +79,12 @@ async def translate_document(
             block_types=block_types,
         )
 
+    # Document.status reflects the outcome of the whole translation run so the
+    # API/viewer can show a meaningful state without recomputing per-block
+    # joins. The pipeline only writes terminal states here; mid-run state
+    # ("translating") is not exposed because translate_document is synchronous
+    # from the caller's perspective.
+    await _finalize_document_status(session, doc, stats)
     return stats
 
 
@@ -252,6 +258,23 @@ async def _translate_with_retry(
         # Non-transient exceptions (LLMPermanentError, EmptyLLMResponseError) bubble up
     assert last_exc is not None
     raise last_exc
+
+
+async def _finalize_document_status(
+    session: AsyncSession, doc: Document, stats: TranslateStats
+) -> None:
+    """Set ``Document.status`` based on terminal counts of this run.
+
+    Counts are run-local; if the caller used ``retry_failed=False`` and there
+    are still failed Translation rows from earlier runs, we still mark the
+    document as ``translated`` when this run produced no failures. Phase 5/6
+    will revisit if we need a fully derived view.
+    """
+    if stats.failed > 0:
+        doc.status = "partial_translated"
+    else:
+        doc.status = "translated"
+    await session.commit()
 
 
 async def _require_schema_head(session: AsyncSession) -> None:
