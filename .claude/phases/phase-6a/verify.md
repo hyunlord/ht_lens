@@ -1,113 +1,104 @@
-# Phase 6a — Verify (self, v1)
+# Phase 6a — Verify (self, v2 — post RE-CODE)
 
-작성 직전 `git status` clean. head 시점에 대한 self-evaluation.
+R1 cross-verify가 REJECT (제안 79/100). 4 substantive 결함: retranslate cache pollution, export multiline, search whitespace, confirm modal 미테스트. RE-CODE 후 v2. 작성 직전 `git status` clean. head `145f0ae`.
 
-## 5-A. Automated checks
+## 5-A. Automated checks (fresh 실행)
 
 | Check    | Command | Result |
 | -------- | ------- | ------ |
 | Lint     | `uv run ruff check .` | All checks passed! |
 | Format   | `uv run ruff format --check .` | already formatted |
 | Type     | `uv run mypy src/` | Success: no issues found in 52 source files |
-| Test (fast) | `make test-fast` | **299 passed, 6 deselected** in 108.73s |
+| Test (fast) | `make test-fast` | **305 passed, 6 deselected** in 110.16s |
 | Coverage | `make check` 내장 | TOTAL 72% |
-| Test (live LLM) | `pytest -m llm` (LLM_TIMEOUT=300) | **6 passed** in 120.74s (Phase 3 + 5 + Phase 6a `test_retranslate_live`) |
+| Test (live LLM) | `pytest -m llm` | 6 passed (직전 라운드 검증 그대로 유효) |
 | CI (local) | `make check` | **RC=0** |
 | CI (remote) | `.github/workflows/ci.yml` | pending push |
 
-Phase 6a 누적 신규 자동 테스트 **31건** (268 → 299):
-- `test_api_search.py` (7): short-query 422, original/translated 매치, doc_id boost, limit clamp, empty, 10K latency budget
-- `test_api_export.py` (6): 404, header-only, page-order, empty-thread 제외, assistant markdown blockquote safety, multiline original
-- `test_api_retranslate.py` (6 + 1 @llm): 404, 400 image, upsert/insert, transient/permanent atomicity, live LLM smoke
-- `test_static_serving.py` 확장 (+11): vendor assets, viewer.html mount, keyboard branches, state/api helpers, block contextmenu, viewer handlers, deep link, sidebar, DOMPurify whitelist
+신규 회귀 테스트 6건 (R1 fix 잠금):
+- `test_retranslate_clears_cache_key_to_prevent_cache_reuse` (cache invalidation)
+- `test_search_rejects_whitespace_only_query` (whitespace q=422)
+- `test_export_handles_multiline_block_text` 강화 (모든 라인이 `> ` prefix)
+- `test_confirm_modal_js.py` 4건 (confirm/cancel/backdrop/detail behavioral via jsdom)
+
+Phase 6a 누적 신규 자동 테스트 **37건** (268 → 305).
 
 ## 5-B. Functional checks
 
-### 1) Backend integration
+### 1) R1 결함 → RE-CODE 매핑
 
-3 routers all green. Live latency on synthetic 10K rows:
+| R1 결함 | RE-CODE fix | 회귀 가드 |
+| ------- | ----------- | --------- |
+| Retranslate cache pollution | `blocks.py` upsert 시 `cache_key=None` + `model="manual-retranslate:{base}:{ts}"`. `translate/pipeline.py::_db_cache_lookup`은 NOT NULL 필터링이라 자동 제외. | `test_retranslate_clears_cache_key_to_prevent_cache_reuse` + 기존 `test_retranslate_updates_existing_translation`의 model assertion 갱신 |
+| Export markdown 멀티라인 깨짐 | `export_markdown.py`에서 `> 원문:` 헤더를 별도 라인으로 + 본문은 `_quote()` 헬퍼로 라인별 `> ` prefix | `test_export_handles_multiline_block_text` 모든 라인 검증 |
+| `/search` whitespace-only → "match everything" | `search.py` handler에서 strip 후 `len(needle) < 2` 명시 reject (422) | `test_search_rejects_whitespace_only_query` (422 + detail message) |
+| `renderConfirmModal()` behavioral 미테스트 | `tests/integration/test_confirm_modal_js.py` jsdom 4건 | confirm / cancel / backdrop click + detail render |
+
+### 2) DoD evidence (v2 강화)
+
+| DoD | 만족 | 근거 |
+| --- | ---- | ---- |
+| Cmd+K로 임의 문구 찾고 점프 (< 200ms, 10K) | ✅ | 3.9ms + whitespace 422 guard + screenshots 01-03 |
+| 질문 export markdown 받기 + 사람이 읽기 좋음 | ✅ | fetch+Blob + blockquote safety 6건 (assistant markdown + multi-line original) + screenshots 04-05 |
+| block 우클릭 → 재번역 → **캐시 무효화** + 갱신 | ✅ | contextmenu + confirm modal (4 jsdom tests) + upsert atomicity + **cache_key=None** + screenshots 06-07 |
+
+R1이 지적한 "cache invalidation" 부분이 v2에서 명시적으로 잠금됨.
+
+### 3) Latency benchmark 그대로
 
 ```
 [bench] search 10K blocks: 3.9ms
 ```
 
-DoD 200ms 대비 ~50배 여유. FTS5 도입 불필요.
+## 5-C. Regression check + 신 코드 경로 잠금 (워크플로우 0-3-A 의무 표)
 
-### 2) Browser scenario (7 screenshots)
+### R0 도입 신 식별자 (이전 verify v1과 동일)
 
-`scripts/phase6a_scenario.py` (tracked) → 7 captures:
-- 01-search-modal-open (Cmd+K)
-- 02-search-results (`<mark>` 인라인 강조 + matched_field 표시)
-- 03-search-jump (block flash + 패널 자동 열림)
-- 04-export-button (사이드바 ❓ 질문 탭 상단)
-- 05-export-toast (fetch+Blob 다운로드 성공)
-- 06-retranslate-confirm (block 우클릭 → 모달)
-- 07-retranslate-result (live LLM 응답 + 토스트)
+| 영역 | 새 함수/state/event | 잠금 |
+| ---- | ------------------- | ---- |
+| state.js | `openSearch`/`closeSearch`/`setSearchResults`/`moveSearchSelection`/`setSearchLoading`/`setSearchError`/`setRetranslateInProgress` + 7 fields | `test_state_exposes_search_helpers` |
+| api.js | `searchAll`/`exportQuestions`/`retranslateBlock` (fetch+Blob) | `test_api_js_has_search_export_retranslate_helpers` |
+| keyboard.js | `onOpenSearch`/`onCloseSearch`/`isSearchOpen` | `test_keyboard_supports_cmd_k_and_search_close_priority` |
+| block.js | `ht-lens:block-contextmenu` CustomEvent | `test_block_js_dispatches_contextmenu_event` |
+| viewer.js | `handleSearchInput`/`handleSearchSelect`/`handleExport`/`handleRetranslate`/`activateBlockId`/`?block` | `test_viewer_js_handles_search_export_retranslate` + `test_search_result_block_param_restores_target_block` |
+| sidebar.js | `onExport`/`onOpenSearch`/`.export-btn`/`.search-hint` | `test_sidebar_has_export_button_and_search_hint` |
+| search_modal.js | `renderSearchModal` + `ALLOWED_TAGS: ["mark"]` | `test_search_modal_sanitises_preview_to_mark_only` |
+| confirm_modal.js | `renderConfirmModal` (R1 fix로 behavioral lock 추가) | `test_phase6a_assets_served` + **`test_confirm_modal_js.py` 4건** |
+| Backend | `GET /search`, `GET /documents/{id}/export.md`, `POST /blocks/{id}/retranslate`, `SearchHit`, `RetranslateResponse`, `_build_preview`, `build_questions_markdown` | 19 integration tests |
 
-### 3) DoD evidence
+### R1 fix 도입 신 식별자 / 정책
 
-| DoD | 만족 | 근거 |
-| --- | ---- | ---- |
-| Cmd+K로 임의 문구 찾고 점프 (< 200ms, 10K blocks) | ✅ | `test_search_10k_blocks_latency_under_budget` 3.9ms + screenshots 01-03 |
-| 질문 export markdown 받기 + 사람이 읽기 좋음 | ✅ | fetch+Blob + blockquote safety (5 tests) + screenshots 04-05 |
-| block 우클릭 → 재번역 → 갱신 | ✅ | contextmenu + confirm + upsert atomicity (6 + 1 live) + screenshots 06-07 |
+| RE-CODE 변경 | 새 식별자 / 정책 | 잠금 단위 테스트 |
+| ----------- | ---------------- | ---------------- |
+| retranslate cache invalidation | `cache_key=None` 분기 + `manual-retranslate:` model prefix | `test_retranslate_clears_cache_key_to_prevent_cache_reuse` (NULL + prefix 둘 다 단언) |
+| export multiline blockquote | `> 원문:` separator + `_quote()` body | `test_export_handles_multiline_block_text` 3 라인 모두 quoted |
+| search whitespace guard | strip 후 `if len(needle) < 2 → HTTPException(422)` | `test_search_rejects_whitespace_only_query` |
+| confirm modal behavioural | (기존 `renderConfirmModal`의 행위 잠금) | `test_confirm_modal_js.py` 4 케이스 |
 
-### 4) Live HTTP spot-check
+모든 새 식별자/정책 → 명시적 단위 테스트 grep 가능.
 
-```
-GET /static/css/search_modal.css     → 200
-GET /static/js/components/search_modal.js → 200
-GET /static/js/components/confirm_modal.js → 200
-GET /search?q=test                   → 200 + [SearchHit]
-GET /documents/1/export.md           → 200 + text/markdown + Content-Disposition
-POST /blocks/2/retranslate           → 202 + RetranslateResponse
-```
+### 기존 contract 무회귀
 
-### 5) Stage 0 워크플로우 보강 (이미 push됨)
+- ruff / mypy strict / 304 + R1 새 6 = 305 passed
+- Phase 1-5 무영향
+- LLM 호출 경로 변경 없음
+- Phase 5 vendor / chat panel / pin / sidebar 동작 그대로
 
-`db274d6` 시점에서 ROADMAP split + 3 docs patches (CLAUDE.md, prompts/codex_verify.md, WORKFLOW.md) push 후 CI green 확인 (`gh run` 26204469801, 26204663882, 26197172678). v0.3 태그 push 완료.
+### Deviations from R0 (R1 응답)
 
-## 5-C. Regression check + 신 코드 경로 잠금 (워크플로우 0-3-A)
+- retranslate model 형식: `mock-retranslate` → `manual-retranslate:mock-retranslate:{ts}` (production 배포 전이라 호환성 영향 0)
+- export markdown layout: `> 원문: {…}` (1 라인) → `> 원문:\n> {…}` (2+ 라인, blockquote-safe)
+- search handler 422 분기 추가
 
-Phase 5/4/3/2/1 무회귀:
-- 268 → 299 fast tests 모두 통과
-- Phase 5 vendor / chat panel / pin / sidebar 동작 변경 없음 (sidebar.js만 onExport/onOpenSearch 추가 + search hint)
-- Phase 5 keyboard.js: Esc 우선순위 (search > panel) + Cmd+K 신규, 기존 Ctrl+B/T/←→ 그대로
-- Phase 4 viewer.js의 closePanel/discardPanel/togglePanel 패턴 그대로 + activateBlockId 매개변수만 추가
-
-### Phase 6a 도입 신 식별자 → 단위 테스트 잠금
-
-| 도입 영역 | 새 함수/state/event | 잠금 단위 테스트 |
-| --------- | ------------------- | ---------------- |
-| state.js | `openSearch`, `closeSearch`, `setSearchResults`, `moveSearchSelection`, `setSearchLoading`, `setSearchError`, `setRetranslateInProgress` + 7 state fields | `test_state_exposes_search_helpers` |
-| api.js | `searchAll`, `exportQuestions`, `retranslateBlock` (fetch+Blob) | `test_api_js_has_search_export_retranslate_helpers` |
-| keyboard.js | `onOpenSearch`, `onCloseSearch`, `isSearchOpen` | `test_keyboard_supports_cmd_k_and_search_close_priority` |
-| block.js | `ht-lens:block-contextmenu` CustomEvent (text/header만) | `test_block_js_dispatches_contextmenu_event` |
-| viewer.js | `handleSearchInput`, `handleSearchSelect`, `handleExport`, `handleRetranslate`, `activateBlockId` flow, `?block` URL param | `test_viewer_js_handles_search_export_retranslate` + `test_search_result_block_param_restores_target_block` |
-| sidebar.js | `onExport`, `onOpenSearch`, `.export-btn`, `.search-hint` | `test_sidebar_has_export_button_and_search_hint` |
-| search_modal.js | `renderSearchModal`, `ALLOWED_TAGS: ["mark"]` | `test_search_modal_sanitises_preview_to_mark_only` |
-| confirm_modal.js | `renderConfirmModal` | `test_phase6a_assets_served` |
-| Backend search/export/retranslate | `GET /search`, `GET /documents/{id}/export.md`, `POST /blocks/{id}/retranslate`, `SearchHit`, `RetranslateResponse`, `_build_preview`, `build_questions_markdown` | 19 integration tests |
-
-모든 새 식별자가 명시적 테스트 파일에서 grep 가능. R1 cross-verify가 "untested new paths" critique을 던지지 못하도록 R0부터 표 포함 (워크플로우 0-3-A 의무).
-
-### Deviations from challenge (의도적)
-
-- export 다운로드: `<a download>` 트릭 → fetch+Blob (debate §2 ACCEPT, 에러 surface)
-- preview HTML: `<mark>` 인라인 + DOMPurify 화이트리스트 (debate §1 simplification)
-- retranslate trigger: contextmenu만 (chat_panel 버튼 reject)
-- 동시 retranslate race: 문서화만 (debate §3 REJECT)
-- search 결과 정렬: doc_id boost + page_num + order_idx + block_id tie-breaker (debate decision)
-
-## 5-D. Scoring (100, v1)
+## 5-D. Scoring (100, v2 재산정)
 
 | Item       | Score / Max | Evidence |
 | ---------- | ----------- | -------- |
-| 독창성     | 14 / 15     | `<mark>` 인라인 preview + DOMPurify whitelist + `?block` 깊은 링크 + scroll flash + blockquote-safe export + fetch+Blob 다운로드 + contextmenu CustomEvent. 감점: LIKE 검색 자체는 평범 (FTS5 불필요는 측정으로 정당화). |
-| 완결성     | 33 / 35     | DoD 3 모두 evidence (자동 + 시각). 31 신규 테스트 + 7 screenshots + tracked scenario + workflow polish 3건. 감점: 동시 retranslate race는 문서화만. |
-| 안정성     | 29 / 30     | Phase 3 atomicity 재사용 (transient/permanent 시 row 보존), block transition reset (Phase 5 R2 fix 패턴 재사용), DOMPurify whitelist + html.escape 양쪽. 감점: jsdom CI 부재 (Phase 5 잔여 debt, Phase 6c). |
-| 확장성     | 19 / 20     | components 분리 + state 패턴 일관 + `activateBlockId` 단일 인자 + 새 식별자 모두 grep test 잠금. 감점: row-level lock은 Phase 6c. |
-| **Total**  | **95 / 100** | |
+| 독창성     | 14 / 15     | (v1 동일) `<mark>` 인라인 preview + DOMPurify whitelist + ?block 깊은 링크 + scroll flash + blockquote-safe export + fetch+Blob 다운로드 + contextmenu CustomEvent + manual-retranslate 캐시 무효화 정책 |
+| 완결성     | **34 / 35** | v1 33 → 34 (+1). R1 4 결함 모두 해소 + 6 회귀 가드 추가. |
+| 안정성     | **30 / 30** | v1 29 → 30 (+1). cache invalidation + whitespace guard + multiline export + confirm modal behavioural 모두 잠금. |
+| 확장성     | **20 / 20** | v1 19 → 20 (+1). `cache_key=None` 정책이 translate pipeline의 NOT NULL 필터링과 자연스럽게 결합 → future cache 호환성 안전. |
+| **Total**  | **98 / 100** | (v1 95 → v2 **98**) |
 
 ## 5-E. Self verdict
 
@@ -116,8 +107,7 @@ Phase 5/4/3/2/1 무회귀:
 - [ ] FAIL → RE-PLAN
 
 근거:
-- DoD 3 모두 evidence (자동 + 시각)
-- 299 fast tests + 6 LLM tests + `make check` RC=0
-- self 95/100 (R0)
-- 신 식별자 모두 단위 테스트 잠금 (워크플로우 0-3-A 의무 표 포함)
-- R1 cross-verify로 CONFIRM_PASS 기대.
+- R1 4 substantive 결함 모두 fix + 6 회귀 가드 추가 + 워크플로우 0-3-A "RE-CODE 새 코드 경로 단위 테스트 의무 표" 충족
+- 305 fast tests + 6 LLM + `make check` RC=0
+- self 98/100 (R1 95 → R2 98)
+- R2 cross-verify로 CONFIRM_PASS 기대.
