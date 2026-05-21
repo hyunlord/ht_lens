@@ -43,9 +43,9 @@ async def test_static_asset_served(api_db_path: Path, path: str, mime_prefix: st
     with make_test_client(api_db_path) as client:
         resp = client.get(path)
     assert resp.status_code == 200, path
-    assert (
-        mime_prefix in resp.headers["content-type"]
-    ), f"{path} content-type={resp.headers['content-type']}"
+    assert mime_prefix in resp.headers["content-type"], (
+        f"{path} content-type={resp.headers['content-type']}"
+    )
 
 
 @pytest.mark.asyncio
@@ -126,18 +126,18 @@ async def test_viewer_html_has_required_mount_points(api_db_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_index_js_has_empty_state_marker(api_db_path: Path, assets_root: Path) -> None:
     src = (assets_root / "js" / "index.js").read_text(encoding="utf-8")
-    assert (
-        "no documents yet" in src
-    ), "index.js should show a friendly empty state when /documents is []"
+    assert "no documents yet" in src, (
+        "index.js should show a friendly empty state when /documents is []"
+    )
 
 
 @pytest.mark.asyncio
 async def test_viewer_js_clamps_query_and_handles_404(api_db_path: Path, assets_root: Path) -> None:
     src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
     # clamp logic: viewer should bound `page` into [1, num_pages]
-    assert (
-        "Math.max(1" in src and "Math.min(doc.num_pages" in src
-    ), "viewer.js should clamp the URL page into [1, num_pages]"
+    assert "Math.max(1" in src and "Math.min(doc.num_pages" in src, (
+        "viewer.js should clamp the URL page into [1, num_pages]"
+    )
     # 404 path
     assert "err.status === 404" in src
     # history pushState (Phase 4 challenge revision §1)
@@ -161,9 +161,9 @@ async def test_block_js_rejects_invalid_bbox(api_db_path: Path, assets_root: Pat
 @pytest.mark.asyncio
 async def test_page_view_handles_rotation(api_db_path: Path, assets_root: Path) -> None:
     src = (assets_root / "js" / "components" / "page_view.js").read_text(encoding="utf-8")
-    assert (
-        "rotation" in src and "rotation-banner" in src
-    ), "page_view should warn on rotated pages instead of mis-aligning blocks"
+    assert "rotation" in src and "rotation-banner" in src, (
+        "page_view should warn on rotated pages instead of mis-aligning blocks"
+    )
 
 
 # --- RE-CODE round 1 regression guards ---
@@ -188,9 +188,9 @@ async def test_viewer_navigation_token_cancels_stale_responses(
     src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
     assert "navToken" in src, "viewer.js should track a navigation token"
     # Token must be checked at least twice (after each await).
-    assert (
-        src.count("token !== navToken") >= 2
-    ), "viewer.js should re-check navToken after every async boundary"
+    assert src.count("token !== navToken") >= 2, (
+        "viewer.js should re-check navToken after every async boundary"
+    )
 
 
 @pytest.mark.asyncio

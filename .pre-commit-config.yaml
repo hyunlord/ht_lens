@@ -9,7 +9,11 @@ repos:
         args: ["--maxkb=1024"]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    # Keep pre-commit ruff in sync with the version uv installs in CI
+    # (`ruff>=0.6` in pyproject.toml resolves to 0.15.x). An older pre-commit
+    # ruff reformats files differently from CI ruff and silently breaks
+    # `ruff format --check` on push.
+    rev: v0.15.13
     hooks:
       - id: ruff
         args: ["--fix"]
