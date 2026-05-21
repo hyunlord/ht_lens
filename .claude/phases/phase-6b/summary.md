@@ -1,22 +1,36 @@
-# Phase 6b — Summary
+# Phase 6b — Summary (v2 — Planner-directed fix applied)
 
 ## Status
 
-**PASS_CANDIDATE_97** (Worker self v2 — post RE-CODE) → **REJECT** (Codex Round 2, 제안 84). Round-cap 도달.
+**PASS_CANDIDATE_98** (Worker self v3 — post Planner-directed fix).
 
-R2가 R1의 4 결함 모두 fix됨 인정 ("Round 1's defects were genuinely fixed"). R2 신규 발견:
-- jumpToThread thread-accuracy 버그 (multi-thread block에서 클릭한 thread와 다른 thread 자동 선택)
-- history state가 threadId 잃음 (R1 fix는 blockId만 추가)
-- RE-CODE branches가 여전히 grep-only (jsdom 행위 테스트 부족)
+Phase 6b R2 cross-verify가 REJECT (제안 84). R2가 R1 4 결함 모두 fix됨 인정 ("Round 1's defects were genuinely fixed") + 신규 substantive 2건 발견. Workflow round-cap 도달 → Planner-directed targeted fix.
 
-**Push 보류 → Planner escalate** (자동 push 정책 `self ≥ 95 + cross CONFIRM_PASS` 미충족).
+Planner-directed fix 정책: **cross-verify 재호출 금지** + **Worker는 push 안 함** (Planner가 직접 push).
 
 ## Score
 
-- **Self v2 (RE-CODE 후)**: 97 / 100
-- **Self v1**: 93 / 100
+- **Self v3 (Planner-directed fix 후)**: **98 / 100**
+- Self v2 (RE-CODE 후): 97 / 100
+- Self v1: 93 / 100
 - **Cross R1**: REJECT → 제안 81/100 (4 substantive: togglePanel viewModeActual, popstate blockId, page bounds, scheduleFarPageUnmount untested)
 - **Cross R2**: REJECT → 제안 84/100. **"Round 1's defects were genuinely fixed"** 명시.
+
+## Planner-directed fix applied (post R2)
+
+Planner가 R2 substantive 2건에 대해 targeted fix 지시. **cross-verify 재호출 금지**.
+
+| Commit | 내용 |
+| ------ | ---- |
+| `5652081` fix(phase-6b): jumpToThread sets activeThreadId explicitly (multi-thread accuracy) | navigateTo가 `opts.activateThreadId` 받아 `openPanel({threadId})`에 직접 전달 + auto-select 분기 우회. jumpToThread + popstate + loadDocument 모두 thread.id forward. defensive `setActiveThreadId` 재호출 추가. |
+| `8f97604` fix(phase-6b): include threadId in history state for back/forward | pushState 페이로드 `{docId, page, blockId, threadId}` 형태로 확장. popstate가 `data.threadId` 복원 후 navigateTo로 분기. loadDocument에 `initialThreadId` 매개변수 추가 (cross-doc popstate). |
+
+**회귀 가드 5건** (329 → 334):
+- `test_jump_to_thread_uses_explicit_thread_id` (grep)
+- `test_navigate_to_uses_explicit_thread_id_when_provided` (grep)
+- `test_history_state_carries_thread_id` (grep — 4 markers)
+- `test_viewer_history_thread_js.py::test_history_state_round_trip_preserves_block_and_thread_id` (jsdom-light: 두 thread 선택 후 back/forward 정확도)
+- `test_viewer_history_thread_js.py::test_history_state_payload_includes_threadId_field_when_jumpToThread_runs` (grep — pushState payload shape)
 
 ## What was built
 
@@ -121,41 +135,37 @@ R2가 R1의 4 결함 모두 fix됨 인정 ("Round 1's defects were genuinely fix
 
 ## Known issues / debt
 
-### R2 가 raised — substantive but small scope
+### R2 가 raised — 모두 처리됨 또는 Phase 6d 위임
 
-1. **jumpToThread thread-accuracy**: multi-thread block에서 클릭한 thread 보장 안 됨. Fix: `jumpToThread` 안의 `navigateTo` 호출 후 `setActiveThreadId(thread.id)` 재호출 + `navigateTo` 안의 auto-select 분기에 `state.activeThreadId` 우선 사용.
-2. **history threadId 누락**: pushState payload에 threadId 추가 + popstate restore 시 threadId fallback. 5-10줄 fix.
-3. **RE-CODE grep-only**: jsdom CI 도입 시 자연스럽게 해소 (Phase 6d).
+1. **jumpToThread thread-accuracy** — ✅ Planner-directed fix `5652081`
+2. **history threadId 누락** — ✅ Planner-directed fix `8f97604`
+3. **RE-CODE grep-only** — Planner 결정: jsdom CI 설치는 **Phase 6d 워크플로우 보강 영역**. 본 fix 2건은 jsdom-light history round-trip test로 grep-only critique 부분 해소.
 
-### Phase 본체 잔여 한계
+### Phase 6d (v1.0) 위임 항목
 
-4. **200 페이지 실측 부재**: sample_ko.pdf 없음. 합성 fixture로 보강 가능.
-5. **jsdom CI 미설치**: Phase 5/6a/6b 전반 debt → Phase 6d 위임.
-6. **sample_ko 52페이지 stress**: 미존재 PDF.
+4. **jsdom CI 설치**: `npm install jsdom` + `.github/workflows/ci.yml` 확장. Phase 5/6a/6b 전반의 host-dependent test debt 일괄 해소.
+5. **sample_ko 52페이지 stress**: Planner 결정에 따라 **6페이지 측정 + projection으로 DoD 충족** (peak 4.8 MB → 200페이지 13.6 MB << 500 MB 충분). 합성 fixture는 Phase 6d 검토.
+6. **multiline translated test, search 200ms 엄격 단언, LLM live re-run after RE-CODE 워크플로우 보강**: Phase 6a R2 위임 + Phase 6b R2 위임 일괄 처리.
 
 ## Push status
 
-**보류 (Planner escalate)**. 사유:
-- Workflow Stage 6 자동 push 정책: `self ≥ 95 + cross CONFIRM_PASS` (R2 REJECT이므로 비충족)
-- Cross-verify round-cap (2 라운드) 도달
-- Self 97 vs Codex R2 84 — 13점 차이는 substantive (jumpToThread + threadId history는 real bugs) + verify scope critique 혼합
-- R2 자체가 "Round 1's defects were genuinely fixed" 명시 → R0 + R1 본체 작업의 가치 인정
-- Local main은 origin/main 대비 12 commits ahead
+**보류 (Planner-directed fix 정책)**.
 
-Planner 결정 옵션:
-- **(a) Planner-directed micro-fix 2건** (jumpToThread thread-accuracy + history threadId) → verify v3 → push + v0.5 태그. 가장 합리적.
-- **(b) 그대로 push 승인** + v0.5 태그. R2 critique을 Phase 6d/post-release fix로 위임.
-- **(c) 추가 RE-CODE** (round-cap 위반 — 비권장).
-- **(d) 합성 sample_ko 52페이지 fixture 추가** → memory DoD 실측 evidence + push.
+- Workflow round-cap 도달 + Planner 명시 **cross-verify 재호출 금지**
+- Planner-directed fix 정책: **Worker는 push 안 함, Planner가 직접 push**
+- Self 98/100 (R2 97 → v3 98), R2 substantive 결함 2건 모두 fix + 회귀 가드 5건 추가
+- Local main은 `origin/main` 대비 **15 commits ahead** (`1353a28..e445788`)
+- CI green 확인은 push 후 (Planner)
 
 ## Recommended next
 
-- **Planner 결정 후**:
-  - (a) 선택: 2건 micro-fix → verify v3 (R3 cross-verify 금지) → push + v0.5
-  - (b) 선택: 즉시 push + v0.5 + jumpToThread/threadId history는 Phase 6c entry condition
-  - (d) 선택: stress fixture 추가 → 200-page direct evidence → push + v0.5
-- **Phase 6c 진입 시 흡수**:
-  - header heuristic / 멀티컬럼 / samples.md / 회전 페이지 (R2 deferred 영역도 흡수 가능)
+- **Planner의 push 결정 후 v0.5 태그 + push**
+- **Phase 6c 진입** (v0.6):
+  - header heuristic / 멀티컬럼 reading order / samples.md determinism / 회전 페이지 정밀 매핑
 - **Phase 6d (v1.0)**:
-  - jsdom CI 설치 → R2 grep-only critique 자연 해소
-  - + 백그라운드 패널, 모델 토글, streaming, Playwright suite, LLM-driven title
+  - jsdom CI 설치 → R2 grep-only critique 자연 해소 + Phase 6a R2 위임 처리
+  - 백그라운드 패널, 모델 빠른 토글, streaming response (SSE)
+  - Playwright 자동 시나리오 (Phase 5 + 6a + 6b 통합)
+  - LLM-driven thread title
+  - sample_ko 52페이지 합성 fixture (선택)
+  - LLM live re-run after RE-CODE 워크플로우 보강
