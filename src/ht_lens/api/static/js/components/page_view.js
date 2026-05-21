@@ -36,6 +36,7 @@ export function renderPageView(container, doc, page, overlayMode, zoom) {
   } else {
     const overlay = document.createElement("div");
     overlay.className = "overlay";
+    overlay.dataset.mode = overlayMode;
     overlay.style.width = `${pixelW}px`;
     overlay.style.height = `${pixelH}px`;
     const scale = {

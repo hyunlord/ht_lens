@@ -45,6 +45,7 @@ Thumbs.db
 data/*
 !data/.gitkeep
 docs/phases/phase-*/screenshots/
+!docs/phases/phase-4/screenshots/
 
 # OMC orchestration state
 .omc/

@@ -34,9 +34,20 @@ function safeWrite(key, value) {
   }
 }
 
+function snapToStep(z) {
+  return ZOOM_STEPS.reduce((best, s) =>
+    Math.abs(s - z) < Math.abs(best - z) ? s : best,
+  );
+}
+
 export const state = {
-  zoom: safeReadFloat(STORAGE_ZOOM, 1.0),
-  overlayMode: safeReadString(STORAGE_OVERLAY, "translation"),
+  // Snap on init so a stale or hand-edited localStorage value can't render a
+  // non-step zoom on first paint.
+  zoom: snapToStep(safeReadFloat(STORAGE_ZOOM, 1.0)),
+  overlayMode: (() => {
+    const v = safeReadString(STORAGE_OVERLAY, "translation");
+    return v === "original" || v === "translation" ? v : "translation";
+  })(),
   listeners: new Set(),
 };
 
@@ -52,9 +63,7 @@ function notify() {
 
 /** Set zoom to the nearest step. */
 export function setZoom(z) {
-  const clamped = ZOOM_STEPS.reduce((best, s) =>
-    Math.abs(s - z) < Math.abs(best - z) ? s : best,
-  );
+  const clamped = snapToStep(z);
   state.zoom = clamped;
   safeWrite(STORAGE_ZOOM, clamped);
   notify();

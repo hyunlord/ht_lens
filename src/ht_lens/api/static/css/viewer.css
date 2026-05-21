@@ -101,10 +101,25 @@
   line-height: 1.15;
   color: var(--text);
   padding: 0;
-  background: rgba(14, 17, 22, 0.78);
-  /* Slight translucent panel so text is legible over the PNG. */
+  background: transparent;
   border-radius: 2px;
   cursor: pointer;
+}
+
+/* Translation mode: cover the PNG so the source text doesn't bleed through. */
+.overlay[data-mode='translation'] .block:not(.block--image) {
+  background: rgba(14, 17, 22, 0.78);
+}
+
+/* Original mode: keep blocks transparent so the PDF's own text is what's
+ * read. Hover still highlights the block boundary. */
+.overlay[data-mode='original'] .block {
+  background: transparent;
+  color: transparent;
+}
+
+.overlay[data-mode='original'] .block:hover {
+  background: rgba(14, 17, 22, 0.05);
 }
 
 .block:hover {

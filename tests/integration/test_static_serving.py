@@ -164,3 +164,51 @@ async def test_page_view_handles_rotation(api_db_path: Path, assets_root: Path) 
     assert (
         "rotation" in src and "rotation-banner" in src
     ), "page_view should warn on rotated pages instead of mis-aligning blocks"
+
+
+# --- RE-CODE round 1 regression guards ---
+
+
+@pytest.mark.asyncio
+async def test_viewer_clears_dom_on_error(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: 404/error path must wipe stale page-mount + sidebar content."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert "clearViewerDom" in src, "viewer.js should define clearViewerDom()"
+    # Error handler must call clearViewerDom before showing the banner.
+    catch_idx = src.find("} catch (err)")
+    assert catch_idx > 0
+    assert "clearViewerDom()" in src[catch_idx:], "viewer.js catch block must wipe stale viewer DOM"
+
+
+@pytest.mark.asyncio
+async def test_viewer_navigation_token_cancels_stale_responses(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """R1 fix: rapid prev/next must not let an older response paint on top."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert "navToken" in src, "viewer.js should track a navigation token"
+    # Token must be checked at least twice (after each await).
+    assert (
+        src.count("token !== navToken") >= 2
+    ), "viewer.js should re-check navToken after every async boundary"
+
+
+@pytest.mark.asyncio
+async def test_overlay_data_mode_set_by_page_view(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: CSS targets ``.overlay[data-mode='...']`` to keep the original
+    mode visually clean. page_view.js must actually set that attribute."""
+    pv = (assets_root / "js" / "components" / "page_view.js").read_text(encoding="utf-8")
+    assert "dataset.mode" in pv, "page_view.js should set overlay.dataset.mode"
+    css = (assets_root / "css" / "viewer.css").read_text(encoding="utf-8")
+    assert "overlay[data-mode='translation']" in css
+    assert "overlay[data-mode='original']" in css
+
+
+@pytest.mark.asyncio
+async def test_state_snaps_zoom_on_init(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: a stale localStorage zoom value must be snapped to a step
+    before first render, not used as-is."""
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    assert "snapToStep" in src
+    # The initial state.zoom must go through snapToStep.
+    assert "zoom: snapToStep(" in src, "state.zoom on init must be snapped to ZOOM_STEPS"

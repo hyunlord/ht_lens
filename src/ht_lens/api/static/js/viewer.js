@@ -32,17 +32,34 @@ function setStatus(msg, kind = "info") {
 
 let currentDoc = null;
 let currentPage = null;
+// Navigation token — increments per call so stale responses can be discarded
+// when the user rapidly changes pages.
+let navToken = 0;
+
+function clearViewerDom() {
+  if (pageEl) pageEl.innerHTML = "";
+  if (sidebarEl) sidebarEl.innerHTML = "";
+  if (headerMeta) headerMeta.textContent = "no document loaded";
+  document.title = "ht_lens — viewer";
+  currentDoc = null;
+  currentPage = null;
+}
 
 async function loadAndRender({ docId, page, replaceUrl = false }) {
   if (!docId) {
+    clearViewerDom();
     setStatus("문서 ID가 필요합니다. /static/index.html 에서 문서를 선택하세요.", "error");
     return;
   }
+  const token = ++navToken;
   try {
     setStatus("loading…");
     const doc = await apiGet(`/documents/${docId}`);
+    if (token !== navToken) return; // a newer navigation superseded this one
     const clampedPage = Math.max(1, Math.min(doc.num_pages, page));
     const pageData = await apiGet(`/documents/${docId}/pages/${clampedPage}`);
+    if (token !== navToken) return;
+
     currentDoc = doc;
     currentPage = pageData;
 
@@ -64,6 +81,8 @@ async function loadAndRender({ docId, page, replaceUrl = false }) {
       window.history.pushState({ docId, page: clampedPage }, "", url);
     }
   } catch (err) {
+    if (token !== navToken) return; // stale failure — ignore
+    clearViewerDom();
     if (err instanceof ApiError && err.status === 404) {
       setStatus("문서 또는 페이지를 찾을 수 없습니다.", "error");
     } else {
