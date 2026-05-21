@@ -866,3 +866,36 @@ async def test_schedule_far_page_unmount_is_exported(api_db_path: Path, assets_r
     can drive the 200-page memory DoD code path directly."""
     src = (assets_root / "js" / "components" / "stage_container.js").read_text(encoding="utf-8")
     assert "export function scheduleFarPageUnmount" in src
+
+
+# --- Phase 6b Planner-directed R2 fixes (jumpToThread + history threadId) ---
+
+
+@pytest.mark.asyncio
+async def test_jump_to_thread_uses_explicit_thread_id(api_db_path: Path, assets_root: Path) -> None:
+    """Planner R2 fix #1: jumpToThread must forward the exact thread.id to
+    navigateTo so multi-thread blocks open the clicked thread, not the
+    highest-id auto-select."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # jumpToThread body forwards activateThreadId AND re-affirms via setActiveThreadId.
+    idx = src.find("async function jumpToThread(")
+    assert idx > 0
+    end = src.find("\nasync function", idx + 10)
+    if end < 0:
+        end = src.find("\nfunction ", idx + 10)
+    body = src[idx:end]
+    assert "activateThreadId: thread.id" in body
+    assert "setActiveThreadId(thread.id)" in body
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_uses_explicit_thread_id_when_provided(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """Planner R2 fix #1: navigateTo({activateThreadId}) skips the highest-id
+    auto-select and opens the panel with the caller-supplied thread."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert "opts.activateThreadId" in src
+    # The branch that uses the explicit id must skip the existing-thread
+    # auto-select. We check for the structural marker.
+    assert "explicitThreadId" in src

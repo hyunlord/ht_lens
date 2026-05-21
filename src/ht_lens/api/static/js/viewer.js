@@ -234,7 +234,13 @@ function repaintPanel() {
   );
 }
 
-async function loadDocument({ docId, initialPage, initialBlockId, replaceUrl }) {
+async function loadDocument({
+  docId,
+  initialPage,
+  initialBlockId,
+  initialThreadId = null,
+  replaceUrl,
+}) {
   if (!docId) {
     clearViewerDom();
     setStatus(
@@ -287,17 +293,32 @@ async function loadDocument({ docId, initialPage, initialBlockId, replaceUrl }) 
     }
 
     if (initialBlockId) {
-      openPanel({ blockId: initialBlockId, threadId: null, docId });
-      const existing = (state.threadsByDoc[docId] || []).filter(
-        (t) => t.block_id === initialBlockId,
-      );
-      if (existing.length > 0) {
-        const target = existing.reduce((a, b) => (a.id > b.id ? a : b));
-        setActiveThreadId(target.id);
+      // Planner-directed R2 fix #2: cross-doc popstate carries threadId
+      // through to loadDocument so back/forward across documents restores
+      // the exact thread, not the highest-id one.
+      openPanel({
+        blockId: initialBlockId,
+        threadId: initialThreadId,
+        docId,
+      });
+      if (initialThreadId) {
         try {
-          await ensureThreadDetail(target.id);
+          await ensureThreadDetail(initialThreadId);
         } catch (err) {
-          console.warn("thread detail hydrate failed", err);
+          console.warn("explicit thread detail hydrate failed", err);
+        }
+      } else {
+        const existing = (state.threadsByDoc[docId] || []).filter(
+          (t) => t.block_id === initialBlockId,
+        );
+        if (existing.length > 0) {
+          const target = existing.reduce((a, b) => (a.id > b.id ? a : b));
+          setActiveThreadId(target.id);
+          try {
+            await ensureThreadDetail(target.id);
+          } catch (err) {
+            console.warn("thread detail hydrate failed", err);
+          }
         }
       }
       const blockEl = await waitForBlockMounted(initialBlockId, 2000);
@@ -359,8 +380,17 @@ async function navigateTo(docId, page, opts = {}) {
     const url =
       `viewer.html?doc=${docId}&page=${page}` +
       (opts.activateBlockId ? `&block=${opts.activateBlockId}` : "");
+    // Planner-directed R2 fix: persist threadId in the history state so
+    // browser back/forward from a sidebar-selected question restores the
+    // *exact* thread, not just the block (which on multi-thread blocks
+    // would default to the highest-id thread).
     window.history.pushState(
-      { docId, page, blockId: opts.activateBlockId ?? null },
+      {
+        docId,
+        page,
+        blockId: opts.activateBlockId ?? null,
+        threadId: opts.activateThreadId ?? null,
+      },
       "",
       url,
     );
@@ -373,21 +403,34 @@ async function navigateTo(docId, page, opts = {}) {
     // observer would do this eventually but we want flashBlock to be
     // reliable (debate §4 fix: Promise + waitFor, not a polling-only loop).
     await mountPage(page, stageContext());
+    // Planner-directed R2 fix #1: prefer the caller-supplied
+    // ``activateThreadId`` (set by jumpToThread() from the sidebar) over
+    // the highest-id auto-select. On multi-thread blocks the user wants
+    // the exact thread they clicked.
+    const explicitThreadId = opts.activateThreadId ?? null;
     openPanel({
       blockId: opts.activateBlockId,
-      threadId: null,
+      threadId: explicitThreadId,
       docId,
     });
-    const existing = (state.threadsByDoc[docId] || []).filter(
-      (t) => t.block_id === opts.activateBlockId,
-    );
-    if (existing.length > 0) {
-      const target = existing.reduce((a, b) => (a.id > b.id ? a : b));
-      setActiveThreadId(target.id);
+    if (explicitThreadId) {
       try {
-        await ensureThreadDetail(target.id);
+        await ensureThreadDetail(explicitThreadId);
       } catch (err) {
-        console.warn("thread detail hydrate failed", err);
+        console.warn("explicit thread detail hydrate failed", err);
+      }
+    } else {
+      const existing = (state.threadsByDoc[docId] || []).filter(
+        (t) => t.block_id === opts.activateBlockId,
+      );
+      if (existing.length > 0) {
+        const target = existing.reduce((a, b) => (a.id > b.id ? a : b));
+        setActiveThreadId(target.id);
+        try {
+          await ensureThreadDetail(target.id);
+        } catch (err) {
+          console.warn("thread detail hydrate failed", err);
+        }
       }
     }
     const blockEl = await waitForBlockMounted(opts.activateBlockId, 2000);
@@ -507,11 +550,17 @@ async function jumpToThread(thread) {
     panelError = null;
     lastFailedAction = null;
   }
+  // Planner-directed R2 fix #1: forward the exact thread.id to navigateTo
+  // so multi-thread blocks open the clicked thread instead of falling back
+  // to navigateTo's highest-id auto-select.
   openPanel({ blockId: thread.block_id, threadId: thread.id, docId });
-  // navigateTo handles scroll + mount + flashBlock for cross-page jumps.
-  // For same-page thread jumps it's still safe (scrollToPage will scroll
-  // to the row top, which is what we want for confirming the location).
-  await navigateTo(docId, thread.page_num, { activateBlockId: thread.block_id });
+  await navigateTo(docId, thread.page_num, {
+    activateBlockId: thread.block_id,
+    activateThreadId: thread.id,
+  });
+  // Defensive: navigateTo already hydrates the thread detail, but if the
+  // viewer is racing other panel state changes we re-affirm the selection.
+  setActiveThreadId(thread.id);
   try {
     await ensureThreadDetail(thread.id);
   } catch (err) {
@@ -549,18 +598,25 @@ window.addEventListener("popstate", (e) => {
   panelError = null;
   lastFailedAction = null;
   discardPanel();
-  // R1 fix (cross-verify §4): popstate must restore the block too, not
-  // just the page. parseQuery() is the source of truth for the URL bar.
+  // R1 fix (cross-verify §4): popstate must restore the block too.
+  // R2 Planner-directed fix #2: also carry threadId so back/forward from
+  // a sidebar question on a multi-thread block re-opens the right thread,
+  // not the highest-id one.
   const fromUrl = parseQuery();
   const target =
     data && data.docId && data.page
-      ? { docId: data.docId, page: data.page, blockId: data.blockId ?? fromUrl.blockId }
-      : fromUrl;
+      ? {
+          docId: data.docId,
+          page: data.page,
+          blockId: data.blockId ?? fromUrl.blockId,
+          threadId: data.threadId ?? null,
+        }
+      : { ...fromUrl, threadId: null };
   if (target.docId === currentDoc?.id) {
-    // Same doc — scroll + re-activate block if the prior state had one.
     if (target.blockId) {
       navigateTo(target.docId, target.page, {
         activateBlockId: target.blockId,
+        activateThreadId: target.threadId,
         fromPopstate: true,
       });
     } else {
@@ -571,6 +627,7 @@ window.addEventListener("popstate", (e) => {
       docId: target.docId,
       initialPage: target.page,
       initialBlockId: target.blockId,
+      initialThreadId: target.threadId,
       replaceUrl: true,
     });
   }
