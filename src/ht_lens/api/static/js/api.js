@@ -63,3 +63,38 @@ export function postMessage(threadId, content) {
     content,
   });
 }
+
+// -- Phase 6a: search / export / retranslate --
+
+export function searchAll(q, { docId = null, limit = 50 } = {}) {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  if (docId !== null && docId !== undefined) {
+    params.set("doc_id", String(docId));
+  }
+  return apiGet(`/search?${params.toString()}`);
+}
+
+/** Download the export markdown via fetch + Blob so we can surface server
+ *  errors as a toast instead of a silent broken anchor click. */
+export async function exportQuestions(docId) {
+  const resp = await fetch(`/documents/${encodeURIComponent(docId)}/export.md`);
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new ApiError(resp.status, text);
+  }
+  const blob = await resp.blob();
+  const filename = `ht_lens-${docId}-questions.md`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  return filename;
+}
+
+export function retranslateBlock(blockId) {
+  return apiPost(`/blocks/${encodeURIComponent(blockId)}/retranslate`);
+}

@@ -5,8 +5,14 @@
  *  Phase 5 additions:
  *  - ``Esc``: ``onClosePanel`` (panel close)
  *  - ``Cmd/Ctrl+B``: ``onTogglePanel`` (panel toggle)
- *  Esc fires even when the focus is inside the chat textarea (it's the
- *  panel close shortcut). Other shortcuts still skip input/textarea.
+ *  Esc fires even when the focus is inside the chat textarea.
+ *
+ *  Phase 6a additions:
+ *  - ``Cmd/Ctrl+K``: ``onOpenSearch`` (search modal). Fires even from inside
+ *    chat input/textarea so the global shortcut is always available.
+ *  - ``Esc`` ordering: when ``isSearchOpen()`` returns true, ``onCloseSearch``
+ *    is called instead of ``onClosePanel``. This keeps the layered modals
+ *    (search > panel) behaving in LIFO order.
  */
 export function attachKeyboard(handlers) {
   const onKey = (e) => {
@@ -15,15 +21,30 @@ export function attachKeyboard(handlers) {
       typeof e.target.matches === "function" &&
       e.target.matches("input, textarea");
 
-    // Esc is always honoured — even while typing, since the user expects
-    // it to close the panel.
+    const meta = e.metaKey || e.ctrlKey;
+
+    // Cmd/Ctrl+K opens the search modal from anywhere, including the chat
+    // input — power users type in any context.
+    if (meta && (e.key === "k" || e.key === "K")) {
+      e.preventDefault();
+      handlers.onOpenSearch && handlers.onOpenSearch();
+      return;
+    }
+
+    // Esc: search modal > panel. The handler decides which is open.
     if (e.key === "Escape") {
-      handlers.onClosePanel && handlers.onClosePanel();
+      if (
+        typeof handlers.isSearchOpen === "function" &&
+        handlers.isSearchOpen()
+      ) {
+        handlers.onCloseSearch && handlers.onCloseSearch();
+      } else {
+        handlers.onClosePanel && handlers.onClosePanel();
+      }
       return;
     }
 
     if (typing) return;
-    const meta = e.metaKey || e.ctrlKey;
     if (e.key === "ArrowLeft") {
       handlers.onPrev && handlers.onPrev();
     } else if (e.key === "ArrowRight") {

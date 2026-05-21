@@ -5,16 +5,26 @@ import {
   ApiError,
   createThread,
   explainThread,
+  exportQuestions,
   getThreadDetail,
   listThreadsForDoc,
   postMessage,
+  retranslateBlock,
+  searchAll,
 } from "./api.js";
 import {
   closePanel,
+  closeSearch,
   discardPanel,
+  moveSearchSelection,
   openPanel,
+  openSearch,
   setActiveThreadId,
   setLoadingMessage,
+  setRetranslateInProgress,
+  setSearchError,
+  setSearchLoading,
+  setSearchResults,
   setSidebarTab,
   setThreadDetail,
   setThreadsForDoc,
@@ -28,6 +38,8 @@ import {
 import { renderPageView } from "./components/page_view.js";
 import { renderSidebar } from "./components/sidebar.js";
 import { renderChatPanel } from "./components/chat_panel.js";
+import { renderSearchModal } from "./components/search_modal.js";
+import { renderConfirmModal } from "./components/confirm_modal.js";
 import { attachKeyboard } from "./utils/keyboard.js";
 
 // --- DOM refs ---
@@ -37,14 +49,29 @@ const sidebarEl = document.querySelector(".sidebar");
 const pageEl = document.getElementById("page-mount");
 const panelEl = document.querySelector(".right-slot");
 const errorEl = document.getElementById("status");
+// Phase 6a — search modal mount + toast container (created lazily).
+const searchEl = document.getElementById("search-modal-mount");
+
+function toast(message, kind = "info", timeoutMs = 2400) {
+  const el = document.createElement("div");
+  el.className = `toast toast--${kind}`;
+  if (kind === "error") el.classList.add("error");
+  if (kind === "success") el.classList.add("success");
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), timeoutMs);
+}
 
 function parseQuery() {
   const params = new URL(window.location.href).searchParams;
   const docRaw = Number.parseInt(params.get("doc") || "", 10);
   const pageRaw = Number.parseInt(params.get("page") || "", 10);
+  const blockRaw = Number.parseInt(params.get("block") || "", 10);
   const docId = Number.isFinite(docRaw) && docRaw > 0 ? docRaw : null;
   const page = Number.isFinite(pageRaw) && pageRaw > 0 ? pageRaw : 1;
-  return { docId, page };
+  // Phase 6a: ?block=N is a deep link from /search results.
+  const blockId = Number.isFinite(blockRaw) && blockRaw > 0 ? blockRaw : null;
+  return { docId, page, blockId };
 }
 
 function setStatus(msg, kind = "info") {
@@ -104,6 +131,34 @@ function repaintSidebar() {
       onNavigatePage: (p) => navigateTo(currentDoc.id, p),
       onTabChange: (tab) => setSidebarTab(tab),
       onSelectThread: (t) => jumpToThread(t),
+      onExport: () => handleExport(),
+      onOpenSearch: () => openSearch(),
+    },
+  );
+}
+
+function repaintSearch() {
+  if (!searchEl) return;
+  if (!state.searchOpen) {
+    searchEl.innerHTML = "";
+    searchEl.hidden = true;
+    return;
+  }
+  searchEl.hidden = false;
+  renderSearchModal(
+    searchEl,
+    {
+      query: state.searchQuery,
+      results: state.searchResults,
+      selected: state.searchSelected,
+      loading: state.searchLoading,
+      error: state.searchError,
+    },
+    {
+      onClose: () => closeSearch(),
+      onQueryChange: (value) => handleSearchInput(value),
+      onMove: (delta) => moveSearchSelection(delta),
+      onSelect: (hit) => handleSearchSelect(hit),
     },
   );
 }
@@ -160,7 +215,7 @@ function repaintPage() {
   );
 }
 
-async function loadAndRender({ docId, page, replaceUrl = false }) {
+async function loadAndRender({ docId, page, replaceUrl = false, activateBlockId = null }) {
   if (!docId) {
     clearViewerDom();
     setStatus(
@@ -200,12 +255,44 @@ async function loadAndRender({ docId, page, replaceUrl = false }) {
     repaintPanel();
     setStatus("");
 
-    const url = `viewer.html?doc=${docId}&page=${clampedPage}`;
+    // Phase 6a: search-result deep link — activate the target block, open
+    // the panel for it, and scroll into view. This must run AFTER repaintPage
+    // since the block DOM has just been created.
+    if (activateBlockId) {
+      openPanel({ blockId: activateBlockId, threadId: null, docId });
+      // If the block already has a thread, hydrate it in the background.
+      const existing = (state.threadsByDoc[docId] || []).filter(
+        (t) => t.block_id === activateBlockId,
+      );
+      if (existing.length > 0) {
+        const target = existing.reduce((a, b) => (a.id > b.id ? a : b));
+        setActiveThreadId(target.id);
+        try {
+          await ensureThreadDetail(target.id);
+        } catch (err) {
+          console.warn("thread detail hydrate failed", err);
+        }
+      }
+      const blockEl = document.querySelector(
+        `.block[data-block-id="${activateBlockId}"]`,
+      );
+      if (blockEl) {
+        blockEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        blockEl.classList.add("block--flash");
+        setTimeout(() => blockEl.classList.remove("block--flash"), 1500);
+      }
+    }
+
+    const baseUrl = `viewer.html?doc=${docId}&page=${clampedPage}`;
+    const url = activateBlockId ? `${baseUrl}&block=${activateBlockId}` : baseUrl;
     if (replaceUrl) {
       window.history.replaceState({ docId, page: clampedPage }, "", url);
     } else if (
       page !== clampedPage ||
-      window.location.search !== `?doc=${docId}&page=${clampedPage}`
+      window.location.search !==
+        (activateBlockId
+          ? `?doc=${docId}&page=${clampedPage}&block=${activateBlockId}`
+          : `?doc=${docId}&page=${clampedPage}`)
     ) {
       window.history.pushState({ docId, page: clampedPage }, "", url);
     }
@@ -221,7 +308,7 @@ async function loadAndRender({ docId, page, replaceUrl = false }) {
   }
 }
 
-function navigateTo(docId, page) {
+function navigateTo(docId, page, opts = {}) {
   // Close the panel before navigating so a stale thread cannot paint over
   // the new page. Use discardPanel (not closePanel) because the new page's
   // blocks are unrelated to the current activeBlockId — a Ctrl/Cmd+B toggle
@@ -229,7 +316,7 @@ function navigateTo(docId, page) {
   panelError = null;
   lastFailedAction = null;
   discardPanel();
-  loadAndRender({ docId, page });
+  loadAndRender({ docId, page, activateBlockId: opts.activateBlockId });
 }
 
 async function ensureThreadDetail(threadId) {
@@ -401,17 +488,123 @@ window.addEventListener("popstate", (e) => {
     loadAndRender({ docId: data.docId, page: data.page, replaceUrl: true });
   } else {
     const q = parseQuery();
-    loadAndRender({ docId: q.docId, page: q.page, replaceUrl: true });
+    loadAndRender({
+      docId: q.docId,
+      page: q.page,
+      activateBlockId: q.blockId,
+      replaceUrl: true,
+    });
   }
 });
 
 // Re-render when state (zoom / overlay / tab) changes.
 subscribe(() => {
+  // Search modal is doc-agnostic — repaint even before any doc is loaded.
+  repaintSearch();
   if (!currentDoc || !currentPage) return;
   repaintPage();
   repaintSidebar();
   repaintPanel();
 });
+
+// --- Phase 6a: search + export + retranslate handlers ---
+
+let _searchDebounce = null;
+const _searchAbortRef = { current: null };
+
+async function handleSearchInput(query) {
+  state.searchQuery = query;
+  if (_searchDebounce) {
+    clearTimeout(_searchDebounce);
+  }
+  if (!query || query.trim().length < 2) {
+    setSearchResults(query, []);
+    return;
+  }
+  _searchDebounce = setTimeout(async () => {
+    setSearchLoading(true);
+    const localQuery = query;
+    try {
+      const docId = currentDoc?.id ?? null;
+      const results = await searchAll(localQuery, { docId, limit: 50 });
+      // Drop the response if the user has typed something else in the meantime.
+      if (state.searchQuery !== localQuery) return;
+      setSearchResults(localQuery, results);
+    } catch (err) {
+      setSearchError(err.message || "검색 실패");
+    } finally {
+      setSearchLoading(false);
+    }
+  }, 200);
+}
+
+function handleSearchSelect(hit) {
+  closeSearch();
+  // jump to the target page; openPanel with the matched block right after.
+  navigateTo(hit.doc_id, hit.page_num, { activateBlockId: hit.block_id });
+}
+
+async function handleExport() {
+  if (!currentDoc) return;
+  try {
+    const filename = await exportQuestions(currentDoc.id);
+    toast(`${filename} 다운로드 완료`, "success");
+  } catch (err) {
+    console.error("export failed", err);
+    toast(`내보내기 실패: ${err.message}`, "error");
+  }
+}
+
+document.addEventListener("ht-lens:block-contextmenu", (e) => {
+  const { blockId, blockData } = e.detail;
+  if (!currentDoc) return;
+  if (state.retranslateInProgress === blockId) {
+    toast("재번역 진행 중...", "info");
+    return;
+  }
+  const preview = (blockData.original_text || "").slice(0, 200);
+  renderConfirmModal({
+    title: "단락 재번역",
+    message: "이 단락을 LLM에 다시 번역 요청하시겠습니까?",
+    detail: preview,
+    confirmLabel: "재번역",
+    cancelLabel: "취소",
+    onConfirm: () => handleRetranslate(blockId),
+  });
+});
+
+async function handleRetranslate(blockId) {
+  setRetranslateInProgress(blockId);
+  try {
+    const resp = await retranslateBlock(blockId);
+    const newText = resp.translation.translated_text;
+    // 1. Update the page snapshot so the overlay rerenders with the new text.
+    if (currentPage) {
+      const idx = currentPage.blocks.findIndex((b) => b.id === blockId);
+      if (idx >= 0) {
+        currentPage.blocks[idx] = {
+          ...currentPage.blocks[idx],
+          translated_text: newText,
+        };
+      }
+    }
+    // 2. Update any cached thread detail that hangs off this block so the
+    //    chat panel preview matches the new translation.
+    for (const detail of Object.values(state.threadDetailById)) {
+      if (detail?.block?.id === blockId) {
+        detail.block.translated_text = newText;
+      }
+    }
+    repaintPage();
+    repaintPanel();
+    toast("재번역 완료", "success");
+  } catch (err) {
+    console.error("retranslate failed", err);
+    toast(`재번역 실패: ${err.message}`, "error");
+  } finally {
+    setRetranslateInProgress(null);
+  }
+}
 
 attachKeyboard({
   onPrev: () => {
@@ -433,6 +626,9 @@ attachKeyboard({
   onToggle: () => toggleOverlay(),
   onZoomIn: () => zoomIn(),
   onZoomOut: () => zoomOut(),
+  onOpenSearch: () => openSearch(),
+  onCloseSearch: () => closeSearch(),
+  isSearchOpen: () => state.searchOpen,
   onClosePanel: () => {
     // Esc dismisses the panel but keeps the active block, so Ctrl/Cmd+B
     // (or a follow-up Esc cancel) can reopen the same conversation.
@@ -469,7 +665,12 @@ async function bootstrap() {
     });
     discardPanel();
   }
-  await loadAndRender({ ...initial, replaceUrl: true });
+  await loadAndRender({
+    docId: initial.docId,
+    page: initial.page,
+    activateBlockId: initial.blockId,
+    replaceUrl: true,
+  });
   if (state.panelOpen && state.activeThreadId) {
     try {
       await ensureThreadDetail(state.activeThreadId);

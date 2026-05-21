@@ -135,6 +135,15 @@ export const state = {
   threadDetailById: {}, // { [threadId]: ThreadDetail (full incl. messages) }
   loadingMessage: false,
   panelToken: 0, // bumped on every panel async op to cancel stale results
+  // Phase 6a — search modal (volatile, never persisted).
+  searchOpen: false,
+  searchQuery: "",
+  searchResults: [], // [SearchHit]
+  searchSelected: 0,
+  searchLoading: false,
+  searchError: null,
+  // Phase 6a — retranslate (volatile).
+  retranslateInProgress: null, // block_id | null
   listeners: new Set(),
 };
 
@@ -274,6 +283,58 @@ export function setActiveThreadId(id) {
 
 export function setLoadingMessage(flag) {
   state.loadingMessage = Boolean(flag);
+  notify();
+}
+
+// Phase 6a — search modal helpers
+
+export function openSearch() {
+  state.searchOpen = true;
+  state.searchQuery = "";
+  state.searchResults = [];
+  state.searchSelected = 0;
+  state.searchError = null;
+  notify();
+}
+
+export function closeSearch() {
+  state.searchOpen = false;
+  state.searchQuery = "";
+  state.searchResults = [];
+  state.searchSelected = 0;
+  state.searchLoading = false;
+  state.searchError = null;
+  notify();
+}
+
+export function setSearchResults(query, results) {
+  state.searchQuery = query;
+  state.searchResults = results;
+  state.searchSelected = 0;
+  state.searchError = null;
+  notify();
+}
+
+export function setSearchLoading(flag) {
+  state.searchLoading = Boolean(flag);
+  notify();
+}
+
+export function setSearchError(err) {
+  state.searchError = err ? String(err) : null;
+  state.searchLoading = false;
+  notify();
+}
+
+export function moveSearchSelection(delta) {
+  const len = state.searchResults.length;
+  if (len === 0) return;
+  state.searchSelected = (state.searchSelected + delta + len) % len;
+  notify();
+}
+
+export function setRetranslateInProgress(blockId) {
+  state.retranslateInProgress = blockId;
   notify();
 }
 

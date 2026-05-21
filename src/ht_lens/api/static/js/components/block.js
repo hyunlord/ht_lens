@@ -77,6 +77,20 @@ export function renderBlock(
       }),
     );
   });
+
+  // Phase 6a: contextmenu (right-click) for retranslate. Only text/header
+  // blocks; the viewer decides whether to actually show the modal.
+  el.addEventListener("contextmenu", (e) => {
+    if (blockData.type !== "text" && blockData.type !== "header") return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.dispatchEvent(
+      new CustomEvent("ht-lens:block-contextmenu", {
+        detail: { blockId: blockData.id, blockData },
+        bubbles: true,
+      }),
+    );
+  });
   overlay.appendChild(el);
   return el;
 }

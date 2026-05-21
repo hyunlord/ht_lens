@@ -1,0 +1,250 @@
+/* Phase 6a — search modal + confirm modal */
+
+.search-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+}
+
+.search-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+}
+
+.search-modal-card {
+  position: relative;
+  width: 640px;
+  max-width: calc(100vw - 32px);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.search-input {
+  width: 100%;
+  padding: 14px 16px;
+  font-size: 15px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  outline: none;
+}
+
+.search-status {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.search-status.error {
+  color: var(--danger);
+}
+
+.search-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.search-result {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.search-result:hover {
+  background: var(--surface-2);
+}
+
+.search-result--selected {
+  background: var(--accent-soft);
+}
+
+.search-result-head {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-result-preview {
+  font-size: 13px;
+  color: var(--text);
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+.search-result-preview mark {
+  background: rgba(240, 200, 62, 0.45);
+  color: var(--text);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+/* Confirm modal */
+
+.confirm-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirm-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.confirm-modal-card {
+  position: relative;
+  width: 420px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+
+.confirm-modal-card h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.confirm-modal-card p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.confirm-modal-card small {
+  display: block;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 100px;
+  overflow-y: auto;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn-cancel,
+.btn-confirm {
+  padding: 6px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn-cancel {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.btn-confirm {
+  background: var(--accent);
+  color: #0a0d12;
+  font-weight: 600;
+  border-color: var(--accent);
+}
+
+/* Sidebar export button (Phase 6a) */
+
+.sidebar-actions {
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.export-btn {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.export-btn:hover {
+  border-color: var(--accent);
+}
+
+/* Toast (lightweight) */
+
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 14px;
+  font-size: 12px;
+  z-index: 200;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.toast.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.toast.success {
+  border-color: #3fb950;
+  color: #3fb950;
+}
+
+/* Search keybinding hint inside sidebar */
+
+.search-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  padding: 4px 6px 0;
+}
+
+/* Phase 6a — flash highlight when a search-result jump activates a block */
+
+.block--flash {
+  outline: 3px solid #f0c83e !important;
+  outline-offset: 2px;
+  animation: ht-block-flash 1.5s ease-out;
+}
+
+@keyframes ht-block-flash {
+  0% {
+    box-shadow: 0 0 0 6px rgba(240, 200, 62, 0.7);
+  }
+  100% {
+    box-shadow: 0 0 0 6px rgba(240, 200, 62, 0);
+  }
+}

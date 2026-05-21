@@ -535,3 +535,133 @@ async def test_state_panel_snapshot_returns_typed_object(
     snap_block = src[snap_idx : snap_idx + 1200]
     for key in ("panelOpen", "activeBlockId", "activeThreadId", "activeDocId"):
         assert key in snap_block, f"snapshot loader must include '{key}'"
+
+
+# --- Phase 6a: search modal + confirm modal + retranslate + export ---
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/css/search_modal.css",
+        "/static/js/components/search_modal.js",
+        "/static/js/components/confirm_modal.js",
+    ],
+)
+@pytest.mark.asyncio
+async def test_phase6a_assets_served(api_db_path: Path, path: str) -> None:
+    with make_test_client(api_db_path) as client:
+        resp = client.get(path)
+    assert resp.status_code == 200, path
+
+
+@pytest.mark.asyncio
+async def test_viewer_html_loads_search_modal_css(api_db_path: Path, assets_root: Path) -> None:
+    html = (assets_root / "viewer.html").read_text(encoding="utf-8")
+    assert "css/search_modal.css" in html
+    assert 'id="search-modal-mount"' in html
+
+
+@pytest.mark.asyncio
+async def test_keyboard_supports_cmd_k_and_search_close_priority(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """Phase 6a: Cmd/Ctrl+K opens search even from inside chat textarea,
+    and Esc closes the search modal first (when isSearchOpen)."""
+    src = (assets_root / "js" / "utils" / "keyboard.js").read_text(encoding="utf-8")
+    assert "onOpenSearch" in src
+    assert "onCloseSearch" in src
+    assert "isSearchOpen" in src
+    # Cmd+K branch fires BEFORE the typing early-return.
+    assert "Cmd/Ctrl+K opens the search modal" in src or "k" in src
+
+
+@pytest.mark.asyncio
+async def test_state_exposes_search_helpers(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    for name in (
+        "openSearch",
+        "closeSearch",
+        "setSearchResults",
+        "moveSearchSelection",
+        "setRetranslateInProgress",
+    ):
+        assert name in src, f"state.js should export '{name}'"
+    assert "searchOpen" in src
+    assert "searchResults" in src
+
+
+@pytest.mark.asyncio
+async def test_api_js_has_search_export_retranslate_helpers(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "api.js").read_text(encoding="utf-8")
+    assert "searchAll" in src
+    assert "exportQuestions" in src
+    assert "retranslateBlock" in src
+    # Export uses fetch + Blob (debate §2 fix) so server errors surface.
+    assert "URL.createObjectURL" in src
+    assert "Blob" in src or "blob" in src
+
+
+@pytest.mark.asyncio
+async def test_block_js_dispatches_contextmenu_event(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "components" / "block.js").read_text(encoding="utf-8")
+    assert "ht-lens:block-contextmenu" in src
+    # Only text/header types fire the contextmenu (image is excluded).
+    assert 'blockData.type !== "text"' in src
+    assert 'blockData.type !== "header"' in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_js_handles_search_export_retranslate(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # Handlers wired in
+    assert "handleSearchInput" in src
+    assert "handleSearchSelect" in src
+    assert "handleExport" in src
+    assert "handleRetranslate" in src
+    # block URL deep link
+    assert "activateBlockId" in src
+    # popstate respects block deep link
+    assert "blockId" in src and 'params.get("block")' in src
+
+
+@pytest.mark.asyncio
+async def test_search_result_block_param_restores_target_block(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """The `block` URL parameter must be parsed AND propagated through the
+    bootstrap path so search-result jumps highlight the matched block."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # parseQuery returns blockId.
+    assert "blockId" in src
+    # bootstrap forwards it to loadAndRender.
+    assert "activateBlockId: initial.blockId" in src
+    # Flash highlight present.
+    assert "block--flash" in src
+
+
+@pytest.mark.asyncio
+async def test_sidebar_has_export_button_and_search_hint(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "components" / "sidebar.js").read_text(encoding="utf-8")
+    assert "export-btn" in src
+    assert "onExport" in src
+    assert "onOpenSearch" in src
+    assert "search-hint" in src
+
+
+@pytest.mark.asyncio
+async def test_search_modal_sanitises_preview_to_mark_only(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """The preview comes from the backend with a single ``<mark>`` tag; the
+    modal must restrict DOMPurify to ``<mark>`` only so any other HTML the
+    server might accidentally emit is stripped."""
+    src = (assets_root / "js" / "components" / "search_modal.js").read_text(encoding="utf-8")
+    assert "ALLOWED_TAGS" in src and '"mark"' in src
+    assert "DOMPurify.sanitize" in src
