@@ -290,6 +290,11 @@ export function togglePanel() {
   if (state.activeBlockId === null) return;
   state.panelOpen = true;
   state.panelToken++;
+  // R1 fix (Phase 6b cross-verify §4): togglePanel must recompute
+  // viewModeActual just like openPanel/closePanel/discardPanel, otherwise
+  // Ctrl/Cmd+B reopen while viewMode==='both' leaves the side-by-side
+  // layout active and the chat panel overlaps the original pane.
+  state.viewModeActual = computeViewModeActual();
   safeWrite(STORAGE_PANEL_OPEN, "1");
   notify();
 }

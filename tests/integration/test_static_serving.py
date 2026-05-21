@@ -807,3 +807,62 @@ async def test_viewer_css_has_stage_layout(api_db_path: Path, assets_root: Path)
         ".block--hover-sync",
     ):
         assert sel in src, f"viewer.css missing {sel}"
+
+
+# --- Phase 6b R1 fix regression guards (cross-verify R1 §4) ---
+
+
+@pytest.mark.asyncio
+async def test_toggle_panel_recomputes_view_mode_actual(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """R1 fix: togglePanel must recompute viewModeActual just like
+    openPanel/closePanel/discardPanel, otherwise reopening the panel via
+    Ctrl+B while viewMode==='both' leaves the side-by-side layout up.
+
+    Verified by checking the state.js source includes the recompute call
+    inside togglePanel's reopen path."""
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    # Find the togglePanel body.
+    idx = src.find("export function togglePanel(")
+    assert idx > 0
+    end = src.find("\nexport function", idx + 10)
+    body = src[idx:end]
+    # The reopen branch (the path after closePanel + the activeBlockId
+    # check) must recompute viewModeActual.
+    assert "viewModeActual = computeViewModeActual" in body, (
+        "togglePanel must recompute viewModeActual on reopen"
+    )
+
+
+@pytest.mark.asyncio
+async def test_navigate_to_pushes_block_id_in_history_state(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """R1 fix: pushState must include blockId so back/forward to a search
+    hit restores the highlight + panel, not just the page scroll."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # pushState payload must include blockId.
+    assert "blockId: opts.activateBlockId" in src
+    # popstate must restore via navigateTo({activateBlockId: ...,
+    # fromPopstate: true}) so it doesn't re-push history.
+    assert "fromPopstate: true" in src
+    assert "data.blockId" in src or "target.blockId" in src
+
+
+@pytest.mark.asyncio
+async def test_mount_page_bounded_by_max_pages(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: mountPage(0) and mountPage(N+1) must short-circuit so the
+    boundary-page neighbour prefetch does not 404 the server."""
+    src = (assets_root / "js" / "components" / "stage_container.js").read_text(encoding="utf-8")
+    assert "ctx?.maxPages" in src or "ctx.maxPages" in src
+    assert "pageNum < 1" in src
+    assert "maxPages" in src
+
+
+@pytest.mark.asyncio
+async def test_schedule_far_page_unmount_is_exported(api_db_path: Path, assets_root: Path) -> None:
+    """R1 fix: scheduleFarPageUnmount must be exported so the jsdom test
+    can drive the 200-page memory DoD code path directly."""
+    src = (assets_root / "js" / "components" / "stage_container.js").read_text(encoding="utf-8")
+    assert "export function scheduleFarPageUnmount" in src

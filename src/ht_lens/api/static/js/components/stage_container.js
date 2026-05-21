@@ -57,8 +57,18 @@ function _bumpToken(pageNum) {
 
 /** Fetch + render a page if not already mounted. Returns a Promise that
  *  resolves once the page DOM is in place (img + blocks). Re-entry while a
- *  mount is in flight returns the same promise. */
+ *  mount is in flight returns the same promise.
+ *
+ *  R1 fix (cross-verify §4): bound pageNum against the document length so
+ *  neighbor prefetch at page 1 (would request page 0/-1) and at the last
+ *  page (page N+1) does not generate spurious 404 fetches. ``ctx.maxPages``
+ *  is set by the stage_container caller from the pages-summary length.
+ */
 export function mountPage(pageNum, ctx) {
+  const maxPages = ctx?.maxPages;
+  if (pageNum < 1 || (maxPages && pageNum > maxPages)) {
+    return Promise.resolve();
+  }
   if (_mountedPages.has(pageNum)) return Promise.resolve();
   if (_mountPromiseByPage.has(pageNum)) return _mountPromiseByPage.get(pageNum);
 
@@ -224,8 +234,11 @@ export function attachIntersectionObserver(stageEl, ctx) {
   };
 }
 
-/** Unmount pages that are too far from the currently-visible page. */
-function scheduleFarPageUnmount(currentPage, ctx) {
+/** Unmount pages that are too far from the currently-visible page.
+ *  Exported for jsdom regression test (cross-verify R1 §4): the 200-page
+ *  memory DoD relies on this fn being called from the IO observer with
+ *  the active currentPage. */
+export function scheduleFarPageUnmount(currentPage, ctx) {
   for (const pageNum of Array.from(_mountedPages)) {
     if (Math.abs(pageNum - currentPage) > FAR_PAGE_UNMOUNT_RADIUS) {
       unmountPage(pageNum, ctx);

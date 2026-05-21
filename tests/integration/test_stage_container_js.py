@@ -170,3 +170,90 @@ def test_mount_page_renders_blocks_when_fetch_resolves_in_order(
     out = _run_with_jsdom(script, jsdom_url)
     assert out["blockMounted"] is True
     assert out["mountedFlag"] is True
+
+
+def test_mount_page_skips_out_of_range_page_numbers(jsdom_url: str) -> None:
+    """R1 fix (cross-verify §4): neighbor prefetch at the doc edges must
+    not generate fetches for page 0 / -1 / N+1. mountPage respects
+    ctx.maxPages."""
+    script = f"""
+    let fetchCount = 0;
+    globalThis.fetch = (_url) => {{
+        fetchCount++;
+        return Promise.resolve(new Response(JSON.stringify({{
+            page_num: 1, width: 612, height: 792, rotation: 0,
+            render: {{ dpi: 72, pixel_w: 612, pixel_h: 792, scale: 1 }},
+            blocks: []
+        }}), {{ status: 200, headers: {{ "Content-Type": "application/json" }} }}));
+    }};
+    const sc = await import("{STAGE.as_uri()}");
+    const stage = document.getElementById("stage");
+    sc.buildPlaceholderRows(stage, [
+        {{ page_num: 1, width: 612, height: 792, rotation: 0,
+           render: {{ dpi: 72, pixel_w: 612, pixel_h: 792, scale: 1 }} }},
+        {{ page_num: 2, width: 612, height: 792, rotation: 0,
+           render: {{ dpi: 72, pixel_w: 612, pixel_h: 792, scale: 1 }} }}
+    ], 1, "translation");
+    const ctx = {{ doc: {{ id: 1 }}, docId: 1, stageEl: stage, maxPages: 2,
+                  getThreadsByBlock: () => null }};
+    // Simulate neighbor prefetch at boundaries.
+    await sc.mountPage(0, ctx);   // below floor
+    await sc.mountPage(-1, ctx);  // below floor
+    await sc.mountPage(3, ctx);   // above ceiling
+    await sc.mountPage(1, ctx);   // valid
+    await sc.mountPage(2, ctx);   // valid
+    console.log(JSON.stringify({{
+        fetchCount,
+        mounted1: sc._internals().mountedPages.has(1),
+        mounted2: sc._internals().mountedPages.has(2),
+        mountedZero: sc._internals().mountedPages.has(0),
+    }}));
+    """
+    out = _run_with_jsdom(script, jsdom_url)
+    # Only pages 1 and 2 should trigger a fetch.
+    assert out["fetchCount"] == 2
+    assert out["mounted1"] is True
+    assert out["mounted2"] is True
+    assert out["mountedZero"] is False
+
+
+def test_schedule_far_page_unmount_unmounts_only_far_pages(jsdom_url: str) -> None:
+    """R1 fix (cross-verify §4): scheduleFarPageUnmount is the mechanism
+    the 200-page DoD relies on. Drive it directly to lock the unmount
+    radius (5) behaviour."""
+    script = f"""
+    let resolved = 0;
+    globalThis.fetch = (_url) => {{
+        resolved++;
+        return Promise.resolve(new Response(JSON.stringify({{
+            page_num: resolved, width: 612, height: 792, rotation: 0,
+            render: {{ dpi: 72, pixel_w: 612, pixel_h: 792, scale: 1 }},
+            blocks: []
+        }}), {{ status: 200, headers: {{ "Content-Type": "application/json" }} }}));
+    }};
+    const sc = await import("{STAGE.as_uri()}");
+    const stage = document.getElementById("stage");
+    const summaries = Array.from({{ length: 10 }}, (_, i) => ({{
+        page_num: i + 1, width: 612, height: 792, rotation: 0,
+        render: {{ dpi: 72, pixel_w: 612, pixel_h: 792, scale: 1 }}
+    }}));
+    sc.buildPlaceholderRows(stage, summaries, 1, "translation");
+    const ctx = {{ doc: {{ id: 1 }}, docId: 1, stageEl: stage, maxPages: 10,
+                  getThreadsByBlock: () => null }};
+    // Mount pages 1..10 directly.
+    for (let p = 1; p <= 10; p++) {{
+        await sc.mountPage(p, ctx);
+    }}
+    // Pretend the user scrolled — currentPage is now 8.
+    sc.scheduleFarPageUnmount(8, ctx);
+    const internals = sc._internals();
+    const stillMounted = [];
+    for (let p = 1; p <= 10; p++) {{
+        if (internals.mountedPages.has(p)) stillMounted.push(p);
+    }}
+    console.log(JSON.stringify({{ stillMounted }}));
+    """
+    out = _run_with_jsdom(script, jsdom_url)
+    # FAR_PAGE_UNMOUNT_RADIUS=5, currentPage=8 → keep pages 3..10 (abs<=5);
+    # unmount 1 (dist 7) and 2 (dist 6).
+    assert out["stillMounted"] == [3, 4, 5, 6, 7, 8, 9, 10]

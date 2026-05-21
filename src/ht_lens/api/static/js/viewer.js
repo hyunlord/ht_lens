@@ -114,6 +114,9 @@ function stageContext() {
     doc: currentDoc,
     docId: currentDoc?.id,
     stageEl,
+    // R1 fix (cross-verify §4): page bounds so neighbor prefetch at the
+    // doc edges does not generate 404 fetches for page 0 / page N+1.
+    maxPages: state.pageSummaries.length || currentDoc?.num_pages || 0,
     getThreadsByBlock: () => buildThreadsByBlock(currentDoc?.id),
     onScrollPageChange: (pageNum) => {
       // Free-scroll page change uses replaceState so back/forward stays
@@ -347,10 +350,21 @@ async function navigateTo(docId, page, opts = {}) {
 
   // Push an explicit history entry so browser back/forward navigates between
   // search jumps + sidebar jumps (debate §2 fix). Free-scroll uses replaceState.
-  const url =
-    `viewer.html?doc=${docId}&page=${page}` +
-    (opts.activateBlockId ? `&block=${opts.activateBlockId}` : "");
-  window.history.pushState({ docId, page }, "", url);
+  // R1 fix (cross-verify §4): include blockId in the history state so a
+  // back/forward to a previous search hit restores the block highlight +
+  // panel reopen, not just the page scroll position.
+  // ``opts.fromPopstate`` skips the pushState so we don't re-record the
+  // location the browser already moved to.
+  if (!opts.fromPopstate) {
+    const url =
+      `viewer.html?doc=${docId}&page=${page}` +
+      (opts.activateBlockId ? `&block=${opts.activateBlockId}` : "");
+    window.history.pushState(
+      { docId, page, blockId: opts.activateBlockId ?? null },
+      "",
+      url,
+    );
+  }
 
   const row = scrollToPage(stageEl, page, "smooth");
   if (!row) return;
@@ -535,10 +549,23 @@ window.addEventListener("popstate", (e) => {
   panelError = null;
   lastFailedAction = null;
   discardPanel();
-  const target = data && data.docId && data.page ? data : parseQuery();
+  // R1 fix (cross-verify §4): popstate must restore the block too, not
+  // just the page. parseQuery() is the source of truth for the URL bar.
+  const fromUrl = parseQuery();
+  const target =
+    data && data.docId && data.page
+      ? { docId: data.docId, page: data.page, blockId: data.blockId ?? fromUrl.blockId }
+      : fromUrl;
   if (target.docId === currentDoc?.id) {
-    // Same doc — just scroll to the recorded page.
-    scrollToPage(stageEl, target.page, "auto");
+    // Same doc — scroll + re-activate block if the prior state had one.
+    if (target.blockId) {
+      navigateTo(target.docId, target.page, {
+        activateBlockId: target.blockId,
+        fromPopstate: true,
+      });
+    } else {
+      scrollToPage(stageEl, target.page, "auto");
+    }
   } else {
     loadDocument({
       docId: target.docId,
