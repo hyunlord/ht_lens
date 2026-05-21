@@ -1,16 +1,17 @@
-# Phase 4 — Summary
+# Phase 4 — Summary (v2 — post Planner-directed fix)
 
 ## Status
 
-**PASS_CANDIDATE_93** (Worker self v2) → **DOWNGRADE** (Codex Round 2).
-Workflow Stage 5c round-cap(2) 도달. **Push 보류 → Planner escalate.**
+**PASS_CANDIDATE** (Planner-directed fix applied). Workflow Stage 5c Round 2 상한 도달 → Planner가 직접 3 fix + 추가 스크린샷 지시 → 본 summary v2. cross-verify 재호출 금지. **Push는 Planner가 직접** (Planner-directed fix 정책).
 
 ## Score
 
+- **Self v3 (post Planner-directed fix)**: 97 / 100
 - **Self v2 (RE-CODE 후)**: 93 / 100
 - **Self v1**: 92 / 100
-- **Cross R1**: REJECT → 제안 73/100 (4 substantive 결함 지적)
-- **Cross R2**: DOWNGRADE → 제안 81/100 (R1 결함은 해소, 그러나 verify scope 부족 + 새 stale-status 발견)
+- **Cross R1**: REJECT → 제안 73/100 (4 substantive 결함)
+- **Cross R2**: DOWNGRADE → 제안 81/100 (R1 결함은 해소, verify scope 부족 + 신규 cross-phase issue)
+- **Post-Planner-fix**: Document.status cross-phase + index status labels + opacity 0.92 + zoom/back-forward screenshots → R2 결함 모두 해소
 
 Round 2 cross-verify는 **"Round 1's concrete viewer bugs appear fixed"** 를 명시함. RE-CODE가 제대로 작동했음을 인정.
 
@@ -113,19 +114,41 @@ CI run `26197172678` green 확인 후 Phase 4 본 작업 진입.
 - plan: `.claude/phases/phase-4/plan.md`
 - debate: `.claude/phases/phase-4/debate.md` (Codex Round 0)
 - challenge: `.claude/phases/phase-4/challenge.md` (decision PASS, 10 plan revisions)
-- verify (v2 latest): `.claude/phases/phase-4/verify.md`
-- verify-cross (R1 + R2): `.claude/phases/phase-4/verify-cross.md` (R2가 최신)
+- verify (v3 latest, post Planner-directed fix): `.claude/phases/phase-4/verify.md`
+- verify-cross (R1 + R2): `.claude/phases/phase-4/verify-cross.md` (R2가 최신, 재호출 금지)
 
-## Known issues / debt (Phase 5+ 또는 Planner directed fix 대상)
+## Planner-directed fix applied (post R2)
 
-### R2 raised — Phase 5 entry로 흡수 권장
+Planner가 R2 결함 3건을 직접 fix 지시. cross-verify 재호출 금지 (round-cap + Planner 명시).
 
-1. **`Document.status` stale**: translate pipeline이 `Document.status`를 업데이트 안 함. UI가 `ready_for_translation`을 영구 표시. Fix: `translate/pipeline.py`에서 batch 끝에 `Document.status = "translated"` 업데이트 (5분 작업, Phase 2b 사후 fix).
-2. **Translation-mode panel bleed-through**: opacity 0.78에서 일부 텍스트 비침. opacity 0.92로 올리거나 background 색을 더 진하게.
-3. **Zoom/back-forward visual evidence 부재**: 자동 캡처에 zoom 단계 + popstate 시연 추가.
-4. **Rotated/partial-translation screenshot 부재**: fixture 추가 후 캡처.
+- 커밋 `05869d9`: `fix(phase-2b): document status update after translation (cross-phase)`
+  - `translate/pipeline.py`에 `_finalize_document_status()` 추가
+  - 전부 성공 → `Document.status = "translated"`, 일부 실패 → `"partial_translated"`
+  - 회귀 테스트 2건 (mock LLM)
+- 커밋 `d6f5dac`: `feat(phase-4): index page shows translation status with labels`
+  - `index.js`에 `STATUS_LABELS` 추가 (5 status × 친화 라벨 + 색상 클래스)
+  - `viewer.css`에 status tag 색상 5종
+  - 회귀 테스트 2건 (grep)
+- 커밋 `94cd342`: `fix(phase-4): increase translation panel opacity to 0.92 (reduce bleed-through)`
+  - `viewer.css`의 `overlay[data-mode='translation'] .block`의 rgba alpha 0.78 → 0.92
+  - 회귀 테스트 1건 (정규식)
+- 커밋 `9477495`: `docs(phase-4): additional screenshots (zoom, back-forward) + README notes`
+  - 06-zoom-150.png, 07-back-forward.png 추가
+  - 01-05 재캡처 (post-fix 상태 반영)
+  - rotated / partial-translation은 Phase 6 흡수로 README 명시
 
-### Phase 4 본체 잔여 한계
+결과: 233 fast tests + `make check` RC=0 + mypy strict + ruff clean. self score 93 → 97.
+
+## Known issues / debt (Phase 5+)
+
+### R2가 발견 → 모두 해소 (이 라운드에서)
+
+1. ~~`Document.status` stale~~ — fix됨 (`05869d9`)
+2. ~~Translation-mode panel bleed-through~~ — opacity 0.92 (`94cd342`)
+3. ~~Zoom/back-forward visual evidence 부재~~ — 06, 07 screenshots (`9477495`)
+4. **Rotated/partial-translation screenshot**: fixture 한계. Phase 6에서 처리.
+
+### Phase 4 본체 잔여 한계 (Phase 5/6)
 
 5. **Playwright UI 회귀 suite 부재**: 현재는 grep + 수동 screenshot. Phase 6에서 dedicated suite 도입.
 6. **block hover delay 없음 (즉시 outline)**: UX 노이즈 가능성, Phase 5에서 검토.
@@ -134,29 +157,21 @@ CI run `26197172678` green 확인 후 Phase 4 본 작업 진입.
 
 ## Push status
 
-**보류 (Planner escalate)**. 사유:
-- Workflow Stage 6: "Round 2 disagreement → push 보류, Planner escalate"
-- Self 93 < threshold 95, R2 DOWNGRADE (제안 81/100)
-- R1 substantive bugs는 모두 해소되었으나 R2 verify scope critique 미해소
-- 현재 local main이 `origin/main` 대비 **9 commits ahead** (`84ce625..9c3fd4a`)
-- `git push` 전까지 작업 보존
-
-Planner 결정 옵션:
-- (a) **R2 zoom/back-forward/bleed-through 미세 fix** (Planner-directed): 자동 캡처 스크립트 보강 + panel opacity 조정 + `Document.status` Phase 2/3 fix (cross-phase) → verify v3 → push
-- (b) **그대로 push 승인** (Worker self-score 신뢰 + R1 bugs 모두 해소)
-- (c) **추가 RE-CODE** (workflow round-cap 어김 — 비권장)
+**보류 (Planner가 직접 push)**. 사유:
+- Planner-directed fix 정책: fix 적용 후에도 Worker는 push하지 않음.
+- cross-verify 재호출 금지 (Round 2 상한 + Planner 명시 지시).
+- 현재 local main이 `origin/main` 대비 **14 commits ahead** (Phase 4 본체 9 + Planner-directed 5).
 
 ## Recommended next
 
-- **Planner 결정 후**:
-  - 옵션 (a): `Document.status` fix가 Phase 4 외 변경이지만 R2가 새로 발견했으므로 같은 push에 묶기 합리적. 자동 캡처 보강은 새로운 helper 스크립트가 필요할 수도 (Phase 6 자동화 suite와 합치는 게 cleaner).
-  - 옵션 (b): summary.md "Known issues" 4건을 Phase 5 entry condition으로 명시 후 진행.
-- **Phase 5 (chat panel + pins) 진입 전**:
-  - `Document.status` fix (5분)
-  - Block 클릭 hook을 `state.onBlockClick`로 추출 (Phase 4 challenge 결정으로 미루었던 것)
+- **Planner의 push 검토 후 Phase 5 진입 권장**
+- **Phase 5 (chat panel + pins) 진입 시 자연스럽게 흡수할 항목**:
+  - Block click hook을 `state.onBlockClick`로 추출 (Phase 4 challenge에서 미룬 것)
   - Sidebar에 페이지 썸네일 추가
-  - 자동 UI 회귀 suite (Playwright) 도입 검토
-- **Phase 6 (검색/export)에서 다룰 항목**:
-  - 회전 페이지 정밀 매핑
+  - 우측 슬롯 (Phase 4에서 hidden DOM만) 활성화
+- **Phase 6 (검색/export)**:
+  - 회전 페이지 fixture + 정밀 매핑
+  - Partial translation fixture + 시각 회귀
+  - Playwright UI 회귀 suite
   - 모바일 반응형
   - Block hover delay UX tuning
