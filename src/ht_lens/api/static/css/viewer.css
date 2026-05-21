@@ -106,9 +106,10 @@
   cursor: pointer;
 }
 
-/* Translation mode: cover the PNG so the source text doesn't bleed through. */
+/* Translation mode: cover the PNG so the source text doesn't bleed through.
+ * 0.92 alpha after Phase 4 R2 found bleed-through artifacts at 0.78. */
 .overlay[data-mode='translation'] .block:not(.block--image) {
-  background: rgba(14, 17, 22, 0.78);
+  background: rgba(14, 17, 22, 0.92);
 }
 
 /* Original mode: keep blocks transparent so the PDF's own text is what's

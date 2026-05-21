@@ -243,3 +243,18 @@ async def test_viewer_css_has_status_tag_styles(api_db_path: Path, assets_root: 
         "status--failed",
     ):
         assert cls in src, f"status class '{cls}' missing from viewer.css"
+
+
+@pytest.mark.asyncio
+async def test_viewer_css_translation_opacity_raised(api_db_path: Path, assets_root: Path) -> None:
+    """R2 fix: translation panel opacity should be raised to reduce source
+    text bleed-through. We require ``alpha >= 0.9``."""
+    src = (assets_root / "css" / "viewer.css").read_text(encoding="utf-8")
+    match = re.search(
+        r"overlay\[data-mode='translation'\][^{]*\{[^}]*?background:\s*rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\s*\)",
+        src,
+        re.DOTALL,
+    )
+    assert match is not None, "translation panel rgba not found"
+    alpha = float(match.group(1))
+    assert alpha >= 0.9, f"translation panel opacity {alpha} should be >= 0.9"
