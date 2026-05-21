@@ -46,13 +46,21 @@ async def seed_minimal_document(
 
     Blocks default to type='text'; ``block_types`` overrides per-block when len matches.
     """
+    # Phase 6d: documents.src_pdf_sha256 now has a UNIQUE constraint, so
+    # multiple seeded docs in the same DB need distinct hashes. Derive
+    # from filename + a per-call counter to keep determinism.
+    import hashlib as _hashlib
+
+    sha_seed = _hashlib.sha256(
+        f"{filename}|{tmp_dir}|{num_pages}|{blocks_per_page}".encode()
+    ).hexdigest()
     doc = Document(
         filename=filename,
         src_lang="en",
         tgt_lang="ko",
         status="translated" if with_translations else "ingested",
         created_at=datetime.utcnow(),
-        src_pdf_sha256="0" * 64,
+        src_pdf_sha256=sha_seed,
     )
     session.add(doc)
     await session.flush()

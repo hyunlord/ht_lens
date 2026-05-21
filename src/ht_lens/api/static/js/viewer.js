@@ -42,6 +42,7 @@ import {
 } from "./state.js";
 import { computeFitZoom } from "./utils/viewport.js";
 import { renderSidebar } from "./components/sidebar.js";
+import { renderSummaryBanner } from "./components/summary_banner.js";
 import { renderChatPanel } from "./components/chat_panel.js";
 import { renderSearchModal } from "./components/search_modal.js";
 import { renderConfirmModal } from "./components/confirm_modal.js";
@@ -64,6 +65,7 @@ const sidebarToggleEl = document.getElementById("sidebar-toggle");
 const headerMeta = document.querySelector(".app-header .meta");
 const sidebarEl = document.querySelector(".sidebar");
 const stageEl = document.getElementById("stage");
+const summaryBannerEl = document.getElementById("summary-banner-mount");
 const panelEl = document.querySelector(".right-slot");
 const errorEl = document.getElementById("status");
 const searchEl = document.getElementById("search-modal-mount");
@@ -270,6 +272,15 @@ async function loadDocument({
 
     currentDoc = doc;
     setPageSummaries(summaries);
+    // Phase 6d: show the auto-generated summary banner above the stage.
+    renderSummaryBanner(summaryBannerEl, doc, {
+      onUpdated: (updated) => {
+        currentDoc = updated;
+        renderSummaryBanner(summaryBannerEl, updated, {
+          onUpdated: (u) => renderSummaryBanner(summaryBannerEl, u),
+        });
+      },
+    });
 
     document.title = `${doc.filename} · ${doc.num_pages} pages`;
     if (headerMeta) {

@@ -107,3 +107,31 @@ export async function exportQuestions(docId) {
 export function retranslateBlock(blockId) {
   return apiPost(`/blocks/${encodeURIComponent(blockId)}/retranslate`);
 }
+
+// -- Phase 6d: uploads / jobs / summarize --
+
+/** Multipart POST /uploads. Returns ``{job_id, document_id, dedup}``.
+ *  Surfaces server errors as ``ApiError`` so the upload UI can show a toast. */
+export async function uploadPDF(file) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  const resp = await fetch("/uploads", { method: "POST", body: form });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new ApiError(resp.status, text);
+  }
+  return resp.json();
+}
+
+export function listJobs(statusFilter) {
+  const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
+  return apiGet(`/jobs${qs}`);
+}
+
+export function getJob(jobId) {
+  return apiGet(`/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function summarizeDocument(docId) {
+  return apiPost(`/documents/${encodeURIComponent(docId)}/summarize`);
+}

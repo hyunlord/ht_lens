@@ -6,6 +6,7 @@
     <title>ht_lens — documents</title>
     <link rel="stylesheet" href="css/base.css" />
     <link rel="stylesheet" href="css/viewer.css" />
+    <link rel="stylesheet" href="css/index.css" />
   </head>
   <body>
     <header class="app-header">
@@ -14,7 +15,15 @@
     </header>
     <main>
       <div id="status" class="status-banner" hidden></div>
-      <div class="doc-card-grid"></div>
+      <section class="upload-zone" id="upload-zone">
+        <p class="upload-hint">PDF 파일을 여기에 드롭하거나</p>
+        <button type="button" id="upload-button" class="upload-btn">파일 선택</button>
+        <input type="file" id="upload-input" accept=".pdf,application/pdf" hidden />
+      </section>
+      <section class="active-jobs" id="active-jobs" hidden></section>
+      <section class="documents-list">
+        <div class="doc-card-grid" id="doc-grid"></div>
+      </section>
     </main>
     <script type="module" src="js/index.js"></script>
   </body>

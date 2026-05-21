@@ -19,7 +19,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from ht_lens.api.deps import get_chat_concurrency
-from ht_lens.api.routers import blocks, documents, messages, pages, search, threads
+from ht_lens.api.routers import (
+    blocks,
+    documents,
+    jobs,
+    messages,
+    pages,
+    search,
+    threads,
+    uploads,
+)
 from ht_lens.db.session import (
     ALEMBIC_HEAD,
     current_schema_version,
@@ -27,10 +36,12 @@ from ht_lens.db.session import (
     make_session_factory,
 )
 from ht_lens.errors import SchemaVersionMismatch
+from ht_lens.jobs.pipeline import mark_in_flight_jobs_failed
 from ht_lens.llm.errors import LLMHealthCheckFailed
 from ht_lens.llm.factory import from_env
 
 _DEFAULT_DB = Path("data/ht_lens.db")
+_DEFAULT_UPLOADS_DIR = Path("data/uploads")
 _STATIC_DIR = Path(__file__).parent / "static"
 
 _log = logging.getLogger("ht_lens.api")
@@ -82,10 +93,28 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.llm = llm
     app.state.chat_semaphore = asyncio.Semaphore(get_chat_concurrency())
 
+    # Phase 6d: uploads directory + background-task pool + restart recovery.
+    uploads_dir = _DEFAULT_UPLOADS_DIR
+    if not uploads_dir.is_absolute():
+        # Resolve relative to CWD just like _DEFAULT_DB.
+        uploads_dir = Path.cwd() / uploads_dir
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    app.state.uploads_dir = uploads_dir
+    app.state.background_tasks = set()
+    recovered = await mark_in_flight_jobs_failed(factory)
+    if recovered:
+        _log.info("marked %d in-flight job(s) as failed on startup", recovered)
+
     try:
         yield
     finally:
         _log.info("lifespan shutdown")
+        # Cancel any background upload jobs cleanly so the next start can
+        # run the restart-recovery sweep without races.
+        for task in list(app.state.background_tasks):
+            task.cancel()
+        if app.state.background_tasks:
+            await asyncio.gather(*app.state.background_tasks, return_exceptions=True)
         await engine.dispose()
 
 
@@ -135,6 +164,8 @@ def create_app() -> FastAPI:
     app.include_router(messages.router)
     app.include_router(search.router)
     app.include_router(blocks.router)
+    app.include_router(uploads.router)
+    app.include_router(jobs.router)
 
     return app
 

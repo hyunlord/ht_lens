@@ -1089,3 +1089,102 @@ async def test_make_test_client_only_pins_mock_when_unset(
         f"LLM_PROVIDER pin must sit inside the prev_provider None guard; "
         f"found preceding line: {last_line!r}"
     )
+
+
+# --- Phase 6d: uploads + jobs panel + summary banner ---
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/css/index.css",
+        "/static/js/components/upload.js",
+        "/static/js/components/jobs_panel.js",
+        "/static/js/components/summary_banner.js",
+    ],
+)
+@pytest.mark.asyncio
+async def test_phase6d_assets_served(api_db_path: Path, path: str) -> None:
+    with make_test_client(api_db_path) as client:
+        resp = client.get(path)
+    assert resp.status_code == 200, path
+
+
+@pytest.mark.asyncio
+async def test_index_html_has_upload_zone_and_jobs_panel(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    html = (assets_root / "index.html").read_text(encoding="utf-8")
+    assert 'id="upload-zone"' in html
+    assert 'id="upload-button"' in html
+    assert 'id="upload-input"' in html
+    assert 'id="active-jobs"' in html
+    assert 'id="doc-grid"' in html
+    assert "css/index.css" in html
+
+
+@pytest.mark.asyncio
+async def test_viewer_html_has_summary_banner_mount(api_db_path: Path, assets_root: Path) -> None:
+    html = (assets_root / "viewer.html").read_text(encoding="utf-8")
+    assert 'id="summary-banner-mount"' in html
+
+
+@pytest.mark.asyncio
+async def test_api_js_has_upload_jobs_summarize_helpers(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "api.js").read_text(encoding="utf-8")
+    for name in ("uploadPDF", "listJobs", "getJob", "summarizeDocument"):
+        assert name in src, f"api.js should export '{name}'"
+
+
+@pytest.mark.asyncio
+async def test_upload_js_handles_drag_and_drop(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "components" / "upload.js").read_text(encoding="utf-8")
+    for marker in ("attachUpload", "dragenter", "dragover", "drop", "uploadPDF"):
+        assert marker in src
+    # The drag class toggles on the zone, not document, per challenge §1.
+    assert "upload-zone--drag" in src
+
+
+@pytest.mark.asyncio
+async def test_jobs_panel_js_uses_visibility_and_terminal_stop(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "components" / "jobs_panel.js").read_text(encoding="utf-8")
+    assert "startJobsPolling" in src
+    assert "stopJobsPolling" in src
+    assert "visibilityState" in src
+    # 2 s polling cadence.
+    assert "POLL_MS = 2000" in src
+
+
+@pytest.mark.asyncio
+async def test_summary_banner_renders_empty_state_and_regenerate(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "components" / "summary_banner.js").read_text(encoding="utf-8")
+    assert "renderSummaryBanner" in src
+    assert "summarizeDocument" in src
+    assert "재생성" in src or "요약 생성" in src
+
+
+@pytest.mark.asyncio
+async def test_index_js_wires_upload_and_summary_preview(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "index.js").read_text(encoding="utf-8")
+    assert "attachUpload" in src
+    assert "startJobsPolling" in src
+    assert "summaryPreview" in src
+    # 120 char cap for the index card preview (challenge §1 — short).
+    assert "120" in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_js_renders_summary_banner_on_load(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert "renderSummaryBanner" in src
+    assert "summaryBannerEl" in src
