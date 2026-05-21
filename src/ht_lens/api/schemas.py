@@ -107,6 +107,41 @@ class MessageCreate(BaseModel):
         return value
 
 
+# Phase 6a additions
+
+
+class SearchHit(BaseModel):
+    """One result row from ``GET /search``.
+
+    ``preview`` already contains a single inline ``<mark>...</mark>`` around
+    the first occurrence of the matched substring; the client renders it via
+    DOMPurify with ``<mark>`` whitelisted.
+    """
+
+    doc_id: int
+    doc_filename: str
+    page_num: int
+    block_id: int
+    block_local_id: str
+    type: BlockType
+    matched_field: Literal["original", "translated"]
+    preview: str
+
+
+class TranslationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    block_id: int
+    translated_text: str
+    model: str
+    status: str
+
+
+class RetranslateResponse(BaseModel):
+    block_id: int
+    translation: TranslationRead
+
+
 __all__ = [
     "BlockRead",
     "BlockType",
@@ -116,7 +151,10 @@ __all__ = [
     "MessageRole",
     "PageRead",
     "PageRender",
+    "RetranslateResponse",
+    "SearchHit",
     "ThreadCreate",
     "ThreadDetail",
     "ThreadSummary",
+    "TranslationRead",
 ]

@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from ht_lens.api.deps import get_chat_concurrency
-from ht_lens.api.routers import documents, messages, pages, threads
+from ht_lens.api.routers import blocks, documents, messages, pages, search, threads
 from ht_lens.db.session import (
     ALEMBIC_HEAD,
     current_schema_version,
@@ -111,6 +111,8 @@ def create_app() -> FastAPI:
     app.include_router(pages.router)
     app.include_router(threads.router)
     app.include_router(messages.router)
+    app.include_router(search.router)
+    app.include_router(blocks.router)
 
     return app
 

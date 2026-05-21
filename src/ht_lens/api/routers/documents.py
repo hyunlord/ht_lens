@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ht_lens.api.deps import get_session
+from ht_lens.api.export_markdown import build_questions_markdown
 from ht_lens.api.schemas import DocumentRead
 from ht_lens.db.models import Document, Page
 
@@ -81,6 +83,27 @@ async def get_document(
         src_pdf_sha256=doc.src_pdf_sha256,
         num_pages=num_pages,
         created_at=doc.created_at,
+    )
+
+
+@router.get("/{doc_id}/export.md")
+async def export_questions_markdown(
+    doc_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    """Stream a UTF-8 markdown export of every thread on this document.
+
+    ASCII-safe filename so we don't hit RFC 5987 encoding edge cases on
+    older browsers. Returns 404 if the document does not exist.
+    """
+    md = await build_questions_markdown(session, doc_id)
+    if md is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="document not found")
+    filename = f"ht_lens-{doc_id}-questions.md"
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
