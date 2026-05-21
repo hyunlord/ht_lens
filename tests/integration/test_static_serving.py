@@ -899,3 +899,18 @@ async def test_navigate_to_uses_explicit_thread_id_when_provided(
     # The branch that uses the explicit id must skip the existing-thread
     # auto-select. We check for the structural marker.
     assert "explicitThreadId" in src
+
+
+@pytest.mark.asyncio
+async def test_history_state_carries_thread_id(api_db_path: Path, assets_root: Path) -> None:
+    """Planner R2 fix #2: history state must include threadId so browser
+    back/forward across multiple sidebar question selections restores the
+    exact thread on multi-thread blocks."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # pushState payload includes threadId.
+    assert "threadId: opts.activateThreadId" in src
+    # popstate restores threadId AND forwards to navigateTo.
+    assert "data.threadId" in src
+    assert "activateThreadId: target.threadId" in src
+    # Cross-doc popstate path: loadDocument accepts initialThreadId.
+    assert "initialThreadId" in src
