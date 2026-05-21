@@ -78,6 +78,41 @@ function snapToStep(z) {
   );
 }
 
+/** Load the persisted panel snapshot from localStorage.
+ *
+ *  R2 fix: migration guard. ``activeDocId`` was added in R1. Pre-R1
+ *  localStorage rows have ``panelOpen`` + ``activeBlockId`` + ``activeThreadId``
+ *  but no ``activeDocId``. If we trusted those rows the next reload would
+ *  hydrate doc A's thread into whichever doc the URL points at.
+ *
+ *  Policy: when ``activeDocId`` is missing, drop every panel-scoped field
+ *  AND erase them from localStorage so they cannot resurface on the next
+ *  read. Non-panel preferences (zoom, overlay, sidebarTab) are preserved.
+ */
+function readPanelSnapshot() {
+  const docId = safeReadInt(STORAGE_ACTIVE_DOC);
+  if (docId === null) {
+    // Pre-R1 schema — discard session-bound rows.
+    safeWrite(STORAGE_PANEL_OPEN, null);
+    safeWrite(STORAGE_ACTIVE_BLOCK, null);
+    safeWrite(STORAGE_ACTIVE_THREAD, null);
+    return {
+      panelOpen: false,
+      activeBlockId: null,
+      activeThreadId: null,
+      activeDocId: null,
+    };
+  }
+  return {
+    panelOpen: safeReadBool(STORAGE_PANEL_OPEN, false),
+    activeBlockId: safeReadInt(STORAGE_ACTIVE_BLOCK),
+    activeThreadId: safeReadInt(STORAGE_ACTIVE_THREAD),
+    activeDocId: docId,
+  };
+}
+
+const _panelSnapshot = readPanelSnapshot();
+
 export const state = {
   // Snap on init so a stale or hand-edited localStorage value can't render a
   // non-step zoom on first paint.
@@ -91,10 +126,10 @@ export const state = {
     const v = safeReadString(STORAGE_SIDEBAR_TAB, "pages");
     return v === "questions" || v === "pages" ? v : "pages";
   })(),
-  panelOpen: safeReadBool(STORAGE_PANEL_OPEN, false),
-  activeBlockId: safeReadInt(STORAGE_ACTIVE_BLOCK),
-  activeThreadId: safeReadInt(STORAGE_ACTIVE_THREAD),
-  activeDocId: safeReadInt(STORAGE_ACTIVE_DOC),
+  panelOpen: _panelSnapshot.panelOpen,
+  activeBlockId: _panelSnapshot.activeBlockId,
+  activeThreadId: _panelSnapshot.activeThreadId,
+  activeDocId: _panelSnapshot.activeDocId,
   // Runtime caches — do NOT persist.
   threadsByDoc: {}, // { [docId]: Thread[] }
   threadDetailById: {}, // { [threadId]: ThreadDetail (full incl. messages) }

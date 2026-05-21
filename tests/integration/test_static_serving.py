@@ -503,3 +503,35 @@ async def test_navigate_and_popstate_use_discard_panel(
     pop_idx = src.index('addEventListener("popstate"')
     pop_block = src[pop_idx : pop_idx + 500]
     assert "discardPanel()" in pop_block
+
+
+@pytest.mark.asyncio
+async def test_state_migration_guard_for_pre_r1_localstorage(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """R2 fix: pre-R1 localStorage rows lack activeDocId. The bootstrap
+    snapshot loader must refuse to restore panel-scoped fields in that
+    case so a stale thread cannot leak into a new document."""
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    assert "readPanelSnapshot" in src
+    # The migration guard explicitly checks for missing activeDocId.
+    snap_idx = src.index("function readPanelSnapshot")
+    snap_block = src[snap_idx : snap_idx + 1200]
+    assert "docId === null" in snap_block
+    # And erases the orphaned session-bound rows so they cannot resurface.
+    assert "Pre-R1" in snap_block or "pre-r1" in snap_block.lower()
+    # safeWrite(STORAGE_PANEL_OPEN, null) etc. are inside the guard.
+    assert "safeWrite(STORAGE_PANEL_OPEN, null)" in snap_block
+
+
+@pytest.mark.asyncio
+async def test_state_panel_snapshot_returns_typed_object(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """The loader must always return all four panel fields so callers
+    don't accidentally read ``undefined`` for a missing key."""
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    snap_idx = src.index("function readPanelSnapshot")
+    snap_block = src[snap_idx : snap_idx + 1200]
+    for key in ("panelOpen", "activeBlockId", "activeThreadId", "activeDocId"):
+        assert key in snap_block, f"snapshot loader must include '{key}'"
