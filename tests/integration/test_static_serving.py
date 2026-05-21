@@ -212,3 +212,34 @@ async def test_state_snaps_zoom_on_init(api_db_path: Path, assets_root: Path) ->
     assert "snapToStep" in src
     # The initial state.zoom must go through snapToStep.
     assert "zoom: snapToStep(" in src, "state.zoom on init must be snapped to ZOOM_STEPS"
+
+
+# --- Planner-directed R2 follow-up: status labels in index.js, opacity ---
+
+
+@pytest.mark.asyncio
+async def test_index_js_has_status_labels(api_db_path: Path, assets_root: Path) -> None:
+    """index.js must label Document.status (R2 fix) instead of rendering raw."""
+    src = (assets_root / "js" / "index.js").read_text(encoding="utf-8")
+    assert "STATUS_LABELS" in src, "index.js should map raw status values to labels"
+    for raw_key in (
+        "ready_for_translation",
+        "translating",
+        "translated",
+        "partial_translated",
+        "failed",
+    ):
+        assert raw_key in src, f"status key '{raw_key}' missing from labels"
+
+
+@pytest.mark.asyncio
+async def test_viewer_css_has_status_tag_styles(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "css" / "viewer.css").read_text(encoding="utf-8")
+    for cls in (
+        "status--pending",
+        "status--running",
+        "status--ok",
+        "status--partial",
+        "status--failed",
+    ):
+        assert cls in src, f"status class '{cls}' missing from viewer.css"
