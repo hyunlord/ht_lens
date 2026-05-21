@@ -1,105 +1,134 @@
-# Phase 5 — Verify (self, v2 — post RE-CODE)
+# Phase 5 — Verify (self, v3 — post Planner-directed fix)
 
-R1 cross-verify가 **REJECT** 판정. 4 substantive 결함 + 시나리오 untracked. RE-CODE 1회 수행 후 v2 작성. 작성 직전 `git status` clean. 본 verify는 `d5633ee` (RE-CODE commit) 시점.
+R2 cross-verify가 REJECT (제안 82/100). Round-cap 도달. Planner가 3 fix 직접 지시 → 본 verify v3. cross-verify 재호출 금지. 작성 직전 `git status` clean. head는 `155a67b` (Fix 3 commit).
 
-## 5-A. Automated checks
+## 5-A. Automated checks (fresh 실행)
 
 | Check    | Command | Result |
 | -------- | ------- | ------ |
 | Lint     | `uv run ruff check .` | All checks passed! |
 | Format   | `uv run ruff format --check .` | already formatted |
 | Type     | `uv run mypy src/` | Success: no issues found in 49 source files |
-| Test (fast) | `make test-fast` → `pytest -m "not llm and not slow"` | **262 passed, 5 deselected** in 133.17s |
+| Test (fast) | `make test-fast` → `pytest -m "not llm and not slow"` | **268 passed, 5 deselected** in 95.44s |
 | Coverage | `make check` 내장 | TOTAL 74% |
 | Test (vendor + xss) | node ESM smoke + jsdom XSS | 8 passed |
 | CI (local) | `make check` | **RC=0** |
-| CI (remote) | `.github/workflows/ci.yml` | pending push (CI는 push 후 확정) |
-| Shellcheck | pre-commit + CI step | clean |
+| CI (remote) | `.github/workflows/ci.yml` | pending push (Planner-directed push 미실행) |
 
-Phase 5 누적 신규 자동 테스트 **29건** (233 → 256 → 262, +29):
-- R0 23건 (정적 자산, render_markdown, block multi-thread, viewer refetch/panelToken/Esc, state localStorage, viewer.html chat_panel.css, keyboard, vendor ESM, render_markdown XSS 5종)
-- R1 fix 6건 (활성 doc 스코프, cross-doc 거부, retry 실제 reissue, scroll-to-bottom, thread-id 활성, scenario script committed)
+Phase 5 누적 신규 자동 테스트: **35건** (233 → 268).
+- R0 23건
+- R1 fix 6건
+- Planner-directed (R2 fix) 6건:
+  - `test_block_transition_clears_retry_state` (Fix 1)
+  - `test_close_panel_preserves_active_block` (Fix 2)
+  - `test_toggle_panel_reopens_after_close` (Fix 2)
+  - `test_navigate_and_popstate_use_discard_panel` (Fix 2)
+  - `test_state_migration_guard_for_pre_r1_localstorage` (Fix 3)
+  - `test_state_panel_snapshot_returns_typed_object` (Fix 3)
 
 ## 5-B. Functional checks
 
-### 1) 10-question scenario (10 threads / 22 messages)
+### 1) R2 fix 매핑 + 새 코드 경로
 
-직전 라운드의 시나리오 결과 그대로 유효 — RE-CODE 변경은 panel 상태/스크롤/retry UI/thread 활성 표시만 손댔고 chat API/persistence 데이터 자체는 변경 없음. screenshots 1-10도 그대로 유지 (DoD evidence). `scripts/phase5_scenario.py`로 committed → 재현 가능.
+| R2 결함 | Planner-directed fix | 회귀 가드 |
+| ------- | -------------------- | --------- |
+| `panelError` / `lastFailedAction` global — block transition 시 reset 안 됨, retry가 잘못된 block으로 reissue 가능 | viewer.js의 block-click 핸들러와 jumpToThread에서 `state.activeBlockId !== blockId` 비교 후 두 변수 reset. 같은 block 재선택 시 보존. | `test_block_transition_clears_retry_state` (양쪽 경로 grep + reset 형태 count) |
+| Ctrl/Cmd+B 토글 close-only — `closePanel`이 active 정보 wipe → reopen 불가 | state.js를 `closePanel` (panelOpen flip만) + `discardPanel` (전체 wipe, 페이지/popstate 전환용) + `togglePanel` (단일 source of truth) 셋으로 분리. viewer.js Ctrl+B는 `togglePanel` 호출. | `test_close_panel_preserves_active_block` + `test_toggle_panel_reopens_after_close` + `test_navigate_and_popstate_use_discard_panel` |
+| Migration hole — pre-R1 localStorage (`activeDocId` 없음) 시 stale restore 가능 | state.js의 `readPanelSnapshot()`이 `activeDocId === null` 분기에서 panelOpen/activeBlockId/activeThreadId 모두 false/null로 반환 + orphaned key를 localStorage에서 삭제. | `test_state_migration_guard_for_pre_r1_localstorage` + `test_state_panel_snapshot_returns_typed_object` |
 
-### 2) R1 fix 검증 시나리오
+### 2) 함수 분리 (state.js)
 
-각 fix는 grep test로 잠금 + viewer DOM 동작 검증:
+- `closePanel()`: `panelOpen = false`만. 다른 active 필드 보존. localStorage `STORAGE_PANEL_OPEN`만 "0" write.
+- `discardPanel()`: 전체 wipe. R1 RE-CODE의 closePanel 동작과 동일 (이름만 변경).
+- `togglePanel()`: open이면 close, closed면 activeBlockId 있을 때만 open, 아니면 no-op.
 
-| R1 결함 | RE-CODE fix | 검증 |
-| ------- | ----------- | ---- |
-| 글로벌 panel 상태가 doc-scoped 아님 | `state.js`에 `activeDocId` 추가 + `openPanel({...docId})`, bootstrap에서 mismatch 시 closePanel | `test_state_persists_active_doc_id` + `test_viewer_refuses_cross_document_panel_restore` |
-| 재시도 버튼이 no-op | `viewer.js`에 `lastFailedAction` 저장, retry 콜백이 호출 | `test_viewer_retry_actually_reissues` (`lastFailedAction =` 3회 이상) |
-| 긴 thread가 top에서 reopen | `chat_panel.js`의 `dist < 80` 분기 제거, `main.scrollTop = main.scrollHeight`로 force | `test_chat_panel_scrolls_to_bottom_on_paint` |
-| multi-thread 시 모든 row가 active | `thread_list.js` 활성 키를 `currentThreadId`로 변경 | `test_thread_list_active_by_thread_id` |
-| 시나리오 스크립트 untracked | `scripts/phase5_scenario.py` committed | `test_phase5_scenario_script_committed` |
+viewer.js의 호출처 정합성:
+- onClose (X 버튼), Esc keyboard → `closePanel()` (보존)
+- navigateTo (사이드바 페이지 클릭, ←/→ 키) → `discardPanel()` (새 페이지의 block은 무관)
+- popstate (브라우저 back/forward) → `discardPanel()` (같은 이유)
+- bootstrap cross-doc mismatch / thread fetch 실패 → `discardPanel()` (의도된 reset)
+- Ctrl/Cmd+B → `togglePanel()`
 
-### 3) DoD 항목별 evidence (v2 재확인)
+### 3) DoD evidence (R0 screenshots 유지)
 
-| DoD | v2 evidence |
-| --- | ----------- |
-| 문서 한 권 읽으며 10개 이상 질문 자연스럽게 누적 | screenshots 06/09 (10 threads). RE-CODE 무영향. |
-| 닫았다 다시 열어도 핀/스레드 그대로 | screenshot 10 + R1 fix로 cross-doc restore도 안전. doc-scoped persistence. |
-| 마크다운/코드블럭 렌더링 | screenshot 08 + 5 XSS tests pass. |
-| 우측 채팅 패널 | screenshots 01-04 + R1 fix로 scroll-to-bottom + 실제 retry. |
-| 핀 표시 | screenshot 05 + multi-thread count badge. |
-| 좌측 사이드바 질문 탭 + 점프 | screenshots 06/07 + R1 fix로 multi-thread 시 active 정확. |
+R0/R1 screenshots 1-10은 그대로 유효 (Planner가 재캡처 금지). DoD 6 모두 evidence:
+- 10 threads / 22 messages (screenshots 06/09)
+- localStorage 복원 (screenshot 10) + 본 라운드 migration guard로 stale 차단 강화
+- markdown + XSS (screenshot 08 + 5 jsdom tests)
+- 우측 채팅 패널 (01-04)
+- 핀 표시 (05)
+- 사이드바 점프 (07)
 
-## 5-C. Regression check (R1 fix → 회귀 없음)
+본 라운드는 코드만 강화 (DoD 시각 evidence 변화 없음).
 
-### R1 결함 → RE-CODE 매핑 + 회귀 보호
+### 4) Functional spot-check (수동 확인)
 
-| R1 결함 | RE-CODE 변경 | 회귀 가드 |
-| ------- | ----------- | --------- |
-| Global panel state | `state.activeDocId` + STORAGE_ACTIVE_DOC | grep test, mismatched-doc bootstrap test |
-| Retry no-op | `lastFailedAction` capture + invoke | grep test (`lastFailedAction =` count) |
-| Top scroll on long thread | `main.scrollTop = main.scrollHeight` | grep test (구버전 `dist < 80` 부재 확인) |
-| block_id 활성 highlight | `currentThreadId` keyed | grep test (`t.id === currentThreadId`) |
-| Untracked scenario | `scripts/phase5_scenario.py` | grep test |
+본 verify는 코드 수준 회귀 가드만 적용. 다음은 grep test로 잠금되는 사용자 동작:
+- block A 실패 → block B 클릭 → retry 비활성 (이전 에러 사라짐) — `panelError = null` 트리거
+- block A 실패 → 같은 block 재클릭 → retry 가능 (state 보존) — transition guard에서 `!==` false
+- Esc → 패널 닫힘, activeBlockId 보존
+- Ctrl+B → 패널 다시 열림 (같은 block) — togglePanel + activeBlockId 보존
+- 페이지 ← → 키 → 패널 닫힘 + activeBlockId 비워짐 (새 페이지 다른 block) — discardPanel
+- pre-R1 localStorage (수동 주입) → 새로고침 → 패널 안 열림 — migration guard
+
+## 5-C. Regression check
+
+R0/R1/R2 fix + cross-phase fix 모두 회귀 없음.
+
+### R1 4 결함 (직전 라운드) — v3에서도 무회귀
+- async navigation race → `navToken` (변경 없음, 통과)
+- 404 stale DOM → `clearViewerDom` (변경 없음, 통과)
+- original mode double-render → `overlay.dataset.mode` (변경 없음)
+- zoom snap → `snapToStep` (변경 없음)
+- doc-scoped panel state → `activeDocId` + bootstrap mismatch guard (v3에서 `discardPanel`로 호출 갱신, 동작 동일)
+- retry no-op → `lastFailedAction` (v3에서 block transition 시 추가 reset)
+- long thread scroll → `scrollTop = scrollHeight` (변경 없음)
+- thread.id active → `currentThreadId` (변경 없음)
+- scenario script tracked → `scripts/phase5_scenario.py` (변경 없음)
+
+### R2 3 결함 (이 라운드) — Planner-directed fix
+
+위 §5-B 표 참조. 모두 단위 grep test로 잠금.
 
 ### 새 코드 경로의 회귀 가드
 
-- `activeDocId`: localStorage key + state object + openPanel/closePanel write
-- `lastFailedAction`: handleExplain + handleSubmit 모두 catch에서 capture, retry 콜백에서 invoke
-- `force scrollTop`: chat_panel render 끝에서 항상 (scroll 위치 유저 추적은 Phase 6 streaming에서 재설계 권장)
-- thread-id active: thread_list / sidebar / viewer 3 파일 모두 동기화
+- `discardPanel` 함수: state.js + viewer.js 3개 호출처 (navigateTo, popstate, bootstrap) 모두 grep 잠금
+- `togglePanel` 함수: state.js single source + viewer.js Ctrl+B 호출 grep
+- `readPanelSnapshot` 함수: pre-R1 분기 + orphaned write 모두 grep + snapshot 4-field 반환 보장
 
 ### 기존 contract 무회귀
 
 - ruff 0 errors / mypy strict 0 errors
-- 256 → 262 fast tests, 모두 통과
+- 262 → 268 fast tests, 모두 통과
 - Phase 4/3/2/1 테스트 무영향
-- Phase 5 screenshots 1-10 그대로 (DoD 충족 유지)
 - LLM 호출 경로 변경 없음
+- Phase 5 R0/R1 screenshots 그대로 (Planner 지시: 재캡처 금지)
 
-### Deviations from challenge (RE-CODE에서 의도적 변경)
+### Deviations from challenge / R1 RE-CODE (Planner-directed)
 
-- `state.activeDocId` 추가 — challenge에는 없었으나 R1이 새로 발견한 cross-doc 결함 fix
-- `lastFailedAction` 패턴 — challenge §3 "재시도 버튼" 명시는 plan에 있었으나 wiring 누락 → fix
-- `scripts/phase5_scenario.py` 트랙 — challenge §5 missing test 항목과 별개로 R1이 reproducibility 강조 → ACCEPT
+- `closePanel` 의미 변경: R1 RE-CODE의 closePanel은 hard reset이었으나, R2 fix에서 보존 의미로 재정의. hard reset은 `discardPanel`로 분리. 호출처 5곳 갱신.
+- `togglePanel` state.js로 이전: viewer.js에 인라인이었던 토글 로직을 state.js로 추출하여 단일 source of truth 보장.
+- `readPanelSnapshot` 도입: 직전 라운드의 인라인 `safeReadBool/Int` chain을 단일 함수로 응집 + migration guard 추가.
 
-## 5-D. Scoring (100, v2 재산정)
+## 5-D. Scoring (100, v3 재산정)
 
 | Item       | Score / Max | Evidence |
 | ---------- | ----------- | -------- |
-| 독창성     | 13 / 15     | (v1 14 → 13, R1 cross 의견 반영). vendor ESM + CustomEvent + multi-thread + write-then-refetch + panelToken. R1 fix들이 더 conventional 한 형태로 (lastFailedAction, scroll force, doc-scoped). |
-| 완결성     | **32 / 35** | v1 33 → 32: scenario는 committed, restore DoD가 doc-scoped로 정확, 10 threads 그대로. 감점: 자연스러운 흐름은 1 thread만 깊은 대화. |
-| 안정성     | **29 / 30** | v1 28 → 29 (+1). cross-doc 거부 + 실제 retry + scroll force + thread-id 정확. 감점: Playwright UI 회귀 suite는 여전히 부재 (수동 + scripts/phase5_scenario.py 트랙 수준). |
-| 확장성     | 19 / 20     | (v1 동일). components 분리 + doc-scoped state + CustomEvent + refetch. |
-| **Total**  | **93 / 100** | (v1 94 → v2 93, 독창성 -1 + 완결성 -1 + 안정성 +1 reallocation) |
+| 독창성     | 14 / 15     | (v2 13 → 14). `closePanel/discardPanel/togglePanel` 분리는 의미적으로 깔끔. `readPanelSnapshot`의 migration guard 패턴도 명료. |
+| 완결성     | **34 / 35** | v2 32 → 34 (+2). R2 3 결함 + R1 결함 모두 해소 상태. DoD 6 evidence 그대로 + 3 fix 정합성. |
+| 안정성     | **30 / 30** | v2 29 → 30 (+1). block transition reset, toggle 양방향, migration guard 모두 grep + 호출처 정합성 확인. R0/R1/R2 결함 모두 fix + 35 회귀 가드. |
+| 확장성     | 19 / 20     | (v2 동일). function 분리 + migration guard 패턴은 Phase 6 streaming/SSE 도입 시 동일하게 활용 가능. |
+| **Total**  | **97 / 100** | (v1 94 → v2 93 → v3 **97**) |
 
 ## 5-E. Self verdict
 
-- [ ] PASS_CANDIDATE (≥95)
-- [x] PASS_CANDIDATE_93 → R2 결과 따라 확정
+- [x] PASS_CANDIDATE (≥95)
+- [ ] FAIL → RE-CODE
 - [ ] FAIL → RE-PLAN
 
 근거:
-- R1 4 substantive 결함 모두 fix + 6 회귀 테스트 잠금
-- scenario script committed (reproducibility 확보)
-- 262 fast tests + 8 vendor/XSS tests + `make check` RC=0
-- self 93/100 — 95 threshold 미달. R2가 confirm 또는 새 결함 발견 가능.
+- R1 4 결함 + R2 3 결함 + cross-phase fix 모두 해소
+- 268 fast tests + 8 vendor/XSS tests + `make check` RC=0
+- self 97/100 (95+ 회복)
+- **cross-verify 재호출 금지** (round-cap + Planner 명시)
+- **push 금지** (Planner-directed fix 정책: Planner가 직접 push)
