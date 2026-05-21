@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=1280, initial-scale=1" />
+    <title>ht_lens — viewer</title>
+    <link rel="stylesheet" href="css/base.css" />
+    <link rel="stylesheet" href="css/viewer.css" />
+  </head>
+  <body>
+    <div class="viewer-shell">
+      <header class="app-header">
+        <h1>ht_lens</h1>
+        <span class="meta">no document loaded</span>
+        <div class="key-hints">
+          <span><kbd>←</kbd>/<kbd>→</kbd> page</span>
+          <span><kbd>T</kbd> toggle</span>
+          <span><kbd>Ctrl/Cmd</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> zoom</span>
+        </div>
+      </header>
+      <aside class="sidebar"></aside>
+      <main class="page-area">
+        <div id="status" class="status-banner" hidden></div>
+        <div id="page-mount"></div>
+      </main>
+      <aside class="right-slot" hidden></aside>
+    </div>
+    <script type="module" src="js/viewer.js"></script>
+  </body>
+</html>

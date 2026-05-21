@@ -1,0 +1,91 @@
+/* ht_lens base — reset + tokens + global type */
+
+:root {
+  --bg: #0e1116;
+  --surface: #161b22;
+  --surface-2: #1f242c;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-secondary: #9ba3ad;
+  --accent: #58a6ff;
+  --accent-soft: rgba(88, 166, 255, 0.22);
+  --warn: #f0883e;
+  --danger: #f85149;
+  --font-stack: 'Noto Sans KR', 'Inter', -apple-system, BlinkMacSystemFont,
+    system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-stack);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font: inherit;
+}
+
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.app-header h1 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.app-header .meta {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.status-banner {
+  margin: 16px 20px;
+  padding: 12px 16px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.status-banner.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.status-banner.empty {
+  text-align: center;
+}
