@@ -167,6 +167,16 @@ git log -1   # 마지막 commit이 code/test commit인지 확인
 
 **각 항목 점수에는 evidence 필수**. Worker self-score는 "통과 후보" 상태.
 
+**Regression check (RE-CODE 라운드에서 의무)**
+
+RE-CODE 후 verify.md의 "Regression check" 섹션에는 다음 표가 의무:
+
+| RE-CODE 변경 | 새 함수/state/handler | 잠금 단위 테스트 |
+| ------------ | --------------------- | ---------------- |
+| (예) closePanel 분리 | `discardPanel`, `togglePanel` | `test_close_panel_preserves_active_block`, `test_toggle_panel_reopens_after_close` |
+
+이 표가 비어있거나 새 식별자가 테스트 파일에서 grep 안 되면 cross-verify가 즉시 잡는다 (`prompts/codex_verify.md`의 "untested new paths from RE-CODE" 기준).
+
 ### 5-B. Cross-verify (자동, Codex) — round 상한 적용
 
 Worker는 verify.md 작성 직후 **반드시 호출**:
