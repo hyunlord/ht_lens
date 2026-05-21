@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -15,6 +16,15 @@ from ht_lens.errors import SchemaVersionMismatch
 from ht_lens.llm.client import LLMClient
 from ht_lens.llm.errors import LLMTransientError
 from ht_lens.translate.cache import cache_key as make_cache_key
+
+# Phase 6d: callback fired by the upload pipeline so jobs.progress_pct can
+# reflect translate-stage progress. ``(done, total)`` — done is the count
+# of blocks the pipeline has finished processing (cached + skipped +
+# translated + failed combined), total is the candidate block count.
+ProgressCallback = Callable[[int, int], Awaitable[None]]
+# Granularity: emit at most once every ``_PROGRESS_EVERY`` blocks plus
+# the final block. Per-block emission would hammer the DB on long docs.
+_PROGRESS_EVERY = 10
 
 
 @dataclass
@@ -36,12 +46,18 @@ async def translate_document(
     retry_failed: bool = False,
     block_types: tuple[str, ...] = ("text", "header"),
     dry_run: bool = False,
+    on_progress: ProgressCallback | None = None,
 ) -> TranslateStats:
     """Translate all text/header blocks for document ``doc_id``.
 
     Each block is committed individually. Image blocks are skipped.
     Existing ``status='translated'`` rows are skipped unless
     ``retry_failed=True`` (which only re-processes ``status='failed'`` rows).
+
+    Phase 6d ``on_progress`` callback: invoked with ``(done, total)``
+    after every ``_PROGRESS_EVERY`` blocks and on the final block so the
+    upload-job pipeline can update ``jobs.progress_pct`` without hammering
+    the DB. Passing ``None`` keeps the original Phase 2b behavior.
     """
     await _require_schema_head(session)
 
@@ -65,7 +81,8 @@ async def translate_document(
     pending_cache: dict[str, str] = {}
     sem = asyncio.Semaphore(concurrency)
 
-    for block in blocks:
+    total = len(blocks)
+    for idx, block in enumerate(blocks):
         await _process_block(
             block,
             doc,
@@ -78,6 +95,10 @@ async def translate_document(
             retry_failed=retry_failed,
             block_types=block_types,
         )
+        if on_progress is not None and total > 0:
+            done = idx + 1
+            if done % _PROGRESS_EVERY == 0 or done == total:
+                await on_progress(done, total)
 
     # Document.status reflects the outcome of the whole translation run so the
     # API/viewer can show a meaningful state without recomputing per-block

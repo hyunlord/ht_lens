@@ -31,6 +31,42 @@ class DocumentRead(BaseModel):
     src_pdf_sha256: str | None = None
     num_pages: int
     created_at: datetime
+    # Phase 6d: auto-generated abstract (Korean, 300~500 words). ``None``
+    # while the summarize stage is still pending or skipped (image-only doc).
+    summary: str | None = None
+    summarized_at: datetime | None = None
+
+
+class JobRead(BaseModel):
+    """Background job state — Phase 6d."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    status: str
+    document_id: int | None = None
+    upload_filename: str | None = None
+    upload_sha256: str | None = None
+    progress_pct: int
+    progress_message: str | None = None
+    error_message: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    created_at: datetime
+
+
+class UploadResponse(BaseModel):
+    """``POST /uploads`` response — Phase 6d.
+
+    ``dedup=True`` means the file was already ingested; ``document_id``
+    points at the existing document and no job was created. Otherwise a
+    new job is spawned and ``job_id`` is non-null.
+    """
+
+    job_id: int | None
+    document_id: int | None
+    dedup: bool
 
 
 class BlockRead(BaseModel):
@@ -161,6 +197,7 @@ __all__ = [
     "BlockRead",
     "BlockType",
     "DocumentRead",
+    "JobRead",
     "MessageCreate",
     "MessageRead",
     "MessageRole",
@@ -173,4 +210,5 @@ __all__ = [
     "ThreadDetail",
     "ThreadSummary",
     "TranslationRead",
+    "UploadResponse",
 ]

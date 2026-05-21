@@ -40,6 +40,7 @@ async def ingest_extract_dir(
     src: str | None,
     tgt: str = "ko",
     overwrite: bool = False,
+    display_filename_override: str | None = None,
 ) -> IngestStats:
     """Atomically ingest ``extract_dir`` (Phase 1 layout) into ``session``.
 
@@ -47,6 +48,12 @@ async def ingest_extract_dir(
     rolled back (no caller cleanup needed for partial rows). If ``overwrite`` is
     true, an existing document with the same ``filename`` is cascade-deleted
     inside the same transaction so rollback restores it.
+
+    Phase 6d ``display_filename_override``: ``extract_pdf`` writes
+    ``doc_meta.filename`` from the path it received, which for uploads is
+    ``{sha256}.pdf``. The upload pipeline passes the user's original
+    filename here so ``documents.filename`` shows it correctly in the
+    viewer and the index card (debate §2 fix).
     """
     if not extract_dir.exists() or not extract_dir.is_dir():
         raise IngestError(f"extract directory not found: {extract_dir}")
@@ -55,13 +62,14 @@ async def ingest_extract_dir(
 
     doc_meta = _load_doc_meta(extract_dir)
     src_lang = _resolve_src_lang(doc_meta, src)
+    display_filename = display_filename_override or doc_meta.filename
 
     page_files = _discover_page_files(extract_dir, doc_meta)
     page_docs = _load_page_docs(page_files)
 
     try:
         existing = (
-            await session.execute(select(Document).where(Document.filename == doc_meta.filename))
+            await session.execute(select(Document).where(Document.filename == display_filename))
         ).scalar_one_or_none()
 
         if existing is not None and not overwrite:
@@ -89,7 +97,7 @@ async def ingest_extract_dir(
             await session.flush()
 
         document = Document(
-            filename=doc_meta.filename,
+            filename=display_filename,
             src_lang=src_lang,
             tgt_lang=tgt,
             status="ready_for_translation",
