@@ -261,41 +261,104 @@ messages      (id, thread_id, role, content, model, created_at)
 
 ---
 
-### Phase 6c — Extraction Quality Debt ⬜
+### Phase 6c — Viewer Polish ⬜
+**Deliverable**
+- LLM env 로드 fix (`.env`가 `ht-lens serve` 진입 시 자동 반영)
+- 페이지 진입 시 fit-to-width 자동 zoom
+- 좌측 사이드바 토글 (열기/닫기 버튼)
+- 자연 스크롤 버그 fix (스크롤 다운 시 다음 페이지 정확히 마운트)
+- 메인 메뉴 / 문서 리스트 돌아가기 네비
+
+**DoD**
+- viewer에서 받은 AI 응답이 진짜 sglang 호출 (mock 아님)
+- 새 페이지 진입 시 자동으로 viewport 폭 fit
+- 사이드바 토글 동작 (좌측 200px → 0px → 200px)
+- 자연 스크롤로 6 페이지 sample_mixed.pdf 끝까지 이동 가능
+- viewer 좌상단 ht_lens 로고 클릭 → index.html 복귀
+- localStorage에 사이드바 열림/닫힘 상태 저장
+
+**위험**
+- Phase 6b의 자연 스크롤 일부만 동작 (실 측정 후 확인)
+- fit-to-width 시 zoom state localStorage 충돌
+- 사이드바 토글 시 stage container width 재계산 비용
+
+**Versioning**: v0.6
+
+---
+
+### Phase 6d — File Management + Summary ⬜
+**Deliverable**
+- 파일 업로드 UI (드래그 앤 드롭 + 파일 선택 버튼)
+- 백엔드 PDF upload → extract → ingest → translate 자동 체인
+- 백그라운드 작업 상태 추적 (jobs 테이블 + 진행 polling)
+- 업로드된 문서의 자동 요약 생성 (LLM)
+- 업로드된 PDF는 `data/uploads/` 보관 + sha256 dedup
+- index.html에 작업 진행 현황 (active jobs)
+
+**DoD**
+- 사용자가 브라우저에서 PDF 드롭 → 자동 처리 → viewer 진입까지 한 흐름
+- 200 페이지 PDF 처리 1~2시간 안에 완료 + 진행 표시
+- 자동 요약은 적절한 길이 (300~500 단어), 한국어 자연스러움, 문서 첫 페이지에 thread로 자동 attach (또는 별도 영역)
+- 같은 sha256 PDF 재업로드 시 dedup (기존 doc_id 반환)
+- 작업 실패 시 명확한 에러 표시
+
+**위험**
+- 동시 업로드 시 race condition
+- 큰 PDF (>100MB) 업로드 시 메모리/HTTP timeout
+- 진행 polling vs SSE 선택
+- 요약 LLM prompt 설계
+- 업로드된 PDF의 file system 보안 (path traversal)
+
+**Versioning**: v0.7
+
+---
+
+### Phase 6e — Polish Pack ⬜
+**Deliverable**
+- 핀 표시 더 직관적 (색깔/크기/위치 개선, 멀티 thread 표시)
+- 사이드바 리사이즈 (좌우 드래그)
+- 작은 이미지/도표 클릭 시 확대 모달
+- streaming 응답 (SSE)
+- 모델 빠른 토글 (Qwen ↔ Gemma ↔ OpenRouter)
+- 백그라운드 작업 패널 (Phase 6d 기반 확장)
+- Playwright 자동 시나리오 (Phase 5 debt)
+- CI jsdom 설치 (Phase 5/6b debt)
+- LLM-driven thread title (Phase 5 debt)
+- + Phase 6a R2 위임 (multiline translated test, search 200ms 엄격 단언, LLM live re-run after RE-CODE)
+
+**DoD**
+- 핀 시각 만족도 (사용자 spot check)
+- 사이드바 리사이즈 부드러움 (200px ~ 500px)
+- 이미지 확대 단축키 + 클릭
+- streaming 1자씩 표시 (체감 latency 절반 이하)
+- 모델 env 1줄 변경으로 swap, viewer 재시작 불필요 정도
+- README 일주일 실사용 캡처
+
+**Versioning**: v0.8
+
+---
+
+### Phase 6f — Extraction Quality Debt ⬜
 **Deliverable**
 - header heuristic 보강 (Phase 1 known issue)
 - 멀티컬럼 reading order (Phase 1 known issue)
 - samples.md determinism 검증
 - 회전 페이지 bbox→pixel 정밀 매핑 (Phase 4 known issue)
+- + sample_ko.pdf 같은 큰 fixture (52+ 페이지) 추가 (Phase 6b R2 위임)
 
 **DoD**
 - 3 fixture에서 header 정확도 ≥ 90% (수동 spot check)
 - 멀티컬럼 PDF에서 reading order 시각적 검증
 - samples.md 두 번 생성 시 diff 0
 - 회전 페이지 viewer에서 정확한 block 위치
+- 52+ 페이지 fixture로 자연 스크롤 메모리 실측
 
-**Versioning**: v0.6
+**위험**
+- Phase 1 코드 회귀
+- snapshot test 다수 갱신 필요
+- 시각적 검증 어려움 (자동화 부족)
 
----
-
-### Phase 6d — Infrastructure Polish ⬜
-**Deliverable**
-- 백그라운드 작업 패널 (ingest/translate 진행 상태)
-- 모델 빠른 토글 (Qwen ↔ Gemma ↔ OpenRouter)
-- streaming response (SSE)
-- Playwright 자동 시나리오 (Phase 5 debt)
-- CI jsdom 설치 (Phase 5/6a debt)
-- LLM-driven thread title (Phase 5 debt)
-- Phase 6a R2 위임: multiline translated test, search 200ms 엄격 단언, LLM live re-run after RE-CODE 워크플로우 보강
-
-**DoD**
-- viewer에서 진행 상태 표시
-- 환경변수 1줄 변경으로 모델 swap
-- AI 응답이 token by token 표시
-- Phase 5 + 6a 시나리오 자동 실행 + 스크린샷
-- README에 일주일 실사용 사례 캡처
-
-**Versioning**: v1.0 달성
+**Versioning**: v1.0
 
 ---
 
@@ -304,12 +367,14 @@ messages      (id, thread_id, role, content, model, created_at)
 | 버전 | 시점               | 의미                              |
 | ---- | ------------------ | --------------------------------- |
 | v0.1 ✅ | Phase 2a + 2b 완료 | CLI로 번역 가능                   |
-| v0.2 ✅ | Phase 3~4 완료     | 브라우저에서 읽기 가능            |
+| v0.2 ✅ | Phase 3 + 4 완료   | 브라우저에서 읽기 가능            |
 | v0.3 ✅ | Phase 5 완료       | Q&A 동작, 핀                      |
-| v0.4 ✅ | Phase 6a 완료      | 검색 + 질문 export + 재번역       |
-| v0.5 ⬜ | Phase 6b 완료      | 좌우 분할 + 자연 스크롤           |
-| v0.6 ⬜ | Phase 6c 완료      | 추출 품질 보강                    |
-| v1.0 ⬜ | Phase 6d 완료      | 일상 도구로 사용 가능             |
+| v0.4 ✅ | Phase 6a 완료      | 검색 + export + 재번역            |
+| v0.5 ✅ | Phase 6b 완료      | 좌우 비교 + 자연 스크롤           |
+| v0.6 ⬜ | Phase 6c 완료      | Viewer polish (env fix, 사이드바, 메인 메뉴) |
+| v0.7 ⬜ | Phase 6d 완료      | 파일 업로드 + 자동 요약            |
+| v0.8 ⬜ | Phase 6e 완료      | UI polish (리사이즈, 확대, streaming, 모델 토글) |
+| v1.0 ⬜ | Phase 6f 완료      | 추출 품질 (일상 도구 polish 완료) |
 
 ---
 
