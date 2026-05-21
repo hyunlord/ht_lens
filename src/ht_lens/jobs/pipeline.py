@@ -154,6 +154,12 @@ async def process_upload_job(job_id: int, app: FastAPI) -> None:
         )
 
         # --- Ingest (own session + own transaction) ---
+        # R1 fix (cross-verify §4): overwrite=False so two unrelated uploads
+        # that happen to share a filename ("report.pdf") cannot delete each
+        # other. The upload router's sha256 dedup already short-circuits
+        # the same-file case; the ingest step only sees genuinely-new sha
+        # values here. Filename collisions raise DocumentAlreadyIngested
+        # which we surface as a clean job failure.
         document_id: int | None = None
         async with factory() as session:
             stats = await ingest_extract_dir(
@@ -161,7 +167,7 @@ async def process_upload_job(job_id: int, app: FastAPI) -> None:
                 session,
                 src=None,
                 tgt="ko",
-                overwrite=True,
+                overwrite=False,
                 display_filename_override=display_filename,
             )
             document_id = stats.document_id
@@ -247,8 +253,27 @@ async def mark_in_flight_jobs_failed(factory: async_sessionmaker[AsyncSession]) 
     previous server run (we don't survive restarts). Mark them ``failed``
     so polling clients see a definitive terminal state.
 
-    Returns the number of rows updated.
+    R1 fix (cross-verify §4): also cascade-delete the associated
+    ``Document`` row when the job died before reaching ``translated``/
+    ``partial_translated`` so the next upload of the same PDF gets a
+    fresh run instead of being routed to a half-ingested ghost document
+    by the sha256 dedup path. Final-state documents (``translated`` /
+    ``partial_translated``) are kept — they are usable even if the
+    summarize stage was the failure point.
+
+    Returns the number of jobs flipped to ``failed``.
     """
+    from sqlalchemy import delete
+
+    from ht_lens.db.models import (
+        Block,
+        Document,
+        Message,
+        Page,
+        Thread,
+        Translation,
+    )
+
     async with factory() as session:
         rows = (
             (await session.execute(select(Job).where(Job.status.in_(ACTIVE_STATUSES))))
@@ -256,10 +281,42 @@ async def mark_in_flight_jobs_failed(factory: async_sessionmaker[AsyncSession]) 
             .all()
         )
         now = datetime.now(UTC)
+        partial_doc_ids: list[int] = []
         for job in rows:
             job.status = "failed"
             job.error_message = "서버 재시작으로 중단됨"
             if job.finished_at is None:
                 job.finished_at = now
+            if job.document_id is not None:
+                partial_doc_ids.append(job.document_id)
+        if partial_doc_ids:
+            partial_docs = (
+                (await session.execute(select(Document).where(Document.id.in_(partial_doc_ids))))
+                .scalars()
+                .all()
+            )
+            for doc in partial_docs:
+                if doc.status in ("translated", "partial_translated"):
+                    continue
+                block_ids_sub = select(Block.id).where(
+                    Block.page_id.in_(select(Page.id).where(Page.doc_id == doc.id))
+                )
+                thread_ids_sub = select(Thread.id).where(Thread.block_id.in_(block_ids_sub))
+                await session.execute(delete(Message).where(Message.thread_id.in_(thread_ids_sub)))
+                await session.execute(delete(Thread).where(Thread.block_id.in_(block_ids_sub)))
+                await session.execute(
+                    delete(Translation).where(Translation.block_id.in_(block_ids_sub))
+                )
+                await session.execute(
+                    delete(Block).where(
+                        Block.page_id.in_(select(Page.id).where(Page.doc_id == doc.id))
+                    )
+                )
+                await session.execute(delete(Page).where(Page.doc_id == doc.id))
+                await session.execute(delete(Document).where(Document.id == doc.id))
+                # Null the job's document_id pointer since the doc is gone.
+                for job in rows:
+                    if job.document_id == doc.id:
+                        job.document_id = None
         await session.commit()
         return len(rows)

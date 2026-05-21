@@ -173,3 +173,63 @@ async def test_upload_same_sha_race_returns_single_document(
         # We can at least require the file path collision didn't create
         # duplicate uploaded artefacts; the unique constraint will fire on
         # the second job's ingest if it ever runs.
+
+
+@pytest.mark.asyncio
+async def test_upload_active_job_dedup_returns_existing_job(
+    api_db_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1 fix (cross-verify §4): when the same PDF is uploaded twice in
+    rapid succession, the second call must NOT spawn a redundant job;
+    instead it returns the active job_id from the first call."""
+
+    async def _slow(job_id, app):  # never finish during the test
+        import asyncio
+
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr("ht_lens.api.routers.uploads.process_upload_job", _slow)
+
+    pdf_bytes = _make_pdf_bytes("active dedup body")
+    with make_test_client(api_db_path) as client:
+        r1 = client.post(
+            "/uploads",
+            files={"file": ("first.pdf", pdf_bytes, "application/pdf")},
+        )
+        r2 = client.post(
+            "/uploads",
+            files={"file": ("second.pdf", pdf_bytes, "application/pdf")},
+        )
+
+    assert r1.status_code == 202 and r2.status_code == 202
+    b1, b2 = r1.json(), r2.json()
+    assert b1["dedup"] is False
+    assert b2["dedup"] is True
+    assert b2["job_id"] == b1["job_id"]
+
+
+@pytest.mark.asyncio
+async def test_ingest_with_display_filename_override_skips_filename_collision() -> None:
+    """R1 fix (cross-verify §4): ``ingest_extract_dir`` must short-circuit
+    the filename-based dedup branch when ``display_filename_override`` is
+    set, otherwise two unrelated uploads sharing a user filename (e.g.
+    ``report.pdf``) would cascade-delete each other."""
+    src = (
+        Path(__file__).resolve().parents[2] / "src" / "ht_lens" / "ingest" / "pipeline.py"
+    ).read_text(encoding="utf-8")
+    assert "if display_filename_override is not None:" in src, (
+        "ingest_extract_dir must short-circuit filename lookup when the "
+        "Phase 6d upload pipeline supplies a display_filename_override"
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_upload_job_uses_overwrite_false() -> None:
+    """R1 fix: ``process_upload_job`` must call ``ingest_extract_dir``
+    with ``overwrite=False`` + the display filename override so unrelated
+    uploads sharing a user filename cannot delete each other."""
+    src = (
+        Path(__file__).resolve().parents[2] / "src" / "ht_lens" / "jobs" / "pipeline.py"
+    ).read_text(encoding="utf-8")
+    assert "overwrite=False" in src
+    assert "display_filename_override=display_filename" in src

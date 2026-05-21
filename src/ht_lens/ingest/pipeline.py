@@ -68,9 +68,18 @@ async def ingest_extract_dir(
     page_docs = _load_page_docs(page_files)
 
     try:
-        existing = (
-            await session.execute(select(Document).where(Document.filename == display_filename))
-        ).scalar_one_or_none()
+        # Phase 6d R1 fix (cross-verify §4): when the caller provides a
+        # ``display_filename_override`` (upload pipeline) the canonical
+        # identity is sha256, not filename. Two unrelated uploads that
+        # happen to share a filename like ``report.pdf`` must coexist.
+        # The migration-0003 UNIQUE constraint on src_pdf_sha256 still
+        # protects against the same-file case.
+        if display_filename_override is not None:
+            existing = None
+        else:
+            existing = (
+                await session.execute(select(Document).where(Document.filename == display_filename))
+            ).scalar_one_or_none()
 
         if existing is not None and not overwrite:
             raise DocumentAlreadyIngested(

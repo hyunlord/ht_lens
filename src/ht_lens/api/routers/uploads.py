@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ht_lens.api.deps import get_session
 from ht_lens.api.schemas import UploadResponse
 from ht_lens.db.models import Document, Job
-from ht_lens.jobs.pipeline import process_upload_job
+from ht_lens.jobs.pipeline import ACTIVE_STATUSES, process_upload_job
 
 router = APIRouter(tags=["uploads"])
 
@@ -124,15 +124,29 @@ async def upload_pdf(
         tmp_path.unlink(missing_ok=True)
         return UploadResponse(job_id=None, document_id=existing.id, dedup=True)
 
+    # 3b. R1 fix (cross-verify §4): also reuse any active job for the same
+    # sha256. The race window between "file already on disk" and "Document
+    # row committed" is exactly when a second upload arrives — return the
+    # in-flight job id instead of spawning a redundant one.
+    active_job = await session.scalar(
+        select(Job)
+        .where(Job.upload_sha256 == sha256)
+        .where(Job.status.in_(ACTIVE_STATUSES))
+        .order_by(Job.id.desc())
+    )
+    if active_job is not None:
+        tmp_path.unlink(missing_ok=True)
+        return UploadResponse(job_id=active_job.id, document_id=None, dedup=True)
+
     # 4. Atomic rename into final {sha256}.pdf slot (same fs, so safe).
     final_path = uploads_dir / f"{sha256}.pdf"
     if final_path.exists():
-        # Another upload landed first within the race window; reuse it.
+        # File exists but no active job + no Document — leftover from a
+        # crash. Reuse the file; treat the upload as a fresh job (we'll
+        # spawn process_upload_job below which calls extract with
+        # ``overwrite=True`` on the extract dir to clean any partial
+        # extract artefacts).
         tmp_path.unlink(missing_ok=True)
-        # Re-query — the document row may have been created already.
-        existing = await session.scalar(select(Document).where(Document.src_pdf_sha256 == sha256))
-        if existing is not None:
-            return UploadResponse(job_id=None, document_id=existing.id, dedup=True)
     else:
         tmp_path.rename(final_path)
 

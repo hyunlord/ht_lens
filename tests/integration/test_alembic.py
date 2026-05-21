@@ -146,3 +146,57 @@ def test_upgrade_0001_to_0002_preserves_existing_documents(tmp_path: Path) -> No
         await engine.dispose()
 
     asyncio.run(_check())
+
+
+def test_alembic_head_0003_jobs_table_and_summary_columns(tmp_path: Path) -> None:
+    """R1 cross-verify §1: ensure the 0003 head wires up the jobs table,
+    summary columns, and the UNIQUE constraint on documents.src_pdf_sha256.
+    The migration step in the docstring of this test name guards against
+    accidentally drifting away from head."""
+    import sqlite3
+
+    db_path = tmp_path / "0003.db"
+    proc = _run_alembic_upgrade(db_path)
+    assert proc.returncode == 0
+
+    conn = sqlite3.connect(db_path)
+    try:
+        tables = {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert "jobs" in tables, tables
+
+        doc_cols = {row[1] for row in conn.execute("PRAGMA table_info(documents)")}
+        assert {"summary", "summarized_at"} <= doc_cols
+
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='documents'"
+            )
+        }
+        assert "uq_documents_src_pdf_sha256" in indexes
+
+        # Verify the UNIQUE constraint actually rejects a duplicate sha256.
+        from datetime import datetime
+
+        conn.execute(
+            "INSERT INTO documents "
+            "(filename, src_lang, tgt_lang, status, created_at, src_pdf_sha256) "
+            "VALUES (?, 'en', 'ko', 'translated', ?, 'a' * 64 || '')",
+            ("dup_a.pdf", datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+        try:
+            conn.execute(
+                "INSERT INTO documents "
+                "(filename, src_lang, tgt_lang, status, created_at, src_pdf_sha256) "
+                "VALUES (?, 'en', 'ko', 'translated', ?, 'a' * 64 || '')",
+                ("dup_b.pdf", datetime.utcnow().isoformat()),
+            )
+            conn.commit()
+            raise AssertionError("second INSERT with same src_pdf_sha256 should violate UNIQUE")
+        except sqlite3.IntegrityError:
+            pass
+    finally:
+        conn.close()
