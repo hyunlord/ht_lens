@@ -10,6 +10,11 @@
   padding-top: 80px;
 }
 
+/* hidden attribute must override the flex layout above. */
+.search-modal[hidden] {
+  display: none;
+}
+
 .search-modal-backdrop {
   position: absolute;
   inset: 0;
