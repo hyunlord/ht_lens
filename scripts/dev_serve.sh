@@ -63,6 +63,16 @@ case "$cmd" in
       echo "port $PORT already in use" >&2
       exit 2
     fi
+    # Phase 6c: load .env into the shell environment so LLM_PROVIDER and
+    # friends are visible to the python process before create_app runs.
+    # ht-lens itself also calls load_dotenv() inside create_app; this is a
+    # belt-and-braces fallback for non-uv launches and debugging.
+    if [[ -f "$REPO_ROOT/.env" ]]; then
+      set -a
+      # shellcheck disable=SC1091
+      source "$REPO_ROOT/.env"
+      set +a
+    fi
     echo "starting ht-lens serve on $HOST:$PORT (db=$DB)..."
     nohup uv run ht-lens serve --host "$HOST" --port "$PORT" --db "$DB" \
       > "$LOG_FILE" 2>&1 &
