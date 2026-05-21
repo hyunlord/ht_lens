@@ -52,3 +52,4 @@ docs/phases/phase-*/screenshots/
 # OMC orchestration state
 .omc/
 !docs/phases/phase-6b/screenshots/
+!docs/phases/phase-6c/screenshots/
