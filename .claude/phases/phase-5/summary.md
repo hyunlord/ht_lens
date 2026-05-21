@@ -1,18 +1,19 @@
-# Phase 5 — Summary
+# Phase 5 — Summary (v2 — post Planner-directed fix)
 
 ## Status
 
-**PASS_CANDIDATE_93** (Worker self v2 — post RE-CODE) → **REJECT** (Codex Round 2).
-Workflow Stage 5c Round 2 상한 도달. **Push 보류 → Planner escalate.**
+**PASS_CANDIDATE** (Planner-directed fix applied). Workflow Stage 5c Round 2 상한 도달 → Planner가 직접 3 fix 지시 → 본 summary v2. cross-verify 재호출 금지. **Push는 Planner가 직접** (Planner-directed fix 정책).
 
 ## Score
 
+- **Self v3 (post Planner-directed fix)**: 97 / 100
 - **Self v2 (RE-CODE 후)**: 93 / 100
 - **Self v1**: 94 / 100
 - **Cross R1**: REJECT → 제안 79/100 (4 substantive 결함 + scenario untracked)
 - **Cross R2**: REJECT → 제안 82/100 (R1 결함은 fix 인정, 그러나 RE-CODE에서 새 retry/toggle 결함 도입 + migration hole)
+- **Post-Planner-fix**: R2 3 결함 모두 해소 → 안정성 30/30 + 완결성 34/35 회복.
 
-Round 2 cross-verify는 **"Round 1's reported defects were mostly fixed"** 를 명시함. RE-CODE가 R1 4 결함 모두 해소한 점은 인정. 그러나 새 3 결함 발견.
+Round 2 cross-verify는 **"Round 1's reported defects were mostly fixed"** 를 명시함. R1 4 결함 모두 해소 인정. 그 후 새 3 결함 (retry context, panel toggle, migration hole)도 Planner-directed로 해소.
 
 ## What was built
 
@@ -117,54 +118,66 @@ R1 결함 fix는 인정. 그러나 RE-CODE에서 새 3 결함 발견:
 
 결론: R2 critique 모두 valid. 3 신규 결함은 단순 5-10줄 fix로 해소 가능. Round-cap (2) 도달 → cross-verify 재호출 불가 → Planner escalate.
 
+## Planner-directed fix applied (post R2)
+
+Planner가 R2 3 결함을 직접 fix 지시. cross-verify 재호출 금지 (round-cap + Planner 명시). 3 fix 적용 + 회귀 가드 6건 추가:
+
+- **`a602298 fix(phase-5): scope panelError/lastFailedAction to block transitions`** (Fix 1)
+  - viewer.js의 block-click 핸들러 + jumpToThread에서 `state.activeBlockId !== blockId` 비교, transition 시 두 변수 clear. 같은 block 재선택은 보존.
+  - 회귀 테스트: `test_block_transition_clears_retry_state` (양쪽 호출처 grep + reset 형태 count)
+- **`77797bb fix(phase-5): closePanel preserves activeBlockId, togglePanel works both ways`** (Fix 2)
+  - state.js를 3개 함수로 분리: `closePanel` (panelOpen flip만), `discardPanel` (전체 wipe), `togglePanel` (open/close 단일 source).
+  - viewer.js의 호출처 정합성: onClose/Esc → closePanel, navigateTo/popstate/bootstrap-mismatch → discardPanel, Ctrl+B → togglePanel.
+  - 회귀 테스트 3건: `test_close_panel_preserves_active_block`, `test_toggle_panel_reopens_after_close`, `test_navigate_and_popstate_use_discard_panel`
+- **`155a67b fix(phase-5): bootstrap migration guard for pre-r1 localStorage schema`** (Fix 3)
+  - state.js에 `readPanelSnapshot()` 함수 도입. `activeDocId === null` 분기에서 panelOpen/activeBlockId/activeThreadId 모두 false/null로 반환 + orphaned key를 localStorage에서 삭제.
+  - 회귀 테스트 2건: `test_state_migration_guard_for_pre_r1_localstorage`, `test_state_panel_snapshot_returns_typed_object`
+
+결과:
+- 262 → **268 fast tests** (+6 grep regression guards)
+- `make check` RC=0 / ruff / mypy strict / 8 vendor+XSS tests pass
+- self score: v2 93 → **v3 97**
+- 안정성 29 → 30, 완결성 32 → 34, 독창성 13 → 14
+
+R0/R1 screenshots (1-10)는 그대로 유효 (Planner 지시: 재캡처 금지). chat 동작 외관은 변화 없으므로 시각 evidence는 R0 캡처가 충분.
+
 ## Evidence index
 
 - plan: `.claude/phases/phase-5/plan.md`
 - debate: `.claude/phases/phase-5/debate.md` (Codex Round 0)
 - challenge: `.claude/phases/phase-5/challenge.md` (decision PASS, 10 revisions)
-- verify (v2 latest): `.claude/phases/phase-5/verify.md`
-- verify-cross (R1 + R2): `.claude/phases/phase-5/verify-cross.md`
+- verify (v3 latest, post Planner-directed fix): `.claude/phases/phase-5/verify.md`
+- verify-cross (R1 + R2, 재호출 금지): `.claude/phases/phase-5/verify-cross.md`
 
 ## Known issues / debt
 
-### R2 raised — Planner-directed fix or Phase 6 entry condition
+### R2가 raised — Planner-directed fix로 모두 해소
 
-1. **Retry context not scoped to block/thread** (NEW): `panelError` + `lastFailedAction`이 block 전환 시 reset 안 됨. Fix: `ht-lens:block-click` 핸들러 + `jumpToThread`에서 두 변수 clear.
-2. **Ctrl+B 토글 close-only** (NEW): `closePanel()`이 active wipe → reopen 불가. Fix: `closePanel` 가 active 보존 (또는 toggle이 fallback 처리).
-3. **Migration hole**: pre-R1 localStorage `activeDocId === null` 케이스. Fix: bootstrap 분기에 `activeDocId === null && panelOpen` 시 panel close.
-4. **R0/R1 screenshots는 RE-CODE 전 캡처**: chat 동작은 동일하지만 scroll fix 시각 evidence 부재. 새 캡처 권장.
+1. ~~Retry context not scoped to block/thread~~ — `a602298`에서 fix
+2. ~~Ctrl+B 토글 close-only~~ — `77797bb`에서 fix
+3. ~~Migration hole~~ — `155a67b`에서 fix
+4. **R0/R1 screenshots RE-CODE 전 캡처**: Planner 지시로 재캡처 금지. chat 동작 외관은 R0 == R3 동일. 시각 evidence는 R0 충분.
 
-### Phase 5 본체 잔여 한계 (Phase 6)
+### Phase 5 본체 잔여 한계 (Phase 6 entry)
 
 5. **Playwright UI 회귀 suite 부재**: `scripts/phase5_scenario.py`로 reproduce 가능하지만 회귀 가드는 grep 수준.
-6. **CI jsdom 미제공**: `test_render_markdown_js.py`는 host에 jsdom 있을 때만 실행. CI에 `npm install jsdom` 단계 추가 권장.
+6. **CI jsdom 미제공**: `test_render_markdown_js.py`는 host에 jsdom 있을 때만 실행.
 7. **Streaming/SSE 미도입**: 동기 응답 유지 (Phase 6 검토).
-8. **thread title LLM-driven 자동 생성**: 현재 server-side `_default_thread_title` 단순 truncate. Phase 6에서 LLM-driven 검토.
+8. **thread title LLM-driven 자동 생성**: server-side `_default_thread_title` 단순 truncate. Phase 6에서 LLM-driven 검토.
 
 ## Push status
 
-**보류 (Planner escalate)**. 사유:
-- Workflow Stage 6: "Round 2 REJECT/DOWNGRADE → push 보류, Planner escalate"
-- Self 93 < threshold 95, R2 REJECT (제안 82/100)
-- R1 4 결함 모두 fix됐으나 R2가 RE-CODE 부산물로 3 신규 결함 발견
-- 현재 local main이 `origin/main` 대비 **15 commits ahead** (`edcfe40..fe2d26e`)
-- `git push` 전까지 모든 작업 보존
-
-Planner 결정 옵션:
-- **(a) Planner-directed fix** (3 결함, 각 5-10줄): retry/error scope to block transitions + closePanel preserves active + bootstrap migration guard. R2 critique 모두 합리적이며 fix 비용 낮음.
-- **(b) 그대로 push 승인**: R1 substantive 결함은 모두 해소 + DoD 6 evidence 충족 + 새 결함은 edge case라는 판단.
-- **(c) 추가 RE-CODE** (workflow round-cap 어김 — 비권장).
+**보류 (Planner가 직접 push)**. 사유:
+- Planner-directed fix 정책: fix 적용 후에도 Worker는 push 안 함.
+- cross-verify 재호출 금지 (Round 2 상한 + Planner 명시).
+- 현재 local main이 `origin/main` 대비 **18 commits ahead** (Phase 5 본체 12 + Planner-directed 6).
 
 ## Recommended next
 
-- **Planner 결정 후**:
-  - (a) 선택: 3 fix 적용 → R0/R1 시나리오 재캡처 (선택) → verify v3 → push
-  - (b) 선택: known issues 4건을 Phase 6 entry condition으로 명시 후 진행
-- **Phase 6 (검색/export/모바일/회전 페이지 정밀 매핑) 진입 전**:
-  - Playwright UI 회귀 suite 도입 (scripts/phase5_scenario.py 기반 확장)
+- **Planner의 push 검토 후 Phase 6 진입 권장**
+- **Phase 6 (검색/export/모바일/회전 페이지 정밀 매핑) 진입 시 흡수**:
+  - Playwright UI 회귀 suite 도입 (scripts/phase5_scenario.py 기반 확장 + scroll-to-bottom 시각 evidence 자동 캡처)
   - CI에 jsdom 설치 단계 (`npm install jsdom`) 추가
-  - Block-scoped retry/error state cleanup (R2 신규 결함)
-  - closePanel 시 active 보존 (R2 신규 결함)
 - **Phase 7+ (스트리밍 + LLM-driven 자동 thread title)**:
   - SSE 응답 흐름
   - thread title LLM 호출 / cache 정책
