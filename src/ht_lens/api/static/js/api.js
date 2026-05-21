@@ -38,6 +38,12 @@ export function apiPost(path, body) {
   return _fetch("POST", path, body || {});
 }
 
+// -- Phase 6b: lightweight per-page metadata for the natural-scroll viewer --
+
+export function getPagesSummary(docId) {
+  return apiGet(`/documents/${encodeURIComponent(docId)}/pages-summary`);
+}
+
 // -- Phase 5: thread + message helpers (consumed by chat_panel + viewer) --
 
 export function listThreadsForDoc(docId) {

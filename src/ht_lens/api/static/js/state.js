@@ -19,6 +19,9 @@ const STORAGE_ACTIVE_THREAD = "ht_lens.activeThreadId";
 // R1 fix: panel state must be scoped to the doc so cross-document reload
 // cannot rehydrate a stale thread in the wrong document.
 const STORAGE_ACTIVE_DOC = "ht_lens.activeDocId";
+// Phase 6b: view mode (translation/original/both).
+const STORAGE_VIEW_MODE = "ht_lens.viewMode";
+const VIEW_MODES = ["translation", "original", "both"];
 
 function safeReadFloat(key, fallback) {
   try {
@@ -144,8 +147,34 @@ export const state = {
   searchError: null,
   // Phase 6a — retranslate (volatile).
   retranslateInProgress: null, // block_id | null
+  // Phase 6b — view mode + multi-page state.
+  viewMode: (() => {
+    const v = safeReadString(STORAGE_VIEW_MODE, "translation");
+    return VIEW_MODES.includes(v) ? v : "translation";
+  })(),
+  // viewModeActual is the *effective* mode after applying overrides like
+  // "chat panel open + viewMode==='both' -> force translation". Reads
+  // upstream of repaint must use viewModeActual, not viewMode.
+  viewModeActual: "translation",
+  // pageDataById: { [pageNum]: PageRead } — populated by stage_container
+  // when a page is mounted; cleared when far enough off-screen.
+  pageDataById: {},
+  // pageSummaries: PageSummary[] — fetched once on document load and kept
+  // around for placeholder row sizing + total page count.
+  pageSummaries: [],
+  // currentPage: scroll-driven active page (intersection observer winner).
+  currentPage: 1,
   listeners: new Set(),
 };
+
+// Compute the actual view mode considering panel-open override.
+function computeViewModeActual() {
+  if (state.panelOpen && state.viewMode === "both") {
+    return "translation";
+  }
+  return state.viewMode;
+}
+state.viewModeActual = computeViewModeActual();
 
 /** Subscribe to state changes. Returns an unsubscribe function. */
 export function subscribe(fn) {
@@ -206,6 +235,7 @@ export function openPanel({ blockId, threadId = null, docId }) {
   state.activeThreadId = threadId;
   state.activeDocId = docId ?? null;
   state.panelToken++;
+  state.viewModeActual = computeViewModeActual(); // Phase 6b: panel + both => translation
   safeWrite(STORAGE_PANEL_OPEN, "1");
   safeWrite(STORAGE_ACTIVE_BLOCK, blockId ?? null);
   safeWrite(STORAGE_ACTIVE_THREAD, threadId);
@@ -224,6 +254,7 @@ export function openPanel({ blockId, threadId = null, docId }) {
 export function closePanel() {
   state.panelOpen = false;
   state.panelToken++;
+  state.viewModeActual = computeViewModeActual(); // Phase 6b: restore both if user picked it
   safeWrite(STORAGE_PANEL_OPEN, "0");
   notify();
 }
@@ -237,6 +268,7 @@ export function discardPanel() {
   state.activeThreadId = null;
   state.activeDocId = null;
   state.panelToken++;
+  state.viewModeActual = computeViewModeActual(); // Phase 6b
   safeWrite(STORAGE_PANEL_OPEN, "0");
   safeWrite(STORAGE_ACTIVE_BLOCK, null);
   safeWrite(STORAGE_ACTIVE_THREAD, null);
@@ -338,4 +370,59 @@ export function setRetranslateInProgress(blockId) {
   notify();
 }
 
-export { ZOOM_STEPS };
+// Phase 6b — view mode helpers
+
+/** Set the persistent view mode (translation/original/both). */
+export function setViewMode(mode) {
+  if (!VIEW_MODES.includes(mode)) return;
+  state.viewMode = mode;
+  state.viewModeActual = computeViewModeActual();
+  safeWrite(STORAGE_VIEW_MODE, mode);
+  notify();
+}
+
+/** Cycle: translation -> original -> both -> translation. */
+export function cycleViewMode() {
+  const idx = VIEW_MODES.indexOf(state.viewMode);
+  const next = VIEW_MODES[(idx + 1) % VIEW_MODES.length];
+  setViewMode(next);
+}
+
+// Phase 6b — page data cache (multi-page mounted state)
+
+/** Store the fetched PageRead for a mounted page. */
+export function setPageData(pageNum, pageData) {
+  state.pageDataById[pageNum] = pageData;
+  notify();
+}
+
+/** Drop a page's PageRead when it goes far enough off-screen. */
+export function clearPageData(pageNum) {
+  delete state.pageDataById[pageNum];
+  notify();
+}
+
+/** Track the currently-active page driven by intersection observer. */
+export function setCurrentPage(pageNum) {
+  if (state.currentPage === pageNum) return;
+  state.currentPage = pageNum;
+  notify();
+}
+
+/** Store the page summaries (page metadata) on document load. */
+export function setPageSummaries(summaries) {
+  state.pageSummaries = summaries || [];
+  notify();
+}
+
+/** Locate a block across all currently-mounted pages. */
+export function findBlockInPageData(blockId) {
+  if (!blockId) return null;
+  for (const pageData of Object.values(state.pageDataById)) {
+    const block = pageData.blocks?.find((b) => b.id === blockId);
+    if (block) return { pageNum: pageData.page_num, block };
+  }
+  return null;
+}
+
+export { VIEW_MODES, ZOOM_STEPS };
