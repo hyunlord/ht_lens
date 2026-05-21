@@ -11,6 +11,7 @@ import {
 } from "./api.js";
 import {
   closePanel,
+  discardPanel,
   openPanel,
   setActiveThreadId,
   setLoadingMessage,
@@ -20,6 +21,7 @@ import {
   state,
   subscribe,
   toggleOverlay,
+  togglePanel,
   zoomIn,
   zoomOut,
 } from "./state.js";
@@ -221,9 +223,12 @@ async function loadAndRender({ docId, page, replaceUrl = false }) {
 
 function navigateTo(docId, page) {
   // Close the panel before navigating so a stale thread cannot paint over
-  // the new page (R1 navToken extension to chat ops — Phase 5 R1 fix).
+  // the new page. Use discardPanel (not closePanel) because the new page's
+  // blocks are unrelated to the current activeBlockId — a Ctrl/Cmd+B toggle
+  // after page change should not reopen the previous conversation.
   panelError = null;
-  closePanel();
+  lastFailedAction = null;
+  discardPanel();
   loadAndRender({ docId, page });
 }
 
@@ -387,8 +392,11 @@ document.addEventListener("ht-lens:block-click", async (e) => {
 
 window.addEventListener("popstate", (e) => {
   const data = e.state;
+  // Browser back/forward lands on a different page — discard the stale
+  // panel context entirely (same rationale as navigateTo).
   panelError = null;
-  closePanel();
+  lastFailedAction = null;
+  discardPanel();
   if (data && data.docId && data.page) {
     loadAndRender({ docId: data.docId, page: data.page, replaceUrl: true });
   } else {
@@ -426,21 +434,17 @@ attachKeyboard({
   onZoomIn: () => zoomIn(),
   onZoomOut: () => zoomOut(),
   onClosePanel: () => {
+    // Esc dismisses the panel but keeps the active block, so Ctrl/Cmd+B
+    // (or a follow-up Esc cancel) can reopen the same conversation.
     if (state.panelOpen) {
       panelError = null;
       closePanel();
     }
   },
   onTogglePanel: () => {
-    if (state.panelOpen) {
-      closePanel();
-    } else if (state.activeBlockId) {
-      openPanel({
-        blockId: state.activeBlockId,
-        threadId: state.activeThreadId,
-        docId: currentDoc?.id,
-      });
-    }
+    // togglePanel is the single source of truth: it closes if open and
+    // reopens against the preserved activeBlockId otherwise. R2 fix.
+    togglePanel();
   },
 });
 
@@ -459,11 +463,11 @@ async function bootstrap() {
     restoredDocId !== null &&
     restoredDocId !== initial.docId
   ) {
-    console.info(
-      "discarding cross-document panel restore",
-      { restoredDocId, urlDocId: initial.docId },
-    );
-    closePanel();
+    console.info("discarding cross-document panel restore", {
+      restoredDocId,
+      urlDocId: initial.docId,
+    });
+    discardPanel();
   }
   await loadAndRender({ ...initial, replaceUrl: true });
   if (state.panelOpen && state.activeThreadId) {
@@ -472,7 +476,7 @@ async function bootstrap() {
       repaintPanel();
     } catch (err) {
       console.warn("restored thread no longer available", err);
-      closePanel();
+      discardPanel();
     }
   }
 }

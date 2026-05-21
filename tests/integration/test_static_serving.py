@@ -446,3 +446,60 @@ async def test_block_transition_clears_retry_state(api_db_path: Path, assets_roo
     assert transitions >= 2, (
         "block transition guards should clear both panelError and lastFailedAction"
     )
+
+
+@pytest.mark.asyncio
+async def test_close_panel_preserves_active_block(api_db_path: Path, assets_root: Path) -> None:
+    """R2 fix: closePanel() must keep activeBlockId/activeThreadId so
+    Ctrl/Cmd+B can reopen the same conversation. The hard reset moves to
+    discardPanel()."""
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    # closePanel only flips panelOpen
+    assert "export function closePanel()" in src
+    # closePanel block must NOT clear activeBlockId
+    close_block = src[src.index("export function closePanel()") :]
+    close_block = close_block[: close_block.index("export function")]
+    assert "activeBlockId = null" not in close_block, (
+        "closePanel must preserve activeBlockId for togglePanel to reopen"
+    )
+    assert "activeThreadId = null" not in close_block
+    # discardPanel exists for the hard-reset case
+    assert "export function discardPanel()" in src
+    discard_block = src[src.index("export function discardPanel()") :]
+    assert "activeBlockId = null" in discard_block
+    assert "activeDocId = null" in discard_block
+
+
+@pytest.mark.asyncio
+async def test_toggle_panel_reopens_after_close(api_db_path: Path, assets_root: Path) -> None:
+    """R2 fix: togglePanel must reopen the preserved active block."""
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    assert "export function togglePanel()" in src
+    # Toggle should: close if open, open against activeBlockId otherwise.
+    toggle_block = src[src.index("export function togglePanel()") :]
+    toggle_block = toggle_block[: toggle_block.index("\n}") + 2]
+    assert "panelOpen" in toggle_block
+    assert "activeBlockId === null" in toggle_block, (
+        "togglePanel must guard against opening with no active block"
+    )
+
+    # viewer.js keyboard handler routes Ctrl/Cmd+B through togglePanel.
+    vsrc = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    assert "togglePanel()" in vsrc
+
+
+@pytest.mark.asyncio
+async def test_navigate_and_popstate_use_discard_panel(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """R2 fix: page navigation and browser back/forward should NOT keep the
+    previous conversation in activeBlockId — discardPanel wipes everything."""
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # navigateTo and popstate handler must both use discardPanel
+    nav_idx = src.index("function navigateTo")
+    nav_block = src[nav_idx : nav_idx + 500]
+    assert "discardPanel()" in nav_block
+    # popstate
+    pop_idx = src.index('addEventListener("popstate"')
+    pop_block = src[pop_idx : pop_idx + 500]
+    assert "discardPanel()" in pop_block

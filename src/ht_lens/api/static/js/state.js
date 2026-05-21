@@ -169,8 +169,25 @@ export function openPanel({ blockId, threadId = null, docId }) {
   notify();
 }
 
-/** Phase 5: close the chat panel. */
+/** Phase 5: close the chat panel.
+ *
+ *  R2 fix: preserve ``activeBlockId`` / ``activeThreadId`` / ``activeDocId``
+ *  so a subsequent ``togglePanel()`` (Ctrl/Cmd+B) can reopen the same
+ *  conversation. Only ``panelOpen`` flips. Use :func:`discardPanel` when
+ *  the active block must be forgotten (cross-document navigation, popstate
+ *  to a new page, sidebar tab-driven reset).
+ */
 export function closePanel() {
+  state.panelOpen = false;
+  state.panelToken++;
+  safeWrite(STORAGE_PANEL_OPEN, "0");
+  notify();
+}
+
+/** Hard reset: drop both the panel-open flag AND the active block/thread/doc
+ *  context. Used by bootstrap when activeDocId is missing/mismatched and by
+ *  popstate cross-page navigation. */
+export function discardPanel() {
   state.panelOpen = false;
   state.activeBlockId = null;
   state.activeThreadId = null;
@@ -180,6 +197,24 @@ export function closePanel() {
   safeWrite(STORAGE_ACTIVE_BLOCK, null);
   safeWrite(STORAGE_ACTIVE_THREAD, null);
   safeWrite(STORAGE_ACTIVE_DOC, null);
+  notify();
+}
+
+/** Toggle the panel.
+ *
+ *  - Open  -> close (preserving active block).
+ *  - Closed + activeBlockId set -> reopen on that block.
+ *  - Closed + no activeBlockId  -> no-op (nothing to open).
+ */
+export function togglePanel() {
+  if (state.panelOpen) {
+    closePanel();
+    return;
+  }
+  if (state.activeBlockId === null) return;
+  state.panelOpen = true;
+  state.panelToken++;
+  safeWrite(STORAGE_PANEL_OPEN, "1");
   notify();
 }
 
