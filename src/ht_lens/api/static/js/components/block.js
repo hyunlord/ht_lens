@@ -78,6 +78,14 @@ export function renderBlock(
     );
   });
 
+  // Phase 6b: hover sync across panes. Side-by-side both-mode shows the
+  // same block twice (original + translation); the user should see both
+  // outlined when hovering either one.
+  el.addEventListener("mouseenter", () => syncBlockHover(blockData.id, true));
+  el.addEventListener("mouseleave", () =>
+    syncBlockHover(blockData.id, false),
+  );
+
   // Phase 6a: contextmenu (right-click) for retranslate. Only text/header
   // blocks; the viewer decides whether to actually show the modal.
   el.addEventListener("contextmenu", (e) => {
@@ -109,6 +117,17 @@ function pickText(blockData, mode) {
   }
   if (!text) return null;
   return text;
+}
+
+/** Phase 6b hover sync: toggle a ``block--hover-sync`` class on every block
+ *  element that shares the same ``data-block-id``. The class drives the
+ *  outline regardless of native ``:hover`` so the mirrored block in the
+ *  other pane lights up too. */
+function syncBlockHover(blockId, on) {
+  const els = document.querySelectorAll(`.block[data-block-id="${blockId}"]`);
+  for (const el of els) {
+    el.classList.toggle("block--hover-sync", on);
+  }
 }
 
 /** Validate and clamp the bbox to the page. Returns ``null`` if unusable. */

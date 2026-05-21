@@ -2,10 +2,12 @@
 
 import { renderBlock } from "./block.js";
 
-/** Render a page into ``container``. Uses ``page.render.pixel_w`` /
- *  ``pixel_h`` as the stage's intrinsic coordinate space — block bboxes
- *  (PDF points) are scaled into that pixel space once, and zoom is applied
- *  via CSS transform on ``.stage``.
+/** Render a page into ``container``.
+ *
+ *  Phase 6b: the function now optionally renders only one side (original or
+ *  translation) so a parent ``pane`` can host two of them side-by-side for
+ *  the comparison view. Default behavior (no ``side``) is unchanged for
+ *  Phase 4/5 callers — ``overlayMode`` controls which text the overlay shows.
  *
  *  ``threadsByBlock`` is an optional Map<blockId, Thread[]> used to render
  *  pin markers on blocks that already have at least one thread (Phase 5).
@@ -17,11 +19,17 @@ export function renderPageView(
   overlayMode,
   zoom,
   threadsByBlock = null,
+  options = {},
 ) {
   container.innerHTML = "";
+  const side = options.side || null; // "original" | "translation" | null
+  // When ``side`` is set the overlay always shows that side's text. This is
+  // what the side-by-side ``both`` mode uses.
+  const effectiveOverlayMode = side || overlayMode;
 
   const wrap = document.createElement("div");
   wrap.className = "stage-wrap";
+  if (side) wrap.dataset.side = side;
   const stage = document.createElement("div");
   stage.className = "stage";
   stage.style.setProperty("--stage-zoom", String(zoom));
@@ -36,18 +44,22 @@ export function renderPageView(
   img.width = pixelW;
   img.height = pixelH;
   img.src = `/documents/${doc.id}/pages/${page.page_num}/image`;
+  // Lazy-load image when far below the viewport — the page placeholder still
+  // claims height via the stage div, so this only delays bitmap decode.
+  img.loading = "lazy";
+  img.decoding = "async";
   stage.appendChild(img);
 
   if (page.rotation && page.rotation !== 0) {
     const banner = document.createElement("div");
     banner.className = "rotation-banner";
-    banner.textContent =
-      `회전 페이지 (rotation=${page.rotation}°) — 텍스트 오버레이 미지원 (Phase 6 예정)`;
+    banner.textContent = `회전 페이지 (rotation=${page.rotation}°) — 텍스트 오버레이 미지원 (Phase 6c 예정)`;
     stage.appendChild(banner);
   } else {
     const overlay = document.createElement("div");
     overlay.className = "overlay";
-    overlay.dataset.mode = overlayMode;
+    overlay.dataset.mode = effectiveOverlayMode;
+    if (side) overlay.dataset.side = side;
     overlay.style.width = `${pixelW}px`;
     overlay.style.height = `${pixelH}px`;
     const scale = {
@@ -58,7 +70,7 @@ export function renderPageView(
     };
     for (const block of page.blocks) {
       const threads = threadsByBlock?.get?.(block.id) || [];
-      renderBlock(overlay, block, scale, overlayMode, threads);
+      renderBlock(overlay, block, scale, effectiveOverlayMode, threads);
     }
     stage.appendChild(overlay);
   }

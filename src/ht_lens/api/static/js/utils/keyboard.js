@@ -50,7 +50,14 @@ export function attachKeyboard(handlers) {
     } else if (e.key === "ArrowRight") {
       handlers.onNext && handlers.onNext();
     } else if (e.key === "t" || e.key === "T") {
-      handlers.onToggle && handlers.onToggle();
+      // Phase 6b: T cycles viewMode (translation -> original -> both). The
+      // Phase 4 binary toggle handler ``onToggle`` is kept as a fallback for
+      // older callers.
+      if (handlers.onCycleViewMode) {
+        handlers.onCycleViewMode();
+      } else if (handlers.onToggle) {
+        handlers.onToggle();
+      }
     } else if (meta && e.key === "ArrowUp") {
       e.preventDefault();
       handlers.onZoomIn && handlers.onZoomIn();

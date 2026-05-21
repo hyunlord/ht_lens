@@ -60,15 +60,51 @@
 
 .page-area {
   grid-area: page;
-  overflow: auto;
+  overflow: hidden; /* the inner #stage owns the scrollbar */
   background: var(--bg);
   display: flex;
-  justify-content: center;
-  padding: 16px;
+  flex-direction: column;
 }
 
 .right-slot {
   grid-area: right;
+}
+
+/* Phase 6b: single scroll container with one page-row per page. */
+.stage-container {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  padding: 16px 16px 80px;
+}
+
+.page-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  min-height: 200px; /* JS overwrites with the real placeholder height */
+}
+
+.pane {
+  display: inline-flex;
+  flex-direction: column;
+}
+
+/* In single-pane (translation / original) the pane fills the row. In both
+ * mode each pane shares the row width 50/50; the inner .stage keeps its own
+ * intrinsic pixel size and the surrounding flex layout centers everything. */
+.page-row > .pane:only-child {
+  flex: 1 1 auto;
+  align-items: center;
+}
+
+.page-row > .pane + .pane {
+  border-left: 1px dashed var(--border);
+  padding-left: 16px;
 }
 
 .stage-wrap {
@@ -123,7 +159,8 @@
   background: rgba(14, 17, 22, 0.05);
 }
 
-.block:hover {
+.block:hover,
+.block.block--hover-sync {
   outline: 2px solid var(--accent);
   z-index: 5;
 }

@@ -11,7 +11,7 @@ export class ApiError extends Error {
   }
 }
 
-async function _fetch(method, path, body) {
+async function _fetch(method, path, body, opts = {}) {
   const init = {
     method,
     headers: { Accept: "application/json" },
@@ -20,6 +20,7 @@ async function _fetch(method, path, body) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body);
   }
+  if (opts.signal) init.signal = opts.signal;
   const resp = await fetch(path, init);
   if (!resp.ok) {
     const text = await resp.text();
@@ -29,13 +30,15 @@ async function _fetch(method, path, body) {
   return resp.json();
 }
 
-/** GET ``path`` and return parsed JSON, or throw :class:`ApiError`. */
-export function apiGet(path) {
-  return _fetch("GET", path);
+/** GET ``path`` and return parsed JSON, or throw :class:`ApiError`.
+ *  Phase 6b: accepts ``{signal}`` so stage_container can cancel an in-flight
+ *  page fetch via AbortController when the page goes off-screen. */
+export function apiGet(path, opts = {}) {
+  return _fetch("GET", path, undefined, opts);
 }
 
-export function apiPost(path, body) {
-  return _fetch("POST", path, body || {});
+export function apiPost(path, body, opts = {}) {
+  return _fetch("POST", path, body || {}, opts);
 }
 
 // -- Phase 6b: lightweight per-page metadata for the natural-scroll viewer --

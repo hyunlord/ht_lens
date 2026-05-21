@@ -116,7 +116,8 @@ async def test_viewer_html_has_required_mount_points(api_db_path: Path) -> None:
     with make_test_client(api_db_path) as client:
         html = client.get("/static/viewer.html").text
     assert 'class="sidebar"' in html
-    assert 'id="page-mount"' in html
+    # Phase 6b: page-mount replaced by stage-container.
+    assert 'id="stage"' in html
     assert 'src="js/viewer.js"' in html
 
 
@@ -638,10 +639,12 @@ async def test_search_result_block_param_restores_target_block(
     src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
     # parseQuery returns blockId.
     assert "blockId" in src
-    # bootstrap forwards it to loadAndRender.
-    assert "activateBlockId: initial.blockId" in src
-    # Flash highlight present.
-    assert "block--flash" in src
+    # bootstrap forwards it to the document loader (Phase 6a used
+    # activateBlockId, Phase 6b renamed the parameter to initialBlockId for
+    # the bootstrap path while keeping activateBlockId on navigateTo).
+    assert "activateBlockId: initial.blockId" in src or "initialBlockId: initial.blockId" in src
+    # Flash highlight present (centralised in stage_container.js since 6b).
+    assert "flashBlock" in src or "block--flash" in src
 
 
 @pytest.mark.asyncio
@@ -665,3 +668,142 @@ async def test_search_modal_sanitises_preview_to_mark_only(
     src = (assets_root / "js" / "components" / "search_modal.js").read_text(encoding="utf-8")
     assert "ALLOWED_TAGS" in src and '"mark"' in src
     assert "DOMPurify.sanitize" in src
+
+
+# --- Phase 6b: stage container + view modes + multi-page state ---
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/js/components/stage_container.js",
+        "/static/js/components/pane.js",
+    ],
+)
+@pytest.mark.asyncio
+async def test_phase6b_assets_served(api_db_path: Path, path: str) -> None:
+    with make_test_client(api_db_path) as client:
+        resp = client.get(path)
+    assert resp.status_code == 200, path
+
+
+@pytest.mark.asyncio
+async def test_viewer_html_uses_stage_container_mount(api_db_path: Path, assets_root: Path) -> None:
+    html = (assets_root / "viewer.html").read_text(encoding="utf-8")
+    assert 'id="stage"' in html
+    assert "page-mount" not in html  # legacy single-page mount removed
+    assert "mode (번역" in html  # T-key hint updated for Phase 6b
+
+
+@pytest.mark.asyncio
+async def test_state_exposes_phase6b_helpers(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    for name in (
+        "viewMode",
+        "viewModeActual",
+        "setViewMode",
+        "cycleViewMode",
+        "pageDataById",
+        "setPageData",
+        "clearPageData",
+        "setPageSummaries",
+        "findBlockInPageData",
+        "VIEW_MODES",
+    ):
+        assert name in src, f"state.js should export '{name}'"
+    # Migration guard for the new viewMode key (default 'translation').
+    assert 'STORAGE_VIEW_MODE = "ht_lens.viewMode"' in src
+
+
+@pytest.mark.asyncio
+async def test_api_js_has_pages_summary_helper(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "api.js").read_text(encoding="utf-8")
+    assert "getPagesSummary" in src
+    assert "pages-summary" in src
+    # AbortController signal plumbing (Phase 6b debate §4 fix).
+    assert "opts.signal" in src
+
+
+@pytest.mark.asyncio
+async def test_stage_container_has_mount_unmount_race_guards(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "components" / "stage_container.js").read_text(encoding="utf-8")
+    for name in (
+        "mountPage",
+        "unmountPage",
+        "mountPromise",
+        "AbortController",
+        "_mountTokenByPage",
+        "_mountedPages",
+        "scrollToPage",
+        "waitForBlockMounted",
+        "flashBlock",
+        "repaintAllMountedPages",
+        "repaintMountedPage",
+        "buildPlaceholderRows",
+        "attachIntersectionObserver",
+    ):
+        assert name in src, f"stage_container.js should define '{name}'"
+
+
+@pytest.mark.asyncio
+async def test_pane_preserves_page_view_contracts(api_db_path: Path, assets_root: Path) -> None:
+    """Phase 6b debate §3: rotation banner + data-fallback fallback must
+    keep working. page_view.js (not page_row.js) still owns the rendering."""
+    page_view = (assets_root / "js" / "components" / "page_view.js").read_text(encoding="utf-8")
+    assert "rotation-banner" in page_view
+    # The side-aware overlay must use ``data-side``.
+    assert "overlay.dataset.side = side" in page_view
+
+
+@pytest.mark.asyncio
+async def test_keyboard_uses_cycle_view_mode(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "utils" / "keyboard.js").read_text(encoding="utf-8")
+    assert "onCycleViewMode" in src
+
+
+@pytest.mark.asyncio
+async def test_block_js_has_hover_sync(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "components" / "block.js").read_text(encoding="utf-8")
+    assert "syncBlockHover" in src
+    assert "block--hover-sync" in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_uses_stage_container_and_pushstate_on_navigate(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # currentPage singleton must be gone (Phase 6b debate §2 fix).
+    assert "currentPage = pageData" not in src
+    assert "let currentPage" not in src
+    # Stage container symbols are wired in.
+    for name in (
+        "buildPlaceholderRows",
+        "attachIntersectionObserver",
+        "mountPage",
+        "repaintAllMountedPages",
+        "scrollToPage",
+        "waitForBlockMounted",
+        "flashBlock",
+    ):
+        assert name in src, f"viewer.js should reference {name}"
+    # Explicit navigation uses pushState; free scroll uses replaceState (debate §2).
+    assert "window.history.pushState" in src
+    assert "window.history.replaceState" in src
+    assert "onScrollPageChange" in src
+    # handleRetranslate iterates mounted pages, not the singleton currentPage.
+    assert "Object.values(state.pageDataById)" in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_css_has_stage_layout(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "css" / "viewer.css").read_text(encoding="utf-8")
+    for sel in (
+        ".stage-container",
+        ".page-row",
+        ".pane",
+        ".block--hover-sync",
+    ):
+        assert sel in src, f"viewer.css missing {sel}"
