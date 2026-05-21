@@ -3,8 +3,23 @@
 import { fitFontSize } from "../utils/font_fit.js";
 
 /** Render a single block as an absolute-positioned div inside ``overlay``.
- *  Returns the created element (or null when the bbox is invalid). */
-export function renderBlock(overlay, blockData, scale, overlayMode) {
+ *  Returns the created element (or null when the bbox is invalid).
+ *
+ *  Phase 5 additions:
+ *   - ``threadsForBlock`` (array) drives the pin display via
+ *     ``data-has-thread`` / ``data-thread-count`` so a single block can
+ *     legally own multiple threads (see Phase 3 API contract).
+ *   - click dispatches a bubbling ``ht-lens:block-click`` CustomEvent so
+ *     ``viewer.js`` (the single panel owner) handles it without creating a
+ *     circular module import.
+ */
+export function renderBlock(
+  overlay,
+  blockData,
+  scale,
+  overlayMode,
+  threadsForBlock = [],
+) {
   const bbox = sanitizeBbox(blockData, scale.pageW, scale.pageH);
   if (!bbox) return null;
 
@@ -22,7 +37,6 @@ export function renderBlock(overlay, blockData, scale, overlayMode) {
   if (!isImage) {
     const text = pickText(blockData, overlayMode);
     if (text === null) {
-      // Empty block — leave transparent (no synthetic placeholder).
       el.classList.add("block--empty");
     } else {
       if (
@@ -39,10 +53,29 @@ export function renderBlock(overlay, blockData, scale, overlayMode) {
     }
   }
 
-  el.addEventListener("click", () => {
-    // Phase 4: just log. Phase 5 will replace this with the chat-panel hook.
-    // eslint-disable-next-line no-console
-    console.log("block clicked", { id: blockData.id, type: blockData.type });
+  // Pin display — multi-thread aware.
+  if (threadsForBlock && threadsForBlock.length > 0) {
+    el.dataset.hasThread = "true";
+    if (threadsForBlock.length > 1) {
+      el.dataset.threadCount = String(threadsForBlock.length);
+    }
+    // First thread title becomes the title tooltip; "+N more" appended if any.
+    const first = threadsForBlock[0];
+    let tip = first?.title || `block #${blockData.id}`;
+    if (threadsForBlock.length > 1) {
+      tip += ` (+${threadsForBlock.length - 1} more)`;
+    }
+    el.title = tip;
+  }
+
+  el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    el.dispatchEvent(
+      new CustomEvent("ht-lens:block-click", {
+        detail: { blockId: blockData.id, blockData, threads: threadsForBlock },
+        bubbles: true,
+      }),
+    );
   });
   overlay.appendChild(el);
   return el;

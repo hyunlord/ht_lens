@@ -5,8 +5,19 @@ import { renderBlock } from "./block.js";
 /** Render a page into ``container``. Uses ``page.render.pixel_w`` /
  *  ``pixel_h`` as the stage's intrinsic coordinate space — block bboxes
  *  (PDF points) are scaled into that pixel space once, and zoom is applied
- *  via CSS transform on ``.stage``. */
-export function renderPageView(container, doc, page, overlayMode, zoom) {
+ *  via CSS transform on ``.stage``.
+ *
+ *  ``threadsByBlock`` is an optional Map<blockId, Thread[]> used to render
+ *  pin markers on blocks that already have at least one thread (Phase 5).
+ */
+export function renderPageView(
+  container,
+  doc,
+  page,
+  overlayMode,
+  zoom,
+  threadsByBlock = null,
+) {
   container.innerHTML = "";
 
   const wrap = document.createElement("div");
@@ -46,7 +57,8 @@ export function renderPageView(container, doc, page, overlayMode, zoom) {
       pageH: page.height,
     };
     for (const block of page.blocks) {
-      renderBlock(overlay, block, scale, overlayMode);
+      const threads = threadsByBlock?.get?.(block.id) || [];
+      renderBlock(overlay, block, scale, overlayMode, threads);
     }
     stage.appendChild(overlay);
   }

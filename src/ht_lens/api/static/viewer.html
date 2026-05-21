@@ -6,6 +6,7 @@
     <title>ht_lens — viewer</title>
     <link rel="stylesheet" href="css/base.css" />
     <link rel="stylesheet" href="css/viewer.css" />
+    <link rel="stylesheet" href="css/chat_panel.css" />
   </head>
   <body>
     <div class="viewer-shell">
@@ -16,6 +17,8 @@
           <span><kbd>←</kbd>/<kbd>→</kbd> page</span>
           <span><kbd>T</kbd> toggle</span>
           <span><kbd>Ctrl/Cmd</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> zoom</span>
+          <span><kbd>Ctrl/Cmd</kbd>+<kbd>B</kbd> panel</span>
+          <span><kbd>Esc</kbd> close</span>
         </div>
       </header>
       <aside class="sidebar"></aside>
@@ -23,7 +26,7 @@
         <div id="status" class="status-banner" hidden></div>
         <div id="page-mount"></div>
       </main>
-      <aside class="right-slot" hidden></aside>
+      <aside class="right-slot chat-panel-host" hidden></aside>
     </div>
     <script type="module" src="js/viewer.js"></script>
   </body>

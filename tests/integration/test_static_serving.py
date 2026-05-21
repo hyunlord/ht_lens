@@ -258,3 +258,95 @@ async def test_viewer_css_translation_opacity_raised(api_db_path: Path, assets_r
     assert match is not None, "translation panel rgba not found"
     alpha = float(match.group(1))
     assert alpha >= 0.9, f"translation panel opacity {alpha} should be >= 0.9"
+
+
+# --- Phase 5: vendor + chat panel + pins + sidebar tabs ---
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/vendor/marked.esm.js",
+        "/static/vendor/purify.es.mjs",
+        "/static/vendor/LICENSE",
+        "/static/css/chat_panel.css",
+        "/static/js/utils/render_markdown.js",
+        "/static/js/components/chat_panel.js",
+        "/static/js/components/message.js",
+        "/static/js/components/message_input.js",
+        "/static/js/components/thread_list.js",
+    ],
+)
+@pytest.mark.asyncio
+async def test_phase5_assets_served(api_db_path: Path, path: str) -> None:
+    with make_test_client(api_db_path) as client:
+        resp = client.get(path)
+    assert resp.status_code == 200, path
+
+
+@pytest.mark.asyncio
+async def test_render_markdown_uses_dompurify_hook(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "utils" / "render_markdown.js").read_text(encoding="utf-8")
+    assert "DOMPurify" in src
+    assert "addHook" in src
+    assert "target" in src and "noopener" in src
+    # marked is imported from vendor ESM bundle
+    assert "marked.esm.js" in src
+    assert "purify.es.mjs" in src
+
+
+@pytest.mark.asyncio
+async def test_block_js_dispatches_custom_event_and_supports_multi_thread(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "components" / "block.js").read_text(encoding="utf-8")
+    # Phase 5 click is now a CustomEvent so the panel owner can listen
+    assert "ht-lens:block-click" in src
+    assert "CustomEvent" in src
+    # Multi-thread per block: pin uses array + count attribute
+    assert "threadsForBlock" in src
+    assert "data-thread-count" in src or "threadCount" in src
+    # Has-thread attribute drives the pin CSS
+    assert "hasThread" in src or "data-has-thread" in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_js_uses_refetch_pattern_for_threads(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
+    # Refetch pattern: write -> getThreadDetail
+    assert "getThreadDetail" in src
+    assert "ensureThreadDetail" in src
+    # Doc-wide thread list refresh after creates/writes
+    assert "listThreadsForDoc" in src
+    # panelToken async cancellation (R1 fix extension into chat ops)
+    assert "panelToken" in src
+    # Esc handler hook is wired
+    assert "onClosePanel" in src
+
+
+@pytest.mark.asyncio
+async def test_state_persists_active_thread_and_panel(api_db_path: Path, assets_root: Path) -> None:
+    """Phase 5 R1 fix: panel open state + activeThreadId must be persisted to
+    localStorage so reload restores the chat."""
+    src = (assets_root / "js" / "state.js").read_text(encoding="utf-8")
+    assert "ht_lens.panelOpen" in src
+    assert "ht_lens.activeThreadId" in src
+    assert "ht_lens.activeBlockId" in src
+    assert "ht_lens.sidebarTab" in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_html_loads_chat_panel_css(api_db_path: Path, assets_root: Path) -> None:
+    html = (assets_root / "viewer.html").read_text(encoding="utf-8")
+    assert "css/chat_panel.css" in html
+    assert "right-slot" in html
+
+
+@pytest.mark.asyncio
+async def test_keyboard_handles_esc_and_ctrl_b(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "js" / "utils" / "keyboard.js").read_text(encoding="utf-8")
+    assert "Escape" in src
+    assert "onClosePanel" in src
+    assert "onTogglePanel" in src

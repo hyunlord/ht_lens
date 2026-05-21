@@ -1,16 +1,28 @@
 "use strict";
 
-/** Attach the viewer's keyboard handler. Returns a detach function. */
+/** Attach the viewer's keyboard handler. Returns a detach function.
+ *
+ *  Phase 5 additions:
+ *  - ``Esc``: ``onClosePanel`` (panel close)
+ *  - ``Cmd/Ctrl+B``: ``onTogglePanel`` (panel toggle)
+ *  Esc fires even when the focus is inside the chat textarea (it's the
+ *  panel close shortcut). Other shortcuts still skip input/textarea.
+ */
 export function attachKeyboard(handlers) {
   const onKey = (e) => {
-    // Don't capture keys while the user is typing.
-    if (
+    const typing =
       e.target &&
       typeof e.target.matches === "function" &&
-      e.target.matches("input, textarea")
-    ) {
+      e.target.matches("input, textarea");
+
+    // Esc is always honoured — even while typing, since the user expects
+    // it to close the panel.
+    if (e.key === "Escape") {
+      handlers.onClosePanel && handlers.onClosePanel();
       return;
     }
+
+    if (typing) return;
     const meta = e.metaKey || e.ctrlKey;
     if (e.key === "ArrowLeft") {
       handlers.onPrev && handlers.onPrev();
@@ -24,6 +36,9 @@ export function attachKeyboard(handlers) {
     } else if (meta && e.key === "ArrowDown") {
       e.preventDefault();
       handlers.onZoomOut && handlers.onZoomOut();
+    } else if (meta && (e.key === "b" || e.key === "B")) {
+      e.preventDefault();
+      handlers.onTogglePanel && handlers.onTogglePanel();
     } else if (e.key === "Home") {
       handlers.onFirst && handlers.onFirst();
     } else if (e.key === "End") {
