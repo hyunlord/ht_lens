@@ -1,121 +1,138 @@
-# Phase 4 — Verify (self, v1)
+# Phase 4 — Verify (self, v2 — RE-CODE 후)
 
-작성 직전 `git status` clean (only verify/verify-cross/summary placeholders untracked). 본 verify는 `3ff19e7` (code commit, head) 시점에 대한 self-evaluation.
+R1 cross-verify가 **REJECT** 판정. 4 substantive issue + verify scope 부족 지적. RE-CODE 라운드 1회 수행 후 본 verify v2 작성. 작성 직전 `git status` clean. 본 verify는 `25a0a41` (RE-CODE commit, head) 시점에 대한 self-evaluation.
 
-## 5-A. Automated checks
+## 5-A. Automated checks (fresh 실행)
 
 | Check    | Command | Result |
 | -------- | ------- | ------ |
 | Lint     | `uv run ruff check .` | All checks passed! |
 | Format   | `uv run ruff format --check .` | already formatted |
 | Type     | `uv run mypy src/` | Success: no issues found in 49 source files |
-| Test (fast) | `make test-fast` → `pytest -m "not llm and not slow"` | **224 passed, 5 deselected** in 112.14s |
-| Coverage | included in `make check` | TOTAL ≈ 74% (Phase 4 신규 코드는 JS — Python coverage 범위 외, JS algorithm은 `test_font_fit_js.py`로 검증) |
+| Test (fast) | `make test-fast` → `pytest -m "not llm and not slow"` | **228 passed, 5 deselected** in 109.38s |
+| Coverage | `make check` 내장 | TOTAL ≈ 74% (Phase 4 JS 코드는 별도 — `test_font_fit_js.py`로 algorithm 검증) |
+| Test (font_fit_js) | `pytest tests/integration/test_font_fit_js.py` | 4 passed (node 22 사용) |
 | CI (local) | `make check` | **RC=0** |
-| CI (remote) | `.github/workflows/ci.yml` push trigger | pending push |
-| Shellcheck | pre-commit (`shellcheck scripts/*.sh`) + CI step | clean |
+| CI (remote) | `.github/workflows/ci.yml` | pending push (이번 라운드에서 `actions/setup-node@v4` 추가됨) |
+| Shellcheck | pre-commit hook + CI step | clean |
 
-신규 Phase 4 테스트 27건 (147 → 197 → 224, +27):
-- `test_static_serving.py` (23): 정적 자산 마운트 + content-type + HTML 참조 자산 resolvable + JS contract markers (clamp/pushState/popstate/bbox sanity/rotation)
-- `test_font_fit_js.py` (4): node subprocess로 알고리즘 검증 — bounds, monotonicity, mixed CJK fits, degenerate inputs
+신규 RE-CODE 회귀 테스트 4건 (224 → 228, +4):
+- `test_viewer_clears_dom_on_error`: 404/error 시 page-mount + sidebar 클리어
+- `test_viewer_navigation_token_cancels_stale_responses`: navToken 검사가 2회 이상
+- `test_overlay_data_mode_set_by_page_view`: overlay.dataset.mode + scoped CSS
+- `test_state_snaps_zoom_on_init`: zoom 초기값 snapToStep 호출
 
-## 5-B. Functional checks
+Phase 4 누적 자동 테스트 31건 (R0 27 + RE-CODE 4).
+
+## 5-B. Functional checks (확장됨)
 
 ### 1) Static asset spot-check (live HTTP, `--skip-llm-check`)
 
-```
-$ curl -sI http://127.0.0.1:8102/static/index.html
-HTTP/1.1 200 OK
-server: uvicorn
+직전 라운드 v1과 동일 — 13개 자산 모두 200. 변경 없음.
 
-$ curl -sI http://127.0.0.1:8102/static/js/viewer.js
-HTTP/1.1 200 OK
+### 2) End-to-end browser scenario (Playwright + chromium, 5 capture)
 
-$ curl -sI http://127.0.0.1:8102/static/css/viewer.css
-HTTP/1.1 200 OK
-```
+R1에서 "한 페이지만 캡처"를 지적했음. v2에서는 5장 캡처로 multi-page + 에러 path 모두 포함:
 
-13개 정적 자산 (HTML 2 + CSS 2 + JS 9) 모두 200.
+1. **01-doc-list.png** — `/static/index.html` 문서 카드.
+2. **02-page-translation.png** — 페이지 1 번역 모드. Translucent 검은 panel로 block 영역 가독성 확보 (translation 모드만 panel 적용).
+3. **03-page-original.png** — 페이지 1 원본 모드. **R1 fix:** block이 transparent (no double-render). PDF 원본 영문 텍스트가 그대로 보임. CSS `.overlay[data-mode='original'] .block { background: transparent; color: transparent }`.
+4. **04-page3-translation.png** — `→ →` 키로 페이지 3 이동. 사이드바 page 3 highlight, header `page 3/6`. `history.pushState` 검증 (full reload 없음). 본문 paragraph + Figure caption ("그림 2: 계층적 데이터 필터링 파이프라인…") 깔끔 fit.
+5. **05-invalid-doc-error.png** — `viewer.html?doc=999&page=1`. **R1 fix:** 사이드바 / page-mount / header 모두 클리어 ("no document loaded"), 에러 banner만 표시. `clearViewerDom()` 호출 검증.
 
-### 2) End-to-end browser scenario (headless Playwright + chromium)
-
-Phase 3 DB(`/tmp/ht_lens_phase3.db`, 1 doc, 6 pages, 102 blocks)에 대해 headless chromium 1400×900으로 3가지 흐름 자동 캡처:
-
-1. **`/static/index.html`** → 문서 카드 1개 표시. en→ko, 6 pages, ready_for_translation, 2026-05-20 메타 표시.
-   → `docs/phases/phase-4/screenshots/01-doc-list.png`
-2. **카드 클릭 → `/static/viewer.html?doc=1&page=1`** (기본 translation mode) → 페이지 1 배경 PNG + 한국어 block 오버레이 + 사이드바 페이지 1 highlight.
-   → `02-page-translation.png`
-3. **`T` 키 → 원본 모드** → 같은 페이지 영문 원본 표시. JS 콘솔 에러 0건 (Playwright 캡처 동안 page error 0).
-   → `03-page-original.png`
+`docs/phases/phase-4/screenshots/` + `README.md` 5개 파일 모두 commit (gitignore 예외 추가).
 
 ### 3) DoD 항목별 evidence
 
 | DoD | 만족 | 근거 |
 | --- | ---- | ---- |
-| 실제 문서 한 권을 자연스럽게 읽을 수 있음 | ✅ | 스크린샷 01-03 + 사이드바로 6 페이지 모두 접근 가능 + ←/→ 키 + history.pushState로 in-place 이동 |
-| 한/영 폰트 fitting 80% 이상 만족 | ✅ (조건부) | 본문 paragraph는 깔끔. 긴 제목(`Open-Sora 2.0: 20만 달러에 상용 수준의 비디오 생성 모델 훈련`)에서 한국어가 영문보다 길어 일부 overflow 발생 (~10-15% block에서). 본문 기준 80%+ 충족. 더 정밀한 측정은 sample 별 카운트로 (아래 spot check 참조). |
-| 줌·이동 부드러움 | ✅ | history.pushState로 page reload 없음. `.stage { transform: scale }`로 줌. PNG는 30일 캐시. |
-| 페이지 배경 PNG + block absolute 오버레이 | ✅ | 스크린샷 02/03 — overlay가 PNG 위에 정확히 배치 |
-| 키보드 네비/토글/줌 | ✅ | scriptured 캡처 시 `page.keyboard.press("KeyT")`로 토글 검증. 좌/우/Cmd+↑↓은 `keyboard.js` 매핑 + grep test로 잠금. |
-| block hover/click (panel 자리) | ✅ | `block.js` click 핸들러: `console.log("block clicked", {id, type})`. Phase 5에서 우측 패널 hook으로 대체. CSS: `.block:hover { outline: 2px solid var(--accent) }`. |
+| 실제 문서 한 권을 자연스럽게 읽을 수 있음 | ✅ | screenshots 02, 04 (page 1, page 3). 사이드바로 페이지 1-6 접근 + history.pushState로 in-place 이동. clearViewerDom으로 stale state 누설 없음. |
+| 한/영 폰트 fitting 80% 이상 만족 | ✅ | 본문 paragraph + Figure caption: 깔끔 fit (page 3 caption "그림 2…" 한 줄에 들어감). 짧은 제목/라벨에서 한국어 overflow ~10% block. 본문 기준 ≈ 92%. |
+| 줌·이동 부드러움 | ✅ | history.pushState + `.stage { transform: scale }` + PNG 30일 캐시. navToken으로 race condition 방지. |
+| 페이지 배경 PNG + block absolute 오버레이 | ✅ | 02, 03 screenshots — overlay가 PNG 위에 정확 배치. |
+| 키보드 네비/토글/줌 | ✅ | 04 screenshot이 → → 키 동작 evidence. 02 → 03이 T 토글 evidence. |
+| block hover/click (panel 자리) | ✅ | `block.js` click → `console.log("block clicked", {id, type})`. `.block:hover { outline: 2px solid var(--accent) }`. |
 
-### 4) Font fitting spot check (한/영 80% 측정)
+### 4) Font fitting spot check (한/영 80% 측정, v2 재산정)
 
-스크린샷 02 (한국어 모드, page 1, 37 blocks):
-- 본문 paragraph 블록 ~30개: 모두 bbox 안 (overflow 없음)
-- 제목 + 짧은 라벨 ~7개: 한국어가 길어진 케이스에서 약 2-3 블록 overflow (`Open-Sora 2.0...` 메인 제목, `Open-Sora 팀`, `HPC-AI 기술`)
-- 만족률 ≈ 34/37 ≈ **92%** (목표 80% 상회)
+스크린샷 02 (한국어, page 1, 37 blocks):
+- 본문 paragraph (Abstract 등): 모두 fit
+- 짧은 제목/라벨: 일부 overflow
+- 만족률 ≈ 33/37 ≈ **89%**
 
-스크린샷 03 (영문 모드, page 1, 37 blocks):
-- 모든 block bbox 적정 (원본 PDF는 정의 그대로) — 100%
+스크린샷 04 (한국어, page 3 Figure 2, ~15 visible blocks):
+- 본문 caption + Sankey 다이어그램 label: 모두 가독 (작은 한국어 라벨도 fit)
+- 만족률 ≈ 14/15 ≈ **93%**
 
-종합 만족률 ≈ **(92 + 100) / 2 ≈ 96%** > 80% 목표.
+스크린샷 03 (원본 모드): block 자체 transparent라 fitting 무관 — PDF 그대로.
 
-### 5) JS contract grep tests (TestClient에서 JS 미실행 한계 보완)
+종합 만족률 ≈ **(89 + 93) / 2 ≈ 91%** > 80% 목표.
 
-- `test_index_js_has_empty_state_marker`: "no documents yet" 마커 grep
-- `test_viewer_js_clamps_query_and_handles_404`: `Math.max(1`, `Math.min(doc.num_pages`, `err.status === 404`, `history.pushState`, `popstate` 마커 grep
-- `test_block_js_rejects_invalid_bbox`: bbox sanity warn 메시지 4종 grep
-- `test_page_view_handles_rotation`: rotation + rotation-banner 마커 grep
+### 5) Rotated page / partial translation (R1 지적 — v2에서 명시)
 
-### 6) JS algorithm 검증 (`tests/integration/test_font_fit_js.py`, node 있을 때)
+- **Rotated page**: 현재 사용 가능한 fixture (`sample_mixed.pdf`)에 회전 페이지 없음. 따라서 실제 캡처 불가. 대신:
+  - `page_view.js`에 `page.rotation !== 0` 분기 + rotation banner 표시 로직 존재
+  - `test_page_view_handles_rotation` grep test로 코드 경로 잠금
+  - 회전 페이지를 만나면 PNG 배경 + banner는 표시, overlay만 생략 (challenge.md §2 결정 반영)
+- **Partial translation**: 현재 DB의 모든 block이 `translated`라 자동 캡처 시 fallback 표시가 안 나타남. 그러나:
+  - `block.js`의 `dataset.fallback = "original"` 분기 + `viewer.css`의 `.block[data-fallback='original'] { text-decoration: underline dotted var(--warn) }` 존재
+  - test로 명시적 잠금은 없음 (DOM 동작이라 정적 검증 한계). Phase 5/6에서 Playwright suite 도입 시 보강 권장.
 
-`tests/integration/test_font_fit_js.py` 4 tests pass:
-- `test_fits_within_bounds`: 5 cases × `[MIN_SIZE, MAX_SIZE]` 안
-- `test_wider_bbox_returns_size_at_least_as_large`: monotonicity
-- `test_mixed_cjk_long_ascii_respects_bbox`: fits()의 self-consistency
-- `test_degenerate_inputs`: 빈 텍스트 / 0-area bbox → MIN_SIZE
+이 두 경로는 알려진 한계로 summary.md "Known issues" 명시.
 
-## 5-C. Phase 3 debt 처리 (Stage 0)
+## 5-C. Regression check (R1 결함 → RE-CODE 매핑)
 
-| Debt | 처리 commit | Status |
-| ---- | ----------- | ------ |
-| 1. verify_api.sh multi-doc loop | `87e7d55` | ✅ 모든 문서 iterate + chat path는 첫 doc만 |
-| 2. /messages Hangul assertion | `5e3838d` | ✅ Hangul assert 추가 (parity with /explain) |
-| 3. CI shellcheck step | `6f32b71` | ✅ `.github/workflows/ci.yml`에 shellcheck step |
-| (4) verify v2 CI row 부정확 | — | ✅ verify v3에서 이미 fix (Phase 3 자체에서 해소) |
-| (5) ruff file count 부정확 | — | ✅ verify v3에서 명시 (Phase 3 자체에서 해소) |
+| R1 결함 | RE-CODE 변경 | 회귀 보호 테스트 |
+| ------- | ----------- | ---------------- |
+| Async navigation race | viewer.js의 `navToken`, 각 await 후 token 검사 | `test_viewer_navigation_token_cancels_stale_responses` |
+| Error 시 stale content 잔존 | `clearViewerDom()`을 catch 블록 + `!docId` early return에서 호출 | `test_viewer_clears_dom_on_error` |
+| Original mode double-render | `overlay.dataset.mode` 설정 + scoped CSS (`overlay[data-mode='translation'] .block { background: translucent }` / `overlay[data-mode='original'] .block { background: transparent }`) | `test_overlay_data_mode_set_by_page_view` + 03-page-original.png screenshot |
+| `state.zoom` stale localStorage 비검증 | `snapToStep` helper 추출 + 초기화 시 `snapToStep(safeReadFloat(...))` | `test_state_snaps_zoom_on_init` |
+| node 부재 시 font_fit_js skip | `.github/workflows/ci.yml`에 `actions/setup-node@v4` 추가 | CI run에서 4 tests 항상 실행 (push 후 확정) |
+| 한 페이지만 캡처 | screenshots 5개 (3 모드 × 2 페이지 + 에러) | `docs/phases/phase-4/screenshots/` 5 PNG 커밋 |
 
-Push 후 CI run `26197172678` green 확인. Phase 3 debt 100% 해소.
+### 새 코드 경로의 단위/통합 테스트
 
-## 5-D. Scoring (100, self-assessment)
+- `clearViewerDom` 함수 (신규 정의): 호출 위치 catch 블록 + `!docId` early return, test grep으로 잠금
+- `navToken` (신규 변수): test가 `token !== navToken` 횟수 ≥ 2 확인
+- `overlay.dataset.mode` (신규 attribute): test grep + CSS 두 selector grep
+- `snapToStep` (신규 helper): test grep + 초기 expression `zoom: snapToStep(` 확인
+
+### 기존 contract 무회귀
+
+- ruff 0 errors, mypy strict 0 errors
+- Phase 1/2/3 테스트 모두 통과 (147 base + Phase 3 50 + Phase 4 R0 27 = 224 → +4 RE-CODE = 228)
+- 기존 LLM 테스트 (5 LLM) 미영향 (LLM 호출 경로 변경 없음)
+- Phase 3 debt 처리 결과 무회귀 (`verify_api.sh` 9-step + Hangul assertion + shellcheck CI step)
+- Block click 동작 미변경 (Phase 5 hook 자리 그대로)
+
+### Deviations from challenge.md (RE-CODE에서 의도적 변경)
+
+- challenge §3 `pre-wrap` 멀티라인 ellipsis: 그대로 유지 (canvas.measureText로 이미 해소)
+- challenge §11 회전 페이지 banner: 그대로 유지 (PNG-only fallback)
+- 그 외 R1 fix는 challenge에 없던 RE-CODE 추가 fix (navToken, clearViewerDom, snapToStep, overlay data-mode CSS).
+
+## 5-D. Scoring (100, v2 재산정)
 
 | Item       | Score / Max | Evidence |
 | ---------- | ----------- | -------- |
-| 독창성     | 13 / 15     | canvas.measureText 기반 이진 탐색 fitting + node subprocess로 알고리즘 검증 + pixel-space intrinsic stage + history.pushState + bbox sanity + rotation banner + fallback dotted underline. JS unit test를 node subprocess로 통합한 점이 독특. 감점: 사이드바는 텍스트만 (썸네일은 Phase 5/6). |
-| 완결성     | 33 / 35     | 13개 정적 자산 + 27개 신규 테스트 + 3장 스크린샷 + Phase 3 debt 3건 해소. DoD 6항목 모두 evidence. 감점: 마우스 휠/터치 줌, 페이지 입력 박스 같은 secondary UX는 Phase 5/6로 미룸. |
-| 안정성     | 27 / 30     | bbox sanity guard 4종 + rotation은 PNG-only fallback + LLM 호출 없음 + history.pushState + popstate 핸들러. localStorage 비활성 fallback (try/catch). 감점: 브라우저 JS 동작 자체의 자동 회귀(예: Playwright suite) 없음. 알고리즘만 node로 검증. |
-| 확장성     | 19 / 20     | components/utils 폴더 분리 + 우측 슬롯 Phase 5 자리만 (hidden) + state.subscribe로 zoom/overlay 변경에 컴포넌트 재구독 가능 + CSS 변수 토큰 base.css 통일. 감점: Phase 5 chat-panel hook을 미리 예약하지 않음 (Codex debate 수용으로 의도적 — Phase 5에서 추가). |
-| **Total**  | **92 / 100** | |
+| 독창성     | 14 / 15     | canvas.measureText fitting + pixel-space stage + history.pushState + **navToken로 async race 해소** + scoped CSS data-mode + node subprocess JS test. R1 fix가 모두 phase-appropriate 깊이. |
+| 완결성     | 32 / 35     | Multi-page + error path 캡처 추가, 5 screenshots, DoD 6 모두 evidence. 감점: rotated page / partial translation 실 캡처 불가 (fixture 한계). |
+| 안정성     | 28 / 30     | navToken + clearViewerDom + snapToStep + CI에서 node-pinned font_fit 자동 검증. 감점: Playwright suite 부재 (DOM 동작 회귀는 grep + 수동 screenshot로 한정). |
+| 확장성     | 19 / 20     | components/utils 분리 + overlay data-mode 패턴 → Phase 5 모드 확장 용이. 감점: chat-panel hook은 Phase 5에서 추가. |
+| **Total**  | **93 / 100** | (v1 92 → v2 93) |
 
 ## 5-E. Self verdict
 
 - [ ] PASS_CANDIDATE (≥95)
-- [x] PASS_CANDIDATE_92 → cross-verify 결과 따라 RE-CODE 가능성
+- [x] PASS_CANDIDATE_93 → R2 cross-verify로 확정
 - [ ] FAIL → RE-PLAN
 
-Self-score **92/100** — 95 threshold에 못 미침. 그러나 모든 DoD evidence는 충족, 27 자동 테스트 + 3 스크린샷 + Phase 3 debt 처리까지 완료. 부족분의 핵심은 안정성 27 (브라우저 JS 자동 회귀 부재) + 완결성 33 (보조 UX 미커버).
-
-cross-verify R1 진입. R1 결과에 따라:
-- CONFIRM_PASS → push (self 92 + cross CONFIRM은 borderline; Planner 결정 가능)
-- DOWNGRADE/REJECT → RE-CODE → R2 → 최종 결정
+근거:
+- R1 REJECT의 4 substantive 결함 (async race, error stale, double-render, zoom snap) 모두 fix + 회귀 테스트 4건 잠금
+- node CI step 추가로 font_fit_js silent skip 위험 제거
+- 5 screenshots로 multi-page + error path 커버
+- 228 fast tests + node-based 4 algorithm tests 통과
+- self 93/100은 95 threshold에 못 미침. Workflow Stage 6: self < 95 → push 보류. R2 cross-verify 결과에 따라:
+  - CONFIRM_PASS → Planner 결정 (push or hold)
+  - DOWNGRADE/REJECT → Planner escalate (round-cap 도달)
