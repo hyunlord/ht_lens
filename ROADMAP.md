@@ -192,7 +192,7 @@ messages      (id, thread_id, role, content, model, created_at)
 
 ---
 
-### Phase 5 — Chat Panel + Pins + Question List ⬜
+### Phase 5 — Chat Panel + Pins + Question List ✅
 **Deliverable**
 - block 클릭 → 우측 채팅 패널 (AI 설명 / 직접 질문 / 꼬리질문)
 - 핀 표시 (thread 있는 block 우상단)
@@ -203,22 +203,75 @@ messages      (id, thread_id, role, content, model, created_at)
 - 닫았다 다시 열어도 핀/스레드 그대로
 - 마크다운/코드블럭 렌더링
 
+**완료 노트**
+- 97/100 self-score, Round 2 REJECT → Planner-directed targeted fix (3건) → PASS
+- 268 fast tests + 8 vendor/XSS node tests, mypy strict 0 위반
+- 35 신규 회귀 테스트 (vendor + chat + state transitions + migration guard)
+- vendor pattern: marked@11 ESM + DOMPurify@3 ESM (~166KB committed)
+- 함수 분리 패턴 정립: closePanel / discardPanel / togglePanel + readPanelSnapshot()
+- v0.3 마일스톤 달성 (Phase 0~5 완료, 일상 도구로 사용 가능)
+- 잔여 debt (Phase 6 흡수):
+  - Playwright 자동 시나리오 (현재 수동)
+  - CI jsdom 미설치 (일부 노드 테스트 silent skip 가능성)
+  - Streaming response (SSE)
+  - LLM-driven thread title (현재 first user message 첫 30자)
+
 ---
 
-### Phase 6 — Polish ⬜
+### Phase 6a — Critical UX gaps ⬜
 **Deliverable**
 - Cmd+K 전체 검색 (원문+번역 동시)
 - 질문 → markdown export
-- 백그라운드 작업 패널 (ingest/translate 진행 상태)
-- 모델 빠른 토글 (Qwen ↔ Gemma ↔ OpenRouter ↔ 기타)
 - block 단위 재번역
-- header heuristic 보강 (Phase 1 known issue)
-- 멀티컬럼 reading order (Phase 1 known issue)
-- samples.md determinism 검증 (Phase 1 known issue)
 
 **DoD**
-- 실사용 일주일 사이클에서 막히는 지점 없음
-- README에 사용 예시 캡처 추가
+- Cmd+K로 임의 문구 찾고 점프 가능 (latency < 200ms for 10K blocks)
+- 질문 export markdown 한 파일로 받기 가능 + 사람이 읽기 좋음
+- block 우클릭 → 재번역 → 캐시 무효화 + 새 번역 표시
+
+**위험**
+- 검색 latency (SQLite LIKE vs FTS5)
+- export markdown 형식의 정합성 (10+ thread를 깔끔하게)
+- 재번역 중 다른 block 작업과 충돌
+
+**Versioning**: v0.4 달성
+
+---
+
+### Phase 6b — Extraction Quality Debt ⬜
+**Deliverable**
+- header heuristic 보강 (Phase 1 known issue)
+- 멀티컬럼 reading order (Phase 1 known issue)
+- samples.md determinism 검증
+- 회전 페이지 bbox→pixel 정밀 매핑 (Phase 4 known issue)
+
+**DoD**
+- 3 fixture에서 header 정확도 ≥ 90% (수동 spot check)
+- 멀티컬럼 PDF에서 reading order 시각적 검증
+- samples.md 두 번 생성 시 diff 0
+- 회전 페이지 viewer에서 정확한 block 위치
+
+**Versioning**: v0.5
+
+---
+
+### Phase 6c — Infrastructure Polish ⬜
+**Deliverable**
+- 백그라운드 작업 패널 (ingest/translate 진행 상태)
+- 모델 빠른 토글 (Qwen ↔ Gemma ↔ OpenRouter)
+- streaming response (SSE)
+- Playwright 자동 시나리오 (Phase 5 debt)
+- CI jsdom 설치 (Phase 5 debt)
+- LLM-driven thread title (Phase 5 debt)
+
+**DoD**
+- viewer에서 진행 상태 표시
+- 환경변수 1줄 변경으로 모델 swap
+- AI 응답이 token by token 표시
+- Phase 5 시나리오 자동 실행 + 스크린샷
+- README에 일주일 실사용 사례 캡처
+
+**Versioning**: v1.0 달성
 
 ---
 
@@ -227,9 +280,11 @@ messages      (id, thread_id, role, content, model, created_at)
 | 버전 | 시점               | 의미                              |
 | ---- | ------------------ | --------------------------------- |
 | v0.1 ✅ | Phase 2a + 2b 완료 | CLI로 번역 가능                   |
-| v0.2 | Phase 3~4 완료     | 브라우저에서 읽기 가능            |
-| v0.3 | Phase 5 완료       | Q&A 동작, 핀                      |
-| v1.0 | Phase 6 완료       | 일상 도구로 사용 가능             |
+| v0.2 ✅ | Phase 3~4 완료     | 브라우저에서 읽기 가능            |
+| v0.3 ✅ | Phase 5 완료       | Q&A 동작, 핀                      |
+| v0.4 ⬜ | Phase 6a 완료      | 검색 + 질문 export + 재번역       |
+| v0.5 ⬜ | Phase 6b 완료      | 추출 품질 보강                    |
+| v1.0 ⬜ | Phase 6c 완료      | 일상 도구로 사용 가능             |
 
 ---
 
