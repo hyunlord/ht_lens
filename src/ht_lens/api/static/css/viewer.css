@@ -335,7 +335,7 @@
   color: #f85149;
 }
 
-/* Phase 6d — summary banner above #stage. */
+/* Phase 6d — summary banner above #stage (v0.7 hotfix: collapsible). */
 
 .summary-banner-mount {
   padding: 8px 16px 0;
@@ -345,10 +345,17 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 12px 14px;
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.summary-banner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .summary-banner-title {
@@ -356,6 +363,61 @@
   color: var(--text-secondary);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  flex: 0 0 auto;
+}
+
+.summary-banner-controls {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.summary-banner-toggle,
+.summary-banner-close {
+  appearance: none;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.summary-banner-toggle:hover,
+.summary-banner-close:hover {
+  border-color: var(--accent);
+}
+
+.summary-banner-close {
+  padding: 2px 6px;
+  min-width: 24px;
+}
+
+/* Collapsed state — one-line preview, banner stays compact (~70px). */
+.summary-banner-preview {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary-banner-preview--empty {
+  font-style: italic;
+}
+
+/* Expanded state — full body with internal scroll for long summaries. */
+.summary-banner[data-state="expanded"] .summary-banner-preview {
+  display: none;
+}
+
+.summary-banner[data-state="expanded"] .summary-banner-body {
+  max-height: 40vh;
+  overflow-y: auto;
 }
 
 .summary-banner-body {
@@ -366,19 +428,12 @@
   white-space: pre-wrap;
 }
 
-.summary-banner-empty {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary);
-  font-style: italic;
-}
-
 .summary-banner-actions {
   display: flex;
   justify-content: flex-end;
 }
 
-.summary-banner-btn {
+.summary-banner-regenerate {
   appearance: none;
   background: var(--surface-2);
   color: var(--text);
@@ -389,11 +444,11 @@
   cursor: pointer;
 }
 
-.summary-banner-btn:hover {
+.summary-banner-regenerate:hover {
   border-color: var(--accent);
 }
 
-.summary-banner-btn:disabled {
+.summary-banner-regenerate:disabled {
   cursor: wait;
   opacity: 0.7;
 }
