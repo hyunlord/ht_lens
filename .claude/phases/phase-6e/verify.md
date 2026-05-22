@@ -1,139 +1,123 @@
-# Phase 6e — Verify (self, v2 — post RE-CODE)
+# Phase 6e — Verify (self, v3 — post Planner-directed R2 micro-fix)
 
-R1 cross-verify DOWNGRADE (제안 86). 3 substantive gaps: (a) process_upload_job 미실행, (b) CLI scoped env 미테스트, (c) invalid scoped numeric → default (legacy 무시). RE-CODE 후 v2. 작성 직전 `git status` clean.
+Planner 결정 (R2 round-cap 이후): Option (a) — Planner-directed micro-fix 3건 → verify v3 → push.
+- R2 critique 3건 모두 valid + R2 자체 "R1 fix 인정 + concrete regression 없음" 명시
+- 1.5시간 작업이라 별도 phase 분리 가치 작음
+- Round-cap 우회는 Planner-directed라 정책상 허용
+
+작성 직전 `git status` clean. cross-verify 재호출 금지.
 
 ## 5-A. Automated checks (fresh)
 
-| Check    | Command | Result |
-| -------- | ------- | ------ |
-| Lint     | `uv run ruff check .` | All checks passed! |
-| Format   | `uv run ruff format --check .` | already formatted |
-| Type     | `uv run mypy src/` | Success: no issues found in 59 source files |
-| Test (fast) | `make test-fast` | **421 passed, 7 deselected** in 160.84s |
-| Coverage | `make check` 내장 | TOTAL **71%** (was 69%) |
-| Shellcheck (CI mirror) | `shellcheck scripts/*.sh` | passes |
-| CI (local) | `make check` + shellcheck | RC=0 |
+| Check | Command | Result |
+| ----- | ------- | ------ |
+| Lint | `uv run ruff check .` | All checks passed! |
+| Format | `uv run ruff format --check .` | already formatted |
+| Type | `uv run mypy src/` | Success: no issues found in 59 source files |
+| Test (fast) | `make test-fast` | **427 passed, 7 deselected** in 161.81s |
+| Coverage | `make check` 내장 | TOTAL 71% |
+| CI (local) | `make check` | **RC=0** |
 | CI (remote) | `.github/workflows/ci.yml` | pending push |
 
-Phase 6e 누적 신규 테스트 **18건** (403 → 421):
+Phase 6e 누적 신규 테스트 **24건** (403 → 427):
 - R0: 14
-- R1 RE-CODE: **+4**
-  - `test_process_upload_job_routes_translate_and_summary_to_distinct_clients` (실 process_upload_job 실행 → tagged client 도달 검증)
-  - `test_translate_cli_prefers_translate_scoped_env_over_legacy` (CLI scoped env 우선)
-  - `test_invalid_at_both_layers_falls_back_to_default` (두 layer 모두 invalid → default)
-  - `test_concrete_clients_satisfy_both_protocols` (structural typing isinstance)
-- 1 정책 변경: `test_scoped_timeout_invalid_falls_back_to_legacy` 이름과 동작 일치 (90.0 fallback)
+- R1 RE-CODE: +4
+- **R2 Planner-directed micro-fix: +6**
+  - `test_chat_timeout_invalid_falls_back_to_legacy` — CHAT scoped invalid → legacy 45
+  - `test_chat_timeout_invalid_at_both_layers_uses_default` — 둘 다 invalid → 60
+  - `test_chat_max_tokens_invalid_falls_back_to_legacy` — CHAT scoped invalid → legacy 1024
+  - `test_chat_temperature_invalid_falls_back_to_legacy` — CHAT scoped invalid → legacy 0.5
+  - `test_openai_client_implements_translate_protocol` — isinstance lock
+  - `test_openai_client_implements_chat_protocol` — isinstance lock
 
-## 5-B. Functional checks
+## 5-B. Functional checks — R2 critique 3건 처리
 
-### 1) R1 결함 → RE-CODE 매핑
+### Fix 1 — chat-side numeric invalid lock (R2 §4-1)
 
-| R1 결함 | RE-CODE fix | 회귀 가드 |
-| ------- | ----------- | --------- |
-| process_upload_job 실 실행 없음 | `test_process_upload_job_routes_translate_and_summary_to_distinct_clients` — `_TaggedLLM("TR_PIPELINE")` / `("CHAT_PIPELINE")` 두 client + `jobs_pipeline.process_upload_job` 직접 호출 + translate_document/summarize_document/ingest_extract_dir/asyncio.to_thread 모두 monkeypatch → 분기 검증 + job done 도달 | 1 integration test |
-| CLI scoped env 미테스트 | `test_translate_cli_prefers_translate_scoped_env_over_legacy` — `LLM_PROVIDER=mock` + `TRANSLATE_LLM_PROVIDER=mock_fail` → scoped 우선 시 exit 1 | 1 integration test |
-| Numeric fallback inconsistent | `_resolve_int` / `_resolve_float` 정책 변경 — invalid scoped → legacy fallback. test name과 동작 일치. + 새 test "two layer invalid → default" | 2 unit tests |
-| structural typing claim 검증 없음 | `test_concrete_clients_satisfy_both_protocols` — explicit isinstance | 1 unit test |
+기존: `_resolve_int` / `_resolve_float` invalid fallback이 translate-timeout만 explicit lock.
+처리: chat-side 4 mirror tests 추가. 미래 chat refactor가 translate-side와 동일 logic 유지하게 lock.
 
-### 2) jobs/pipeline.py 실 routing 검증 (핵심)
+```
+LLM_TIMEOUT=45, CHAT_LLM_TIMEOUT=not_a_number → from_env_chat() timeout = 45  ✅
+LLM_TIMEOUT=also-bad, CHAT_LLM_TIMEOUT=not_a_number → default 60               ✅
+LLM_MAX_TOKENS=1024, CHAT_LLM_MAX_TOKENS=abc → max_tokens = 1024               ✅
+LLM_TEMPERATURE=0.5, CHAT_LLM_TEMPERATURE=not_a_float → temperature = 0.5      ✅
+```
+
+### Fix 2 — OpenAICompatibleClient Protocol isinstance lock (R2 §4-2)
+
+기존: structural typing isinstance가 `MockLLMClient`만 explicit. 실 prod client (`OpenAICompatibleClient`)는 mypy + 간접 lock.
+처리: 2 explicit isinstance test 추가. Protocol 요구사항 변경 시 즉시 검출.
 
 ```python
-seen: dict[str, object] = {}
-# patches: translate_document/summarize_document/ingest_extract_dir/to_thread
-# app.state.translate_llm = _TaggedLLM("TR_PIPELINE")
-# app.state.chat_llm = _TaggedLLM("CHAT_PIPELINE")
-await jobs_pipeline.process_upload_job(job_id, app)
-assert seen["translate_llm"] is translate_mock   # PASS
-assert seen["summary_llm"] is chat_mock          # PASS
-# job row status = "done"                          # PASS
+client = OpenAICompatibleClient(base_url="...", model="...", api_key="...", max_tokens=2048, temperature=0.0)
+assert isinstance(client, TranslateLLMClient)  # PASS
+assert isinstance(client, ChatLLMClient)        # PASS
 ```
 
-R1 §4-1 핵심 fix. 이제 jobs/pipeline.py의 두 client 분기가 실행으로 lock됨.
+### Fix 3 — mock_fail asymmetric docs 정정 (R2 §4-3)
 
-### 3) Numeric fallback 새 정책
+기존: `docs/CONFIGURATION.md`가 mock_fail을 generic 지원 provider로 표기.
+처리: 명시적 "translate-side only" note 추가 + `src/ht_lens/llm/mock.py::FailMockLLMClient` docstring에 동일 정보. chat-side failure injection은 `make_test_client(chat_llm_override=...)` 패턴 안내.
 
-```
-LLM_TIMEOUT=90, TRANSLATE_LLM_TIMEOUT=not-a-number
-→ from_env_translate() timeout = 90 (legacy fallback)
-LLM_TIMEOUT=also-bad, TRANSLATE_LLM_TIMEOUT=not-a-number
-→ from_env_translate() timeout = 60 (default)
-```
-
-`_resolve_int` / `_resolve_float` 가 scoped → legacy → default 순으로 invalid 시 다음 layer로 fall through. test_scoped_timeout_invalid_falls_back_to_legacy의 이름과 동작 일치 (90.0).
-
-### 4) DoD evidence matrix (R0 그대로 + 강화)
-
-| ROADMAP Phase 6e DoD | 본 phase status |
-| --- | --- |
-| 핀 / 사이드바 / 이미지 모달 / streaming / 백그라운드 패널 / Playwright | **Out of scope** — 별도 phase |
-| 모델 빠른 토글 (env 1줄, restart 필요) | ✅ partial |
-| ↳ viewer 재시작 불필요 | **Out of scope** — runtime store 별도 phase |
-| ↳ README 일주일 캡처 | **Out of scope** — 실 사용 후 |
-
-본 phase 한정 DoD:
-
-| DoD | 만족 | 근거 |
-| --- | --- | --- |
-| Protocol 분리 | ✅ | structural typing isinstance test |
-| Factory 2 분기 + legacy 위임 | ✅ | 8 unit tests |
-| max_tokens 정책 (2048/4096) | ✅ | 상수 + `.env.example` + unit test |
-| `_resolve` 빈 문자열 fallback | ✅ | unit test |
-| **Numeric fallback consistent (scoped/legacy/default)** | ✅ R1 fix | 2 unit tests |
-| autouse fixture 확장 | ✅ | prefix tuple + 회귀 0 |
-| 호출처 매핑 (6 영역) | ✅ | messages, blocks, documents, jobs (실 실행 검증), translate cli (실 실행), summarize |
-| 회귀 0 | ✅ | 403 → 421 (+18), make check RC=0 |
+코드 동작은 변경 없음 (intentional asymmetry). docs/docstring만 정정.
 
 ## 5-C. Regression check + 신 코드 경로 잠금 (워크플로우 0-3-A)
 
-### R0 신 식별자 → v1 그대로
+### R0 + R1 + R2 micro-fix 신 식별자 lock
 
-### R1 RE-CODE 신 식별자 / 정책
+| 영역 | 새 식별자 / 정책 | 잠금 |
+| ---- | ---------------- | ---- |
+| (R0) Protocol 분리 | `TranslateLLMClient`, `ChatLLMClient`, `LLMClient` alias | structural typing isinstance + 6 unit tests |
+| (R0) Factory 2 분기 | `from_env_translate`, `from_env_chat`, `_resolve` 등 | 7 unit + 2 timeout tests |
+| (R0) max_tokens 정책 | 2048 / 4096 상수 | unit test |
+| (R0) DI 분기 | `get_translate/chat_llm_client` | 3 routing tests |
+| (R0) lifespan 두 LLM | startup 양쪽 검사 | 4 startup tests |
+| (R1) jobs/pipeline.py 분기 | `app.state.translate_llm` / `app.state.chat_llm` | 실 실행 routing test |
+| (R1) CLI scoped 우선 | `from_env_translate()` 호출 | mock_fail integration test |
+| (R1) numeric fallback 정책 | scoped → legacy → default invalid 시 fall through | 2 unit tests (translate-side) |
+| (R1) MockLLMClient isinstance | runtime Protocol 검증 | 1 unit test |
+| **(R2) chat-side numeric invalid** | CHAT_LLM_TIMEOUT/MAX_TOKENS/TEMPERATURE 모두 fallback 검증 | **4 unit tests** |
+| **(R2) OpenAICompatibleClient Protocol** | TranslateLLMClient + ChatLLMClient isinstance | **2 unit tests** |
+| **(R2) mock_fail asymmetric docs** | docs/CONFIGURATION.md + mock.py docstring 정정 | docs review |
 
-| RE-CODE 변경 | 새 식별자 / 정책 | 잠금 |
-| ----------- | ---------------- | ---- |
-| `_resolve_int` / `_resolve_float` invalid fallback 정책 | `for key in (scoped, legacy): try: int(raw) except ValueError: continue` | `test_scoped_timeout_invalid_falls_back_to_legacy`, `test_invalid_at_both_layers_falls_back_to_default` |
-| jobs/pipeline.py 실 routing 검증 | `app.state.translate_llm` ≠ `app.state.chat_llm` 두 client 모두 정확한 stage에 도달 | `test_process_upload_job_routes_translate_and_summary_to_distinct_clients` |
-| translate CLI scoped 우선 | `from_env_translate()` 호출이 `TRANSLATE_LLM_*` 우선 | `test_translate_cli_prefers_translate_scoped_env_over_legacy` |
-| Protocol structural typing 명시 lock | `isinstance(MockLLMClient(), TranslateLLMClient)` + `ChatLLMClient` | `test_concrete_clients_satisfy_both_protocols` |
-
-모든 R1 신 식별자/정책 명시 lock. 워크플로우 0-3-A "RE-CODE 새 코드 경로 단위 테스트 의무 표" 충족.
+모든 신 식별자/정책 명시 lock. 워크플로우 0-3-A 의무 충족.
 
 ### 기존 contract 무회귀
 
-- 417 → 421 fast tests 통과 (R0 14 + R1 4 = 18)
-- Phase 2b–6d 모두 회귀 0
-- Legacy aliases (LLMClient, from_env, get_llm_client, app.state.llm) 유지
-- OpenAICompatibleClient 직접 호출 backward compat
-- jobs/pipeline.py의 translate_llm/chat_llm 분기가 production code path
+- 421 → 427 fast tests 통과 (R0 14 + R1 4 + R2 6 = 24 신규)
+- Phase 2b-6d 회귀 0
+- mock.py / openai_compat.py / factory.py 동작 무변경 (docs/test만 추가)
 
-### Deviations from R1
+### Deviations from Planner directive
 
-- R1 §1 (shellcheck): make check에 shellcheck 추가 안 함. CI에선 별도 step. summary.md에 명시.
-- R1 §2 stale live-LLM: 이 phase는 LLM call 경로 무관 — v2에서 row 삭제 가능하나 유지 (참고용).
-- R1 §3 모든 코드 사항 fix됨.
+- 모든 directive 준수 (3 fix + 명시 commit + push)
+- cross-verify 재호출 없음
+- 새 feature 없음 (chat-side mock_fail 구현은 Out of scope — docs 정정만)
+- 다른 phase 영역 무변경
 
-## 5-D. Scoring (100, v2 재산정)
+## 5-D. Scoring (100, v3 final)
 
-| Item | Score / Max | Evidence |
-| ---- | ----------- | -------- |
-| 독창성 | 13 / 15 | (v1 동일) Protocol structural typing + `_resolve` empty fallback + scoped overrides + dual health check |
-| 완결성 | **34 / 35** | (v1 32 → 34) DoD 8건 (numeric fallback 추가) + 18 신규 테스트 + 모든 호출처 실 실행 검증 + isinstance 명시. 감점: ROADMAP DoD 일부 Out of scope. |
-| 안정성 | **29 / 30** | (v1 29 동일) jobs/pipeline.py 실 routing 검증 (R1 critical) + numeric fallback semantics 일관성 + lifespan 양쪽 검사. 감점: cross-backend 부분 fail 분기는 summary에만. |
-| 확장성 | **20 / 20** | (v1 19 → 20) env 1줄 swap + numeric fallback 안정성 + 모든 호출처 lock으로 future swap 안전 |
-| **Total** | **96 / 100** | (v1 93 → v2 **96**) |
+| Item | Score | Evidence |
+| ---- | ----- | -------- |
+| 독창성 | 13 / 15 | (v2 동일) Protocol structural typing + scoped overrides + dual health check + numeric fallback 일관성 |
+| 완결성 | **34 / 35** | (v2 동일) DoD 8건 + 24 신규 + 모든 호출처 실 실행 lock + isinstance prod client + chat numeric explicit |
+| 안정성 | **30 / 30** (v2 29 → 30) | R1 critical fix + numeric fallback semantics + lifespan 양쪽 검사 + chat-side explicit lock + prod client Protocol 검증 + mock_fail asymmetry 명시 |
+| 확장성 | 20 / 20 | env 1줄 swap + numeric fallback 안정성 + 모든 호출처 명시 lock |
+| **Worker** | **97 / 100** | (v2 96 → v3 **97**) |
 
-PASS_CANDIDATE 95 임계치 도달. R2 cross-verify로 CONFIRM_PASS 기대.
+R2 critique 3건 모두 처리 — verification gap 해소.
 
 ## 5-E. Self verdict
 
-- [x] **PASS_CANDIDATE (96/100)**
+- [x] **PASS_CONFIRMED** (Worker 97/100, Planner-directed R2 fix 적용)
 - [ ] FAIL → RE-CODE
 - [ ] FAIL → RE-PLAN
 
 근거:
-- R1 3 substantive gap 모두 fix + 추가 1건 (structural typing isinstance)
-- 18 신규 테스트, jobs/pipeline.py 실 실행 routing lock 핵심
-- numeric fallback 정책 일관성 (scoped → legacy → default invalid fallthrough)
-- 회귀 0 (403 → 421, +18)
-- self 93 → 96 (안정성 +1, 완결성 +2, 확장성 +1)
-- R2 cross-verify로 CONFIRM_PASS 기대
+- R0 + R1 + R2 critique 모두 처리 (총 substantive 3 + verification 3 = 6 fix)
+- 24 신규 테스트 + 회귀 0 (403 → 427)
+- numeric fallback chat-side explicit lock + OpenAICompatibleClient isinstance + mock_fail docs 정정
+- cross-verify 재호출 없음 (Planner-directed)
+- self 97 → 자동 push 정책 충족
+- **push 가능**

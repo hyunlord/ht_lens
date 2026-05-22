@@ -132,3 +132,112 @@ def test_concrete_clients_satisfy_both_protocols() -> None:
     mc = MockLLMClient()
     assert isinstance(mc, TranslateLLMClient)
     assert isinstance(mc, ChatLLMClient)
+
+
+# --- R2 Planner-directed micro-fix #1: chat-side numeric invalid lock ---
+#
+# R1 RE-CODE locked the translate-timeout invalid → legacy → default path
+# but R2 noted the same _resolve_int/_resolve_float code path also serves
+# CHAT_LLM_TIMEOUT / CHAT_LLM_MAX_TOKENS / CHAT_LLM_TEMPERATURE — and the
+# chat-side cases had no explicit tests. The four cases below mirror the
+# translate-side pattern so a future refactor that breaks chat-side
+# fallback (or accidentally re-asymmetrises the helpers) is caught.
+
+
+def _underlying_timeout(client) -> float:
+    """Pull the timeout out of the openai SDK client (works for float
+    and httpx.Timeout wrappers — same helper shape as
+    test_llm_factory_timeout._underlying_timeout_seconds)."""
+    underlying = getattr(client, "_client", None)
+    raw = underlying.timeout
+    if isinstance(raw, int | float):
+        return float(raw)
+    return float(raw.read or raw.connect or raw.write or raw.pool or 0)
+
+
+def _build_openai_chat_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CHAT_LLM_PROVIDER", "openai_compat")
+    monkeypatch.setenv("CHAT_LLM_BASE_URL", "http://localhost:9999/v1")
+    monkeypatch.setenv("CHAT_LLM_MODEL", "test-chat-model")
+    monkeypatch.setenv("CHAT_LLM_API_KEY", "EMPTY")
+
+
+def test_chat_timeout_invalid_falls_back_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CHAT_LLM_TIMEOUT invalid → legacy LLM_TIMEOUT (mirror of
+    translate-side R1 RE-CODE lock)."""
+    _build_openai_chat_env(monkeypatch)
+    monkeypatch.setenv("LLM_TIMEOUT", "45")
+    monkeypatch.setenv("CHAT_LLM_TIMEOUT", "not_a_number")
+    client = from_env_chat()
+    assert _underlying_timeout(client) == pytest.approx(45.0)
+
+
+def test_chat_timeout_invalid_at_both_layers_uses_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both CHAT_LLM_TIMEOUT and LLM_TIMEOUT invalid → built-in default 60."""
+    _build_openai_chat_env(monkeypatch)
+    monkeypatch.setenv("LLM_TIMEOUT", "also-bad")
+    monkeypatch.setenv("CHAT_LLM_TIMEOUT", "not_a_number")
+    client = from_env_chat()
+    assert _underlying_timeout(client) == pytest.approx(60.0)
+
+
+def test_chat_max_tokens_invalid_falls_back_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CHAT_LLM_MAX_TOKENS invalid → legacy LLM_MAX_TOKENS."""
+    _build_openai_chat_env(monkeypatch)
+    monkeypatch.setenv("LLM_MAX_TOKENS", "1024")
+    monkeypatch.setenv("CHAT_LLM_MAX_TOKENS", "abc")
+    client = from_env_chat()
+    assert client.max_tokens == 1024
+
+
+def test_chat_temperature_invalid_falls_back_to_legacy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CHAT_LLM_TEMPERATURE invalid → legacy LLM_TEMPERATURE."""
+    _build_openai_chat_env(monkeypatch)
+    monkeypatch.setenv("LLM_TEMPERATURE", "0.5")
+    monkeypatch.setenv("CHAT_LLM_TEMPERATURE", "not_a_float")
+    client = from_env_chat()
+    assert client.temperature == pytest.approx(0.5)
+
+
+# --- R2 Planner-directed micro-fix #2: OpenAICompatibleClient Protocol lock ---
+#
+# R0 + R1 already locked MockLLMClient via isinstance. R2 noted that the
+# prod client (OpenAICompatibleClient) was unverified at runtime — mypy +
+# indirect coverage only. Explicit isinstance checks below catch any
+# future change that breaks the structural-typing contract.
+
+
+def test_openai_client_implements_translate_protocol() -> None:
+    from ht_lens.llm.client import TranslateLLMClient
+    from ht_lens.llm.openai_compat import OpenAICompatibleClient
+
+    client = OpenAICompatibleClient(
+        base_url="http://x/v1",
+        model="x",
+        api_key="x",
+        max_tokens=2048,
+        temperature=0.0,
+    )
+    assert isinstance(client, TranslateLLMClient)
+
+
+def test_openai_client_implements_chat_protocol() -> None:
+    from ht_lens.llm.client import ChatLLMClient
+    from ht_lens.llm.openai_compat import OpenAICompatibleClient
+
+    client = OpenAICompatibleClient(
+        base_url="http://x/v1",
+        model="x",
+        api_key="x",
+        max_tokens=4096,
+        temperature=0.2,
+    )
+    assert isinstance(client, ChatLLMClient)

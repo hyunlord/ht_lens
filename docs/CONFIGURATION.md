@@ -35,6 +35,16 @@ a fallback when the scoped key is unset (or empty/whitespace).
 Supported provider values: `mock`, `mock_fail`, `openai_compat`
 (sglang / Ollama / OpenRouter via the OpenAI-compatible API).
 
+> **Note on `mock_fail` asymmetry.** `FailMockLLMClient` raises
+> `LLMPermanentError` from ``translate()`` only — its ``chat()`` method
+> inherits the working `MockLLMClient` implementation. Setting
+> `CHAT_LLM_PROVIDER=mock_fail` therefore does NOT inject chat-side
+> failures (the chat path continues to succeed). Use it as a
+> translate-side failure-injection knob (subprocess CLI tests rely on
+> this — see `tests/integration/test_translate_cli.py`). For
+> chat-side failure injection, patch ``ChatLLMClient`` directly at the
+> test level (e.g. ``make_test_client(chat_llm_override=...)``).
+
 ### Precedence (per key, independent)
 
 1. Scoped var (`TRANSLATE_LLM_*` or `CHAT_LLM_*`) — wins if set to a

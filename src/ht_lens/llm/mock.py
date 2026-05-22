@@ -49,7 +49,14 @@ class MockLLMClient:
 class FailMockLLMClient(MockLLMClient):
     """MockLLMClient variant that always raises LLMPermanentError on translate.
 
-    Used by subprocess-level tests to trigger stats.failed > 0 via LLM_PROVIDER=mock_fail.
+    Used by subprocess-level tests to trigger stats.failed > 0 via
+    ``LLM_PROVIDER=mock_fail`` (or ``TRANSLATE_LLM_PROVIDER=mock_fail``).
+
+    Note: asymmetric by design — ``chat()`` is inherited unchanged from
+    :class:`MockLLMClient`, so ``CHAT_LLM_PROVIDER=mock_fail`` does NOT
+    inject chat-side failures. For chat-side failure injection, patch
+    the ``ChatLLMClient`` dependency directly at the test level (e.g.
+    ``make_test_client(chat_llm_override=...)``).
     """
 
     async def translate(
