@@ -1,12 +1,28 @@
-/* Phase 5 — chat panel + sidebar tabs + pins */
+/* Phase 5 — chat panel + sidebar tabs + pins.
+ *
+ * v0.7 hotfix: the previous ``.viewer-shell { grid-template-columns: ... }``
+ * rule here duplicated viewer.css and — because chat_panel.css is loaded
+ * AFTER viewer.css — silently overrode ``.viewer-shell--sidebar-closed``
+ * (same specificity, later in source order). The Phase 6c sidebar toggle
+ * was JS-correct (state + class flipped) but visually a no-op because
+ * grid-template-columns was already pinned to 220px by this stylesheet.
+ *
+ * Fix: drop the duplicate base rule (viewer.css owns the default
+ * grid-template-columns + transition) and raise specificity on the
+ * state rules so they survive cascade order regardless of stylesheet
+ * load order. Doubled class selector = specificity (0,2,0).
+ */
 
-.viewer-shell {
-  grid-template-columns: 220px 1fr 0;
-  transition: grid-template-columns 0.2s ease;
+.viewer-shell.viewer-shell.panel-open {
+  grid-template-columns: 220px 1fr 420px;
 }
 
-.viewer-shell.panel-open {
-  grid-template-columns: 220px 1fr 420px;
+.viewer-shell.viewer-shell--sidebar-closed:not(.panel-open) {
+  grid-template-columns: 0 1fr 0;
+}
+
+.viewer-shell.viewer-shell--sidebar-closed.panel-open {
+  grid-template-columns: 0 1fr 420px;
 }
 
 .right-slot {
