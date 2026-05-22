@@ -1188,3 +1188,41 @@ async def test_viewer_js_renders_summary_banner_on_load(
     src = (assets_root / "js" / "viewer.js").read_text(encoding="utf-8")
     assert "renderSummaryBanner" in src
     assert "summaryBannerEl" in src
+
+
+# --- Planner-directed R2 fix: failed jobs surfaced in jobs_panel ---
+
+
+@pytest.mark.asyncio
+async def test_jobs_panel_renders_failed_with_dismiss(api_db_path: Path, assets_root: Path) -> None:
+    """R2 fix lock: ``jobs_panel.js`` must render terminal-state rows
+    (failed/done) with a dismiss button, polling must include them via
+    ``include_recent_terminals=true``, and the row must carry the
+    ``job-row--failed`` class so CSS can highlight it."""
+    src = (assets_root / "js" / "components" / "jobs_panel.js").read_text(encoding="utf-8")
+    # Polling layer pulls in recent terminals.
+    assert "includeRecentTerminals" in src
+    # Failed row class + ❌ prefix + dismiss control.
+    assert "job-row--failed" in src
+    assert "❌" in src
+    assert "job-dismiss" in src
+    # User-dismissed terminals are tracked across polls.
+    assert "_dismissedTerminals" in src
+    # Refetch fires once per "wave" of transitions, not on every dismiss.
+    assert "_refetchOnce" in src
+
+
+@pytest.mark.asyncio
+async def test_api_js_list_jobs_supports_include_recent_terminals(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "js" / "api.js").read_text(encoding="utf-8")
+    assert "include_recent_terminals" in src
+    assert "includeRecentTerminals" in src
+
+
+@pytest.mark.asyncio
+async def test_index_css_styles_failed_job_row(api_db_path: Path, assets_root: Path) -> None:
+    src = (assets_root / "css" / "index.css").read_text(encoding="utf-8")
+    assert ".job-row--failed" in src
+    assert ".job-dismiss" in src

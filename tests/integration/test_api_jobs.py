@@ -233,3 +233,112 @@ async def test_startup_recovery_preserves_translated_documents(
         docs = client.get("/documents").json()
     # Translated doc survives the restart sweep.
     assert any(d["id"] == doc_id for d in docs)
+
+
+# --- Planner-directed R2 fix: failed jobs surfaced in poll ---
+
+
+@pytest.mark.asyncio
+async def test_jobs_active_plus_recent_terminals_includes_failed(
+    api_db_path: Path,
+) -> None:
+    """R2 fix: ``include_recent_terminals=true`` surfaces failed/done
+    jobs from the last 5 minutes alongside active ones. Without this,
+    a job that failed at extract/translate/summarize disappeared from
+    the panel and the user never saw the error_message."""
+    from ht_lens.db.models import Job
+    from ht_lens.db.session import make_engine, make_session_factory
+
+    with make_test_client(api_db_path) as client:
+        # Seed three jobs inside the client lifespan to bypass the
+        # startup-recovery sweep on the "translating" row.
+        engine = make_engine(api_db_path)
+        factory = make_session_factory(engine)
+        async with factory() as session:
+            now = datetime.utcnow()
+            session.add(
+                Job(
+                    type="process_upload",
+                    status="failed",
+                    upload_filename="just_failed.pdf",
+                    error_message="요약 실패: timeout",
+                    finished_at=now,
+                    created_at=now,
+                )
+            )
+            session.add(
+                Job(
+                    type="process_upload",
+                    status="done",
+                    upload_filename="just_done.pdf",
+                    finished_at=now,
+                    created_at=now,
+                )
+            )
+            session.add(
+                Job(
+                    type="process_upload",
+                    status="translating",
+                    upload_filename="still_running.pdf",
+                    progress_pct=40,
+                    created_at=now,
+                )
+            )
+            # Older failed (10 min ago) — must NOT appear in the recent
+            # window response.
+            from datetime import timedelta
+
+            session.add(
+                Job(
+                    type="process_upload",
+                    status="failed",
+                    upload_filename="old_failed.pdf",
+                    finished_at=now - timedelta(minutes=10),
+                    created_at=now - timedelta(minutes=10),
+                )
+            )
+            await session.commit()
+        await engine.dispose()
+
+        # Without the flag: only the active job is returned.
+        body_active = client.get("/jobs?status=active").json()
+        names_active = sorted(j["upload_filename"] for j in body_active)
+        assert names_active == ["still_running.pdf"]
+
+        # With the flag: active + recent terminals, but not old ones.
+        body_full = client.get("/jobs?status=active&include_recent_terminals=true").json()
+        names_full = sorted(j["upload_filename"] for j in body_full)
+        assert names_full == ["just_done.pdf", "just_failed.pdf", "still_running.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_jobs_recent_terminals_carries_error_message(
+    api_db_path: Path,
+) -> None:
+    """R2 fix sanity: the error_message field flows through the new
+    query path so the panel can render it."""
+    from ht_lens.db.models import Job
+    from ht_lens.db.session import make_engine, make_session_factory
+
+    with make_test_client(api_db_path) as client:
+        engine = make_engine(api_db_path)
+        factory = make_session_factory(engine)
+        async with factory() as session:
+            now = datetime.utcnow()
+            session.add(
+                Job(
+                    type="process_upload",
+                    status="failed",
+                    upload_filename="boom.pdf",
+                    error_message="PDF 추출 실패: invalid stream",
+                    finished_at=now,
+                    created_at=now,
+                )
+            )
+            await session.commit()
+        await engine.dispose()
+
+        body = client.get("/jobs?status=active&include_recent_terminals=true").json()
+    assert len(body) == 1
+    assert body[0]["status"] == "failed"
+    assert body[0]["error_message"] == "PDF 추출 실패: invalid stream"
