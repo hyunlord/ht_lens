@@ -60,9 +60,16 @@ class OpenAICompatibleClient:
         timeout: float = 60.0,
         max_retries: int = 0,
         enable_thinking: bool = False,
+        # Phase 6e split: defaults preserved for pre-6e callers (live_llm_client,
+        # test_health_check_live, test_translate_pipeline_live). Factories pass
+        # explicit values: translate → 2048/0.0, chat → 4096/0.2.
+        max_tokens: int = 2048,
+        temperature: float = 0.7,
     ) -> None:
         self.model_name = model
         self._enable_thinking = enable_thinking
+        self.max_tokens = max_tokens
+        self.temperature = temperature
         self._client = openai.AsyncOpenAI(
             base_url=base_url,
             api_key=api_key,
@@ -91,10 +98,10 @@ class OpenAICompatibleClient:
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
                 ],
-                temperature=0.7,
+                temperature=self.temperature,
                 top_p=0.80,
                 presence_penalty=1.5,
-                max_tokens=2048,
+                max_tokens=self.max_tokens,
                 extra_body=self._extra_body(),
             )
         except Exception as exc:
@@ -125,8 +132,8 @@ class OpenAICompatibleClient:
             response = await self._client.chat.completions.create(
                 model=self.model_name,
                 messages=openai_messages,
-                temperature=0.7,
-                max_tokens=2048,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
                 extra_body=self._extra_body(),
             )
         except Exception as exc:
