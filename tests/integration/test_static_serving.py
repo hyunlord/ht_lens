@@ -1226,3 +1226,75 @@ async def test_index_css_styles_failed_job_row(api_db_path: Path, assets_root: P
     src = (assets_root / "css" / "index.css").read_text(encoding="utf-8")
     assert ".job-row--failed" in src
     assert ".job-dismiss" in src
+
+
+# --- v0.7 hotfix: summary banner collapsible + sidebar CSS cascade ---
+
+
+@pytest.mark.asyncio
+async def test_summary_banner_has_collapsible_dismiss_markers(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """v0.7 hotfix: the banner must default to collapsed and expose
+    close + toggle controls so it doesn't permanently push #stage below
+    the fold."""
+    src = (assets_root / "js" / "components" / "summary_banner.js").read_text(encoding="utf-8")
+    # State-machine attribute on the card.
+    assert 'card.dataset.state = "collapsed"' in src
+    # Toggle + close buttons.
+    assert "summary-banner-toggle" in src
+    assert "summary-banner-close" in src
+    # localStorage dismiss key prefix is stable.
+    assert "ht_lens.summary.dismissed." in src
+    # Preview cap exists.
+    assert "PREVIEW_CHARS = 200" in src
+
+
+@pytest.mark.asyncio
+async def test_viewer_css_has_collapsed_expanded_states(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    src = (assets_root / "css" / "viewer.css").read_text(encoding="utf-8")
+    # Expanded body gets a max-height + scroll instead of pushing #stage.
+    assert 'data-state="expanded"' in src
+    assert "max-height: 40vh" in src
+    # Collapsed preview is single-line ellipsis.
+    assert "text-overflow: ellipsis" in src
+    assert ".summary-banner-preview" in src
+
+
+@pytest.mark.asyncio
+async def test_chat_panel_css_does_not_clobber_sidebar_closed(
+    api_db_path: Path, assets_root: Path
+) -> None:
+    """v0.7 hotfix root cause guard: chat_panel.css used to have a
+    duplicate ``.viewer-shell { grid-template-columns: ... }`` rule
+    that overrode ``.viewer-shell--sidebar-closed`` by cascade order.
+
+    Lock the fix:
+    - the duplicate base rule must be gone (no lone ``.viewer-shell { ``
+      block at the top of the file);
+    - the state rules must use doubled-class selectors so their
+      specificity beats any later single-class redeclaration."""
+    src = (assets_root / "css" / "chat_panel.css").read_text(encoding="utf-8")
+
+    # The doubled-class selectors (the actual fix).
+    assert ".viewer-shell.viewer-shell.panel-open" in src
+    assert ".viewer-shell.viewer-shell--sidebar-closed:not(.panel-open)" in src
+    assert ".viewer-shell.viewer-shell--sidebar-closed.panel-open" in src
+
+    # Defense against the regression coming back: no lone
+    # ``.viewer-shell { grid-template-columns`` block at start of any line.
+    # (the doubled selectors above always span ``.viewer-shell.viewer-shell``.)
+    import re
+
+    bad = re.search(
+        r"^\.viewer-shell\s*\{\s*\n[^}]*grid-template-columns",
+        src,
+        flags=re.MULTILINE,
+    )
+    assert bad is None, (
+        "chat_panel.css must not re-declare ``.viewer-shell { grid-template-columns }`` "
+        "— it overrides ``.viewer-shell--sidebar-closed`` by cascade order. "
+        "Use doubled-class selectors instead."
+    )
