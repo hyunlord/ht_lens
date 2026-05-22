@@ -54,35 +54,35 @@ def _resolve(scoped_key: str, legacy_key: str, default: str | None = None) -> st
 
 
 def _resolve_int(scoped: str, legacy: str, default: int) -> int:
-    raw = _resolve(scoped, legacy)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        _log.warning(
-            "ignoring non-int env (%s=%r); falling back to %d",
-            scoped if os.environ.get(scoped) else legacy,
-            raw,
-            default,
-        )
-        return default
+    """scoped > legacy > default for ints. Invalid values at each layer
+    fall through to the next (R1 cross-verify §4-3: a stray
+    ``TRANSLATE_LLM_TIMEOUT=garbage`` must not silently shadow a working
+    legacy ``LLM_TIMEOUT``)."""
+    for key in (scoped, legacy):
+        raw = os.environ.get(key, "").strip()
+        if not raw:
+            continue
+        try:
+            return int(raw)
+        except ValueError:
+            _log.warning("ignoring non-int env %s=%r; trying next layer", key, raw)
+            continue
+    return default
 
 
 def _resolve_float(scoped: str, legacy: str, default: float) -> float:
-    raw = _resolve(scoped, legacy)
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        _log.warning(
-            "ignoring non-float env (%s=%r); falling back to %f",
-            scoped if os.environ.get(scoped) else legacy,
-            raw,
-            default,
-        )
-        return default
+    """scoped > legacy > default for floats. Invalid scoped values fall
+    through to legacy (R1 cross-verify §4-3)."""
+    for key in (scoped, legacy):
+        raw = os.environ.get(key, "").strip()
+        if not raw:
+            continue
+        try:
+            return float(raw)
+        except ValueError:
+            _log.warning("ignoring non-float env %s=%r; trying next layer", key, raw)
+            continue
+    return default
 
 
 def _build_client(

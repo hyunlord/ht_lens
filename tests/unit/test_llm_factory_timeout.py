@@ -70,12 +70,23 @@ def test_translate_scoped_timeout_overrides_legacy(monkeypatch: pytest.MonkeyPat
 
 
 def test_scoped_timeout_invalid_falls_back_to_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 6e R1 cross-verify §4-3 fix: invalid scoped timeout falls
+    through to the legacy slot (90), not silently to the built-in default."""
     _build_openai_compat_env(monkeypatch)
     monkeypatch.setenv("LLM_TIMEOUT", "90")
     monkeypatch.setenv("TRANSLATE_LLM_TIMEOUT", "not-a-number")
     from ht_lens.llm.factory import from_env_translate
 
     client = from_env_translate()
-    # falls back to default (60.0), not legacy (90) — current _resolve_float
-    # behaviour: invalid → log + default. Document the choice here.
+    assert _underlying_timeout_seconds(client) == pytest.approx(90.0)
+
+
+def test_invalid_at_both_layers_falls_back_to_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both scoped and legacy invalid → final default kicks in."""
+    _build_openai_compat_env(monkeypatch)
+    monkeypatch.setenv("LLM_TIMEOUT", "also-bad")
+    monkeypatch.setenv("TRANSLATE_LLM_TIMEOUT", "not-a-number")
+    from ht_lens.llm.factory import from_env_translate
+
+    client = from_env_translate()
     assert _underlying_timeout_seconds(client) == pytest.approx(60.0)

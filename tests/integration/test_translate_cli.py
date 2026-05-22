@@ -202,3 +202,28 @@ def test_translate_exit_3_without_alembic_version(tmp_path: Path) -> None:
         extra_env={"LLM_PROVIDER": "mock"},
     )
     assert proc.returncode == 3
+
+
+def test_translate_cli_prefers_translate_scoped_env_over_legacy(tmp_path: Path) -> None:
+    """Phase 6e R1 missing test (cross-verify §4-2): the CLI now calls
+    ``from_env_translate()`` which prefers ``TRANSLATE_LLM_PROVIDER``
+    over ``LLM_PROVIDER``. Pin the scoped var to ``mock_fail`` and the
+    legacy var to ``mock``; if the CLI still honoured the legacy var
+    every block would translate cleanly and the run would exit 0.
+    With the scoped var taking precedence, all blocks fail and the
+    process exits 1."""
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    proc = _run_translate(
+        "--doc-id",
+        str(doc_id),
+        db_path=db_path,
+        extra_env={
+            "LLM_PROVIDER": "mock",
+            "TRANSLATE_LLM_PROVIDER": "mock_fail",
+        },
+    )
+    assert proc.returncode == 1, (
+        f"expected exit 1 because TRANSLATE_LLM_PROVIDER=mock_fail should "
+        f"win over LLM_PROVIDER=mock; got {proc.returncode}.\n"
+        f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )

@@ -159,3 +159,118 @@ async def test_summarize_uses_chat_llm_override(api_db_path: Path, tmp_path: Pat
     # Summary content should come from the chat mock, not translate.
     assert body["summary"] is not None
     assert "<<CHAT_SUMMARIZE_CHAT>>" in body["summary"]
+
+
+@pytest.mark.asyncio
+async def test_process_upload_job_routes_translate_and_summary_to_distinct_clients(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 6e cross-verify R1 §4-1: prove that process_upload_job uses
+    app.state.translate_llm for the translate stage and app.state.chat_llm
+    for the summarize stage. We patch translate_document + summarize_document
+    so the test doesn't depend on extract/ingest mechanics — what we
+    actually verify is the dispatch."""
+    from datetime import UTC
+    from datetime import datetime as _dt
+    from types import SimpleNamespace
+
+    from ht_lens.db.models import Job
+    from ht_lens.jobs import pipeline as jobs_pipeline
+
+    translate_mock = _TaggedLLM("TR_PIPELINE")
+    chat_mock = _TaggedLLM("CHAT_PIPELINE")
+
+    seen: dict[str, object] = {}
+
+    async def fake_translate_document(doc_id, session, llm, *, on_progress=None):
+        seen["translate_llm"] = llm
+        from ht_lens.translate.pipeline import TranslateStats
+
+        return TranslateStats(document_id=doc_id, translated=1)
+
+    async def fake_summarize_document(doc_id, session, llm):
+        seen["summary_llm"] = llm
+        return "<<PHASE6E_SUMMARY>>"
+
+    async def fake_to_thread(func, *args, **kwargs):
+        # Skip extract_pdf — just no-op to let the pipeline proceed.
+        return None
+
+    async def fake_ingest_extract_dir(
+        extract_dir, session, *, src, tgt, overwrite, display_filename_override
+    ):
+        # Insert a Document row inline so summarize has something to query.
+        from ht_lens.db.models import Document
+        from ht_lens.ingest.pipeline import IngestStats
+
+        doc = Document(
+            filename=display_filename_override or "phase6e_fake.pdf",
+            src_lang="en",
+            tgt_lang="ko",
+            status="ready_for_translation",
+            src_pdf_sha256="7" * 64,
+            created_at=_dt.now(UTC),
+        )
+        session.add(doc)
+        await session.flush()
+        return IngestStats(document_id=doc.id, pages=1, blocks=1)
+
+    monkeypatch.setattr(jobs_pipeline, "translate_document", fake_translate_document)
+    monkeypatch.setattr(jobs_pipeline, "summarize_document", fake_summarize_document)
+    monkeypatch.setattr(jobs_pipeline, "ingest_extract_dir", fake_ingest_extract_dir)
+    monkeypatch.setattr(jobs_pipeline.asyncio, "to_thread", fake_to_thread)
+
+    # Set up app.state with the fake clients + a real session factory.
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+
+    # Pre-create the upload file path (process_upload_job checks it exists).
+    upload_file = tmp_path / "phase6e_fake.pdf"
+    upload_file.write_bytes(b"%PDF-1.4\n")
+
+    # Seed a pending job pointing at the fake file.
+    async with factory() as session:
+        job = Job(
+            type="process_upload",
+            status="pending",
+            upload_path=str(upload_file),
+            upload_filename="phase6e_fake.pdf",
+            upload_sha256="7" * 64,
+            progress_pct=0,
+            created_at=_dt.utcnow(),
+        )
+        session.add(job)
+        await session.commit()
+        job_id = job.id
+
+    # Mock FastAPI app with the state attrs process_upload_job reads.
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            session_factory=factory,
+            translate_llm=translate_mock,
+            chat_llm=chat_mock,
+        )
+    )
+
+    await jobs_pipeline.process_upload_job(job_id, app)
+    await engine.dispose()
+
+    assert seen.get("translate_llm") is translate_mock, (
+        f"translate stage must use translate_llm; got {type(seen.get('translate_llm'))}"
+    )
+    assert seen.get("summary_llm") is chat_mock, (
+        f"summary stage must use chat_llm; got {type(seen.get('summary_llm'))}"
+    )
+
+    # Confirm the job reached "done" status with the chat-mock summary.
+    async with make_engine(api_db_path).begin() as conn:
+        from sqlalchemy import text
+
+        row = (
+            await conn.execute(
+                text("SELECT status, error_message FROM jobs WHERE id = :id"),
+                {"id": job_id},
+            )
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "done", f"expected job done, got status={row[0]!r}, err={row[1]!r}"

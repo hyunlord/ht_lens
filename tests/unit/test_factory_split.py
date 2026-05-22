@@ -118,3 +118,17 @@ def test_from_env_does_not_emit_deprecation_warning() -> None:
     assert all(not issubclass(w.category, DeprecationWarning) for w in caught), (
         f"unexpected DeprecationWarning: {[w.message for w in caught]}"
     )
+
+
+def test_concrete_clients_satisfy_both_protocols() -> None:
+    """Phase 6e R1 cross-verify §3-claim fix: explicitly verify that the
+    concrete clients (MockLLMClient, OpenAICompatibleClient) satisfy
+    *both* TranslateLLMClient and ChatLLMClient via runtime_checkable
+    structural typing — the whole point of the alias-only legacy approach
+    is that this works."""
+    from ht_lens.llm.client import ChatLLMClient, TranslateLLMClient
+    from ht_lens.llm.mock import MockLLMClient
+
+    mc = MockLLMClient()
+    assert isinstance(mc, TranslateLLMClient)
+    assert isinstance(mc, ChatLLMClient)
