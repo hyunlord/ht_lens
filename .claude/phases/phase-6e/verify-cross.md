@@ -1,49 +1,45 @@
 ## 1. Verification of automated checks
 
-- `verify.md` is not stale. `HEAD` is still `203ec398` (`chore(phase-6e): verify v1`, 2026-05-23 00:47:22 +0900) and the worktree is clean, so there is no post-verify code drift to flag.
+- Round 1’s stale-verify problem is fixed. `HEAD` is now `0f0f1ee` (`chore(phase-6e): verify v2`) after the RE-CODE commit `90decbb`, and there are no later code commits on top of `verify.md`, so I am not re-raising staleness.
 
-- Lint / format / mypy / fast-test claims in `.claude/phases/phase-6e/verify.md:9-15` are temporally credible for current HEAD. I could not re-run them here because `uv` is unavailable in this environment, so I am not independently confirming the numbers.
+- The `lint` / `format` / `type` / `fast test` rows in `.claude/phases/phase-6e/verify.md:9-16` are plausible for current `HEAD`, but I could not independently rerun them here. This sandbox has no `uv`, no `shellcheck`, and `python3 -m pytest` dies before collection because it cannot obtain a writable temp directory.
 
-- Coverage is plausible but weakly evidenced. `pytest` is configured with `--cov=ht_lens --cov-report=term-missing` in `pyproject.toml:66-77`, and `make check` runs `test-fast` via pytest in `Makefile:17-20`, so a `TOTAL 69%` line is believable. They did not include the actual coverage excerpt.
+- The `coverage` row is credible but still documentary. `pyproject.toml:66-77` enables `--cov=ht_lens --cov-report=term-missing`, and `Makefile:17-20` routes `make check` through `test-fast`, so a `TOTAL 71%` line is mechanically plausible. The report does not include the actual coverage excerpt.
 
-- The `pytest -m llm` row should not count as current-HEAD evidence. `verify.md:14` explicitly says it is an old “R0 측정 7건”, not a rerun on this revision.
+- The `CI (local)` row is fairly stated in v2: it explicitly says `make check + shellcheck` at `.claude/phases/phase-6e/verify.md:15`, and CI really does add `shellcheck scripts/*.sh` before the Python jobs in `.github/workflows/ci.yml:15-18,39-49`. I could not reproduce the shellcheck step locally because `shellcheck` is absent in this sandbox.
 
-- `CI (local) = make check` is overstated. `make check` in `Makefile:20` does not include CI’s `shellcheck scripts/*.sh` step from `.github/workflows/ci.yml:15-17`, so one repo-defined automated check was not actually rerun locally.
-
-- `CI (remote)` is not evidence yet. `.github/workflows/ci.yml:39-49` shows the intended checks, but `verify.md:16` admits the real run is still pending push.
+- `CI (remote)` remains non-evidence. `.claude/phases/phase-6e/verify.md:16` still says “pending push”, so there is no GitHub Actions result tied to current `HEAD` yet.
 
 ## 2. Verification of functional checks
 
-- The core split is real in code: scoped factories exist in `src/ht_lens/llm/factory.py:136-179`, lifespan constructs both clients in `src/ht_lens/api/app.py:84-101`, and route DI is split across `src/ht_lens/api/routers/messages.py:77-82`, `blocks.py:55-60`, and `documents.py:121-126`.
+- The main Round 1 misses are fixed and I am not re-raising them. `tests/integration/test_phase6e_routing.py:165-276` now directly executes `jobs_pipeline.process_upload_job()`, and `tests/integration/test_translate_cli.py:207-229` now covers `TRANSLATE_LLM_PROVIDER` precedence in the CLI.
 
-- The three routing tests in `tests/integration/test_phase6e_routing.py:97-161` do credibly exercise `explain`, `retranslate`, and `summarize`. The startup failure cases in `tests/integration/test_api_startup.py:85-113` also credibly cover “one side healthy, the other unhealthy”.
+- The routing split itself is real in code. Two clients are created in `src/ht_lens/api/app.py:80-105`, route dependencies are split in `src/ht_lens/api/deps.py:33-50`, and the upload pipeline consumes `app.state.translate_llm` / `app.state.chat_llm` in `src/ht_lens/jobs/pipeline.py:108-113,200-220`.
 
-- The report overstates structural-typing verification. `verify.md:28` says runtime conformance was checked, but I found no test doing `isinstance(..., TranslateLLMClient)` or `isinstance(..., ChatLLMClient)`. What exists is source typing plus casts, not a runtime protocol check.
+- The functional checks credibly exercise the narrowed objective “route translate/chat traffic to scoped clients.” `test_phase6e_routing.py:97-161` covers explain/retranslate/summarize, `:165-276` covers upload-job dispatch, `test_translate_cli.py:207-229` covers CLI precedence, and `test_api_startup.py:85-115` covers asymmetric startup failures.
 
-- The report also overstates jobs-pipeline verification. `verify.md:51-53` and `:90` claim `process_upload_job()` is locked, and `tests/integration/test_phase6e_routing.py:1-12` even promises a fourth test for it, but the file ends at line 161 with only three tests. The only upload-pipeline test I found is a source-grep assertion in `tests/integration/test_api_uploads.py:227-235`, not execution of the new `app.state.translate_llm` / `app.state.chat_llm` path in `src/ht_lens/jobs/pipeline.py:102-113`.
-
-- The user-facing “env 1-line swap” story is still only partially exercised. `src/ht_lens/translate/cli.py:50-56` now uses `from_env_translate()`, but `tests/integration/test_translate_cli.py:100-179` still tests only legacy `LLM_*` envs, not `TRANSLATE_LLM_*`.
+- They still do not exercise the official Phase 6e DoD in `ROADMAP.md:329-335`. The report itself marks most of that DoD out of scope at `.claude/phases/phase-6e/verify.md:66-71`, including “viewer 재시작 불필요” and “README 일주일 실사용 캡처”. So the functional verification is good for the routing split, not for Phase 6e as written.
 
 ## 3. Score audit
 
-- 독창성 / 15: `13/15` is defensible. This is useful refactoring, but it is still mostly plumbing around `factory.py`, `api/deps.py`, and scoped env docs rather than a novel mechanism. I would keep `13/15`.
+- 독창성 `13/15`: justified. The split is pragmatic rather than novel, but the routing/factory separation in `src/ht_lens/llm/factory.py:136-179` and `src/ht_lens/api/deps.py:33-50` is clean and not over-engineered.
 
-- 완결성 / 35: `32/35` is too high. The self-report says all six call sites are locked (`verify.md:73`, `:90-95`), but `jobs/pipeline.py` and `translate/cli.py` are not functionally covered. Given the explicit out-of-scope roadmap items plus those verification gaps, `29/35` is fairer.
+- 완결성 `34/35`: not justified. The evidence supports the scoped-routing infrastructure, but the roadmap deliverables and DoD at `ROADMAP.md:318-335` are mostly untouched, and the report admits that at `.claude/phases/phase-6e/verify.md:66-71`. I would score `30/35`.
 
-- 안정성 / 30: `29/30` is too high. The new jobs path is unexecuted, the live-LLM row is stale, and local “CI” omitted shellcheck. Also, invalid scoped numeric env handling is only partially exercised. I would score `26/30`.
+- 안정성 `29/30`: somewhat high. The Round 1 routing gaps are fixed by real tests, but the RE-CODE changed shared numeric fallback helpers in `src/ht_lens/llm/factory.py:56-85` and only part of that new surface is explicitly locked in `tests/unit/test_llm_factory_timeout.py:72-92`. I would score `28/30`.
 
-- 확장성 / 20: `19/20` is slightly generous. The split is a good base for future model separation, but restart is still required and invalid scoped numeric vars silently fall back to built-in defaults in `src/ht_lens/llm/factory.py:56-85`, which weakens operational predictability. `18/20` fits better.
+- 확장성 `20/20`: too high. The env split is a solid base, but the roadmap’s “viewer restart 불필요” half remains unmet (`ROADMAP.md:334`, `.claude/phases/phase-6e/verify.md:69-70`), so I would not give full marks. `18/20` is fairer.
 
-- Suggested total: `86/100`.
+- Suggested total: `89/100`. The implementation looks materially better than Round 1, but the self-score of `96/100` over-credits a partial roadmap slice as if it were the whole phase.
 
 ## 4. Issues missed (new this round)
 
-- `process_upload_job()` introduced new state fields with no executable coverage. `src/ht_lens/jobs/pipeline.py:109-113` now reads `app.state.translate_llm` and `app.state.chat_llm`, but no test calls `process_upload_job()`. `tests/integration/test_phase6e_routing.py:1-12` promises this case and never implements it, while `tests/integration/test_api_uploads.py:227-235` is only a grep guard.
+- RE-CODE introduced new shared fallback behavior in `_resolve_int()` / `_resolve_float()` for all numeric envs, but only translate-timeout invalid cases are explicitly tested. `src/ht_lens/llm/factory.py:56-85` now governs `CHAT_LLM_TIMEOUT`, both `*_MAX_TOKENS`, and both `*_TEMPERATURE` paths too; the test suite only locks happy-path chat values in `tests/unit/test_factory_split.py:37-47` and one chat-timeout precedence case in `tests/unit/test_llm_factory_timeout.py:57-69`. That is a Round 2 untested new path.
 
-- The CLI’s new scoped-env path is untested. `src/ht_lens/translate/cli.py:50-56` switched from `from_env()` to `from_env_translate()`, but `tests/integration/test_translate_cli.py:100-179` only sets `LLM_PROVIDER` / `LLM_MODEL`. A regression where the CLI ignores `TRANSLATE_LLM_*` would currently pass.
+- The new structural-typing “fix” is only partial. `tests/unit/test_factory_split.py:123-134` claims to verify both `MockLLMClient` and `OpenAICompatibleClient`, but it instantiates only `MockLLMClient`. Because the factories cast concrete clients through `Any` in `src/ht_lens/llm/factory.py:88-103,149-179`, the real `OpenAICompatibleClient` runtime-protocol path is still unproven despite the self-report claiming it as locked.
 
-- Scoped numeric fallback semantics are inconsistent and under-tested. `src/ht_lens/llm/factory.py:56-85` treats invalid `TRANSLATE_LLM_TIMEOUT` / `CHAT_LLM_TIMEOUT` as “use built-in default”, not “fall back to working legacy `LLM_TIMEOUT`”. Only the translate-side invalid case is tested in `tests/unit/test_llm_factory_timeout.py:72-81`, and that test name says “falls_back_to_legacy” while asserting `60.0`. That is both a config footgun and a verification miss.
+- The split made `mock_fail` asymmetric in a more visible way, and verify does not mention it. Docs advertise `mock_fail` as a supported provider value generically in `docs/CONFIGURATION.md:25-35`, but `src/ht_lens/llm/mock.py:49-65` only overrides `translate()`. So `CHAT_LLM_PROVIDER=mock_fail` would still chat successfully and pass `health_check()`, which weakens failure-injection coverage for the new dual-client topology.
 
 ## 5. Verdict
 
-**DOWNGRADE** — the implementation looks directionally sound and the earlier debate-driven code fixes are present, so I would not reject or ask for a re-plan. But the self-verification is not strong enough to support a near-pass: it counts a stale live-LLM row, treats `make check` as CI-equivalent when shellcheck was not rerun, and overclaims coverage for `process_upload_job()` and the CLI’s new `TRANSLATE_LLM_*` path. A fairer assessment is around `86/100`, with the main follow-up being targeted tests for the jobs pipeline and CLI scoped-env routing.
+**DOWNGRADE** — Round 1’s substantive misses are fixed, and I do not see a concrete regression that justifies `REJECT`. But the self-assessment is still not credible at `96/100`: it scores a narrowly implemented routing split almost as if it satisfied the full Phase 6e roadmap, and the RE-CODE evidence leaves some newly introduced helper behavior only partially covered. A fairer current assessment is around `89/100`: solid infrastructure work, credible routing verification, but not a full Phase 6e pass on the evidence presented.
