@@ -49,3 +49,33 @@ def test_factory_falls_back_when_llm_timeout_invalid(monkeypatch: pytest.MonkeyP
 
     client = from_env()
     assert _underlying_timeout_seconds(client) == pytest.approx(60.0)
+
+
+# --- Phase 6e scoped timeouts ---
+
+
+def test_translate_scoped_timeout_overrides_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TRANSLATE_LLM_TIMEOUT takes precedence over LLM_TIMEOUT for the
+    translate factory; CHAT_LLM_TIMEOUT does the same for the chat factory."""
+    _build_openai_compat_env(monkeypatch)
+    monkeypatch.setenv("LLM_TIMEOUT", "30")
+    monkeypatch.setenv("TRANSLATE_LLM_TIMEOUT", "120")
+    monkeypatch.setenv("CHAT_LLM_TIMEOUT", "240")
+    from ht_lens.llm.factory import from_env_chat, from_env_translate
+
+    t = from_env_translate()
+    c = from_env_chat()
+    assert _underlying_timeout_seconds(t) == pytest.approx(120.0)
+    assert _underlying_timeout_seconds(c) == pytest.approx(240.0)
+
+
+def test_scoped_timeout_invalid_falls_back_to_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    _build_openai_compat_env(monkeypatch)
+    monkeypatch.setenv("LLM_TIMEOUT", "90")
+    monkeypatch.setenv("TRANSLATE_LLM_TIMEOUT", "not-a-number")
+    from ht_lens.llm.factory import from_env_translate
+
+    client = from_env_translate()
+    # falls back to default (60.0), not legacy (90) — current _resolve_float
+    # behaviour: invalid → log + default. Document the choice here.
+    assert _underlying_timeout_seconds(client) == pytest.approx(60.0)

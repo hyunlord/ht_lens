@@ -18,23 +18,31 @@ from ht_lens.llm.mock import MockLLMClient
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
+_LLM_ENV_PREFIXES = ("LLM_", "OLLAMA_", "TRANSLATE_LLM_", "CHAT_LLM_")
+
+
 @pytest.fixture(autouse=True)
 def _isolate_llm_env() -> object:
-    """Phase 6c R1 fix: ``create_app()`` calls ``load_dotenv()`` which
-    writes ``LLM_*`` / ``OLLAMA_*`` keys directly into ``os.environ``.
-    Those writes bypass pytest's monkeypatch tracking and persist across
-    tests — cross-verify R1 caught the leak between
-    ``test_api_startup::test_startup_fails_when_llm_health_check_returns_false``
-    (which calls create_app without pinning LLM_PROVIDER) and the
-    downstream ``test_api_threads`` suite (which then fell through to the
-    leaked real provider and timed out).
+    """Snapshot LLM-related env vars before each test, restore after.
 
-    Snapshot LLM_*/OLLAMA_* before each test, restore after."""
-    snapshot = {k: os.environ[k] for k in list(os.environ) if k.startswith(("LLM_", "OLLAMA_"))}
+    Phase 6c R1 fix: ``create_app()`` calls ``load_dotenv()`` which writes
+    ``LLM_*`` / ``OLLAMA_*`` keys directly into ``os.environ``. Those
+    writes bypass pytest's monkeypatch tracking and persist across tests.
+    The original cross-verify caught a leak between
+    ``test_api_startup`` (called create_app without pinning LLM_PROVIDER)
+    and the downstream ``test_api_threads`` suite which then fell through
+    to the leaked real provider and timed out.
+
+    Phase 6e extension: the split factory adds ``TRANSLATE_LLM_*`` and
+    ``CHAT_LLM_*`` scoped env vars (challenge §1-c keeps the prefix-
+    snapshot pattern rather than a hardcoded allowlist). Add those two
+    prefixes to the snapshot set so the scoped vars are isolated too.
+    """
+    snapshot = {k: os.environ[k] for k in list(os.environ) if k.startswith(_LLM_ENV_PREFIXES)}
     try:
         yield
     finally:
-        for k in [k for k in os.environ if k.startswith(("LLM_", "OLLAMA_"))]:
+        for k in [k for k in os.environ if k.startswith(_LLM_ENV_PREFIXES)]:
             if k not in snapshot:
                 del os.environ[k]
         for k, v in snapshot.items():

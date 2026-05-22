@@ -129,30 +129,60 @@ def make_test_client(
     db_path: Path,
     *,
     llm_override: Any | None = None,
+    translate_llm_override: Any | None = None,
+    chat_llm_override: Any | None = None,
     skip_llm_check: bool = True,
 ) -> Iterator[TestClient]:
-    """Return a TestClient with lifespan executed (DB path via env)."""
+    """Return a TestClient with lifespan executed (DB path via env).
+
+    Phase 6e split (challenge §2-b):
+    - ``llm_override`` (legacy) overrides BOTH the translate and chat
+      DI dependencies (and the legacy ``get_llm_client``) — backward-compat
+      for tests written before the split.
+    - ``translate_llm_override`` / ``chat_llm_override`` are scoped
+      overrides that take precedence over ``llm_override``.
+    """
     prev_db = os.environ.get("HT_LENS_DB_URL")
     prev_skip = os.environ.get("HT_LENS_SKIP_LLM_CHECK")
     prev_provider = os.environ.get("LLM_PROVIDER")
+    prev_t_provider = os.environ.get("TRANSLATE_LLM_PROVIDER")
+    prev_c_provider = os.environ.get("CHAT_LLM_PROVIDER")
     os.environ["HT_LENS_DB_URL"] = f"sqlite+aiosqlite:///{db_path}"
     if skip_llm_check:
         os.environ["HT_LENS_SKIP_LLM_CHECK"] = "1"
-    # Phase 6c R1 fix: pin mock provider when the caller hasn't opted in
-    # to something else. The autouse ``_isolate_llm_env`` fixture in
-    # tests/conftest.py snapshots LLM_*/OLLAMA_* at test entry, so by the
-    # time we reach here ``prev_provider`` reflects either the test's own
-    # ``monkeypatch.setenv("LLM_PROVIDER", ...)`` or nothing — never a
-    # leak from an earlier test.
+    # Phase 6c R1 fix: pin mock provider when the caller hasn't opted in.
+    # Phase 6e extension: pin BOTH scoped providers (otherwise an explicit
+    # ``LLM_PROVIDER=openai_compat`` from .env would still leak through
+    # the scoped TRANSLATE_LLM_PROVIDER / CHAT_LLM_PROVIDER fallback paths).
     if prev_provider is None:
         os.environ["LLM_PROVIDER"] = "mock"
+    if prev_t_provider is None:
+        os.environ["TRANSLATE_LLM_PROVIDER"] = "mock"
+    if prev_c_provider is None:
+        os.environ["CHAT_LLM_PROVIDER"] = "mock"
     try:
         from ht_lens.api.app import create_app
-        from ht_lens.api.deps import get_llm_client
+        from ht_lens.api.deps import (
+            get_chat_llm_client,
+            get_llm_client,
+            get_translate_llm_client,
+        )
 
         app = create_app()
-        if llm_override is not None:
-            app.dependency_overrides[get_llm_client] = lambda: llm_override
+        # Per challenge §2-b: scoped override takes precedence over the
+        # broad ``llm_override``.
+        translate_target = translate_llm_override or llm_override
+        chat_target = chat_llm_override or llm_override
+        if translate_target is not None:
+            app.dependency_overrides[get_translate_llm_client] = lambda: translate_target
+        if chat_target is not None:
+            app.dependency_overrides[get_chat_llm_client] = lambda: chat_target
+        # Legacy alias: tests that override ``get_llm_client`` directly
+        # still get their object. Default to translate_target when caller
+        # used llm_override (preserves pre-6e semantics).
+        legacy_target = llm_override or translate_llm_override or chat_llm_override
+        if legacy_target is not None:
+            app.dependency_overrides[get_llm_client] = lambda: legacy_target
         with TestClient(app) as client:
             yield client
     finally:
@@ -168,9 +198,17 @@ def make_test_client(
             os.environ.pop("LLM_PROVIDER", None)
         else:
             os.environ["LLM_PROVIDER"] = prev_provider
+        if prev_t_provider is None:
+            os.environ.pop("TRANSLATE_LLM_PROVIDER", None)
+        else:
+            os.environ["TRANSLATE_LLM_PROVIDER"] = prev_t_provider
+        if prev_c_provider is None:
+            os.environ.pop("CHAT_LLM_PROVIDER", None)
+        else:
+            os.environ["CHAT_LLM_PROVIDER"] = prev_c_provider
         # The autouse ``_isolate_llm_env`` fixture in tests/conftest.py
-        # restores LLM_*/OLLAMA_* keys to their pre-test snapshot, so we
-        # don't need to redo that work here.
+        # restores LLM_*/OLLAMA_*/TRANSLATE_LLM_*/CHAT_LLM_* keys to their
+        # pre-test snapshot, so we don't need to redo that work here.
 
 
 __all__ = ["SeededDoc", "make_test_client", "seed_minimal_document"]
