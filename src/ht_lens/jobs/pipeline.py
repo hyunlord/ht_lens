@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ht_lens.db.models import Job
 from ht_lens.extract.pipeline import extract_pdf
 from ht_lens.ingest.pipeline import ingest_extract_dir
-from ht_lens.llm.client import LLMClient
+from ht_lens.llm.client import ChatLLMClient, TranslateLLMClient
 from ht_lens.summarize.pipeline import SummarizeEmptyError, summarize_document
 from ht_lens.translate.pipeline import translate_document
 
@@ -106,7 +106,11 @@ async def process_upload_job(job_id: int, app: FastAPI) -> None:
     while extraction runs.
     """
     factory: async_sessionmaker[AsyncSession] = app.state.session_factory
-    llm: LLMClient = app.state.llm
+    # Phase 6e split (challenge §2-a): translate stage and summarize stage
+    # use distinct clients so max_tokens (2048 vs 4096) + temperature
+    # (0.0 vs 0.2) are correct for each path.
+    translate_llm: TranslateLLMClient = app.state.translate_llm
+    chat_llm: ChatLLMClient = app.state.chat_llm
 
     try:
         await update_job(
@@ -197,7 +201,7 @@ async def process_upload_job(job_id: int, app: FastAPI) -> None:
             await translate_document(
                 document_id,
                 session,
-                llm,
+                translate_llm,
                 on_progress=_on_progress,
             )
 
@@ -213,7 +217,7 @@ async def process_upload_job(job_id: int, app: FastAPI) -> None:
         summary_error: str | None = None
         try:
             async with factory() as session:
-                summary = await summarize_document(document_id, session, llm)
+                summary = await summarize_document(document_id, session, chat_llm)
                 from ht_lens.db.models import Document  # local to avoid cycle
 
                 doc = await session.get(Document, document_id)

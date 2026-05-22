@@ -10,11 +10,11 @@ from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ht_lens.api.deps import get_llm_client, get_session
+from ht_lens.api.deps import get_chat_llm_client, get_session
 from ht_lens.api.export_markdown import build_questions_markdown
 from ht_lens.api.schemas import DocumentRead
 from ht_lens.db.models import Document, Page
-from ht_lens.llm.client import LLMClient
+from ht_lens.llm.client import ChatLLMClient
 from ht_lens.summarize.pipeline import SummarizeEmptyError, summarize_document
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -122,7 +122,7 @@ async def export_questions_markdown(
 async def summarize_route(
     doc_id: int,
     session: Annotated[AsyncSession, Depends(get_session)],
-    llm: Annotated[LLMClient, Depends(get_llm_client)],
+    llm: Annotated[ChatLLMClient, Depends(get_chat_llm_client)],
 ) -> DocumentRead:
     """Phase 6d: manually (re-)generate the auto-summary for a document.
 

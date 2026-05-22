@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ht_lens.db.models import Block, Document, Page, Translation
-from ht_lens.llm.client import LLMClient
+from ht_lens.llm.client import ChatLLMClient
 
 # Empirical cap: ~8 KB of Korean text fits comfortably under the qwen3.6
 # 32k context window with headroom for the prompt and the response.
@@ -79,7 +79,7 @@ async def _fetch_translated_text(
     return "\n\n".join(chunks)[:max_chars]
 
 
-async def summarize_document(doc_id: int, session: AsyncSession, llm: LLMClient) -> str:
+async def summarize_document(doc_id: int, session: AsyncSession, llm: ChatLLMClient) -> str:
     """Generate a Korean abstract for ``doc_id``. The caller commits
     ``Document.summary`` / ``summarized_at`` — this function is pure
     (no DB writes) so it can be reused by the upload pipeline and the

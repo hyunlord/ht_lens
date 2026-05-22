@@ -48,11 +48,11 @@ def translate_command(
 ) -> None:
     """Translate all text/header blocks for a document."""
     from ht_lens.db.session import make_engine, make_session_factory
-    from ht_lens.llm.factory import from_env
+    from ht_lens.llm.factory import from_env_translate
     from ht_lens.translate.pipeline import translate_document
 
     db_path = db if db is not None else _db_path_from_env()
-    llm = from_env()
+    llm = from_env_translate()
 
     async def _run() -> None:
         if not dry_run:

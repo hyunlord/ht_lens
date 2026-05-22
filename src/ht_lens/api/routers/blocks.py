@@ -18,10 +18,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ht_lens.api.deps import get_chat_semaphore, get_llm_client, get_session
+from ht_lens.api.deps import get_chat_semaphore, get_session, get_translate_llm_client
 from ht_lens.api.schemas import RetranslateResponse, TranslationRead
 from ht_lens.db.models import Block, Document, Translation
-from ht_lens.llm.client import LLMClient
+from ht_lens.llm.client import TranslateLLMClient
 from ht_lens.llm.errors import LLMError, LLMPermanentError, LLMTransientError
 from ht_lens.translate.cache import cache_key as make_cache_key
 
@@ -56,7 +56,7 @@ def _map_llm_error(exc: LLMError) -> HTTPException:
 async def retranslate_block(
     block_id: int,
     session: Annotated[AsyncSession, Depends(get_session)],
-    llm: Annotated[LLMClient, Depends(get_llm_client)],
+    llm: Annotated[TranslateLLMClient, Depends(get_translate_llm_client)],
     sem: Annotated[asyncio.Semaphore, Depends(get_chat_semaphore)],
 ) -> RetranslateResponse:
     block = (

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ht_lens.db.models import Block, Document, Page, Translation
 from ht_lens.db.session import ALEMBIC_HEAD, current_schema_version
 from ht_lens.errors import SchemaVersionMismatch
-from ht_lens.llm.client import LLMClient
+from ht_lens.llm.client import TranslateLLMClient
 from ht_lens.llm.errors import LLMTransientError
 from ht_lens.translate.cache import cache_key as make_cache_key
 
@@ -39,7 +39,7 @@ class TranslateStats:
 async def translate_document(
     doc_id: int,
     session: AsyncSession,
-    llm: LLMClient,
+    llm: TranslateLLMClient,
     *,
     concurrency: int = 5,
     max_retries: int = 3,
@@ -113,7 +113,7 @@ async def _dry_run_stats(
     blocks: list[Block],
     doc: Document,
     session: AsyncSession,
-    llm: LLMClient,
+    llm: TranslateLLMClient,
     block_types: tuple[str, ...],
     stats: TranslateStats,
 ) -> TranslateStats:
@@ -140,7 +140,7 @@ async def _process_block(
     block: Block,
     doc: Document,
     session: AsyncSession,
-    llm: LLMClient,
+    llm: TranslateLLMClient,
     sem: asyncio.Semaphore,
     pending_cache: dict[str, str],
     stats: TranslateStats,
@@ -260,7 +260,7 @@ async def _upsert_translation(
 
 
 async def _translate_with_retry(
-    llm: LLMClient,
+    llm: TranslateLLMClient,
     text: str,
     src: str,
     tgt: str,

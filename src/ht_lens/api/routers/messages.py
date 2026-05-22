@@ -16,10 +16,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ht_lens.api.chat_context import BlockNotFoundError, build_block_context
-from ht_lens.api.deps import get_chat_semaphore, get_llm_client, get_session
+from ht_lens.api.deps import get_chat_llm_client, get_chat_semaphore, get_session
 from ht_lens.api.schemas import MessageCreate, MessageRead
 from ht_lens.db.models import Message, Thread
-from ht_lens.llm.client import LLMClient
+from ht_lens.llm.client import ChatLLMClient
 from ht_lens.llm.client import Message as LLMMessage
 from ht_lens.llm.errors import LLMError, LLMPermanentError, LLMTransientError
 
@@ -55,7 +55,7 @@ async def _thread_history(session: AsyncSession, thread_id: int) -> list[LLMMess
     return history
 
 
-def _llm_model_name(llm: LLMClient) -> str:
+def _llm_model_name(llm: ChatLLMClient) -> str:
     return str(getattr(llm, "model_name", "unknown"))
 
 
@@ -84,7 +84,7 @@ def _map_llm_error(exc: LLMError) -> HTTPException:
 async def explain_thread(
     thread_id: int,
     session: Annotated[AsyncSession, Depends(get_session)],
-    llm: Annotated[LLMClient, Depends(get_llm_client)],
+    llm: Annotated[ChatLLMClient, Depends(get_chat_llm_client)],
     sem: Annotated[asyncio.Semaphore, Depends(get_chat_semaphore)],
 ) -> MessageRead:
     thread = await _load_thread(session, thread_id)
@@ -136,7 +136,7 @@ async def post_message(
     thread_id: int,
     payload: MessageCreate,
     session: Annotated[AsyncSession, Depends(get_session)],
-    llm: Annotated[LLMClient, Depends(get_llm_client)],
+    llm: Annotated[ChatLLMClient, Depends(get_chat_llm_client)],
     sem: Annotated[asyncio.Semaphore, Depends(get_chat_semaphore)],
 ) -> MessageRead:
     thread = await _load_thread(session, thread_id)

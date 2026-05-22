@@ -38,7 +38,7 @@ from ht_lens.db.session import (
 from ht_lens.errors import SchemaVersionMismatch
 from ht_lens.jobs.pipeline import mark_in_flight_jobs_failed
 from ht_lens.llm.errors import LLMHealthCheckFailed
-from ht_lens.llm.factory import from_env
+from ht_lens.llm.factory import from_env_chat, from_env_translate
 
 _DEFAULT_DB = Path("data/ht_lens.db")
 _DEFAULT_UPLOADS_DIR = Path("data/uploads")
@@ -77,20 +77,31 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             "run `alembic upgrade head` before starting the API"
         )
 
-    llm = from_env()
+    # Phase 6e: build two LLM clients — translate path and chat path —
+    # via the scoped factories. The default config has both pointing at
+    # the same backend, but env vars (TRANSLATE_LLM_* / CHAT_LLM_*) can
+    # route them differently.
+    translate_llm = from_env_translate()
+    chat_llm = from_env_chat()
     if not _skip_llm_check():
-        try:
-            ok = await llm.health_check()
-        except LLMHealthCheckFailed:
-            await engine.dispose()
-            raise
-        if not ok:
-            await engine.dispose()
-            raise LLMHealthCheckFailed("LLM health_check returned False at startup")
+        for label, client in (("translate", translate_llm), ("chat", chat_llm)):
+            try:
+                ok = await client.health_check()
+            except LLMHealthCheckFailed:
+                await engine.dispose()
+                raise
+            if not ok:
+                await engine.dispose()
+                raise LLMHealthCheckFailed(f"{label} LLM health_check returned False at startup")
 
     app.state.engine = engine
     app.state.session_factory = factory
-    app.state.llm = llm
+    app.state.translate_llm = translate_llm
+    app.state.chat_llm = chat_llm
+    # Legacy alias: pre-Phase-6e code reads ``app.state.llm`` (e.g. some
+    # tests, future cli scripts). Points at the translate client because
+    # that is what ``from_env()`` returned historically.
+    app.state.llm = translate_llm
     app.state.chat_semaphore = asyncio.Semaphore(get_chat_concurrency())
 
     # Phase 6d: uploads directory + background-task pool + restart recovery.
