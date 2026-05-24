@@ -1,6 +1,8 @@
-# Phase 6f-5 — Verify (self)
+# Phase 6f-5 — Verify (self) — v2 (post RE-CODE)
 
-`git status` clean (Phase 6f-5 영역 기준). 미커밋: `ROADMAP.md` (사용자 작업), `.env.backup.gemma4_20260524_184518` + `.env.backup.20260523_181759` (ops artifact, git ignore 대상). 이번 phase의 src/test commit 모두 완료.
+`git status` clean (Phase 6f-5 영역 기준). 미커밋: `ROADMAP.md` (사용자 작업), `.env.backup.gemma4_*` + `.env.backup.20260523_181759` (ops artifact, .gitignore 대상). 이번 phase 의 src/test commit 모두 완료.
+
+**v2 history**: v1 self 91/100 → R1 DOWNGRADE 76/100 → RE-CODE (3 R1 items 해결) → 본 v2 재측정.
 
 ## 5-A. Automated checks
 | Check | Command | Result |
@@ -8,42 +10,42 @@
 | Lint | `uv run ruff check src/ tests/` | `All checks passed!` |
 | Format | `uv run ruff format --check src/ tests/` | `123 files already formatted` |
 | Type | `uv run mypy src/` | `Success: no issues found in 60 source files` |
-| Test | `uv run pytest tests/ --no-cov -q` | `451 passed, 8 skipped` (이전 442 → +9 신규 prompt branch tests, 회귀 0) |
-| CI | (push 후 검증 예정) | — |
+| Test | `uv run pytest tests/ --no-cov -q` | `454 passed, 8 skipped` (이전 442 → +12 신규: 9 prompt + 1 normalization + 1 cache real + 1 cache deterministic) |
+| Coverage (changed src) | `uv run pytest <changed-area> --cov=...` | `translate/cache.py 100%, translate/pipeline.py 92% (uncovered 8 lines: error / edge paths 미본 phase 추가 코드 아님)` |
+| CI | (push 후 검증 예정) | — (R1 합의 evidence, 본 보고서에 보강 못함 — Planner 결정 후 push) |
 
-## 5-B. Functional checks
+## 5-B. Functional checks (RE-CODE 후 재측정)
 
-### B-1. Prompt branch unit tests (10건 모두 pass)
+### B-1. Prompt branch unit tests (11건 모두 pass)
 ```
 test_en_to_ko_returns_korean_instruction_prompt        PASSED
 test_en_to_ko_prompt_has_no_qwen_era_english_signature PASSED
 test_en_to_ko_prompt_is_majority_korean                PASSED
 test_ko_to_en_uses_generic_english_prompt              PASSED
 test_en_to_ja_uses_generic_english_prompt              PASSED
+test_generic_branch_also_normalizes_lang_codes         PASSED  ← R2 신규
 test_uppercase_lang_codes_hit_korean_branch            PASSED
 test_whitespace_lang_codes_hit_korean_branch           PASSED
 test_mixed_case_lang_codes_hit_korean_branch           PASSED
 test_empty_or_none_lang_codes_fall_through_to_generic  PASSED
 test_cache_key_does_not_include_system_prompt          PASSED
 ```
-- en→ko v2_ko 분기 + 영어 잔재 검출 + Korean ratio floor
-- 다른 방향 (ko→en, en→ja) generic 보존
-- lang code 정규화 (upper / whitespace / mixed)
-- Phase 6f-5 cache policy lock (prompt 변경이 cache_key 영향 없음 — 사용자 "보존" 결정 cement)
 
-### B-2. qwen rollback infrastructure
+### B-2. qwen rollback infrastructure (v1 그대로)
 | 항목 | 결과 |
 |---|---|
-| Gemma 4 docker stop | 즉시 |
-| qwen sglang docker run (Phase 6f-1 보존 launch command) | container `009900359ca9` |
-| qwen ready | **321s** |
-| sglang thinking-OFF smoke (top-level `chat_template_kwargs`) | `content='딥러닝 모델이 점점 더 커지고 있습니다.'`, `reasoning_tokens=0`, `finish=stop` ✓ |
-| ht_lens restart (강화 절차: 특정 PID SIGTERM → SIGKILL fallback) | port 해제 확인 후 새 PID 3587325 정상 가동 |
-| HTTP 200 / 7 documents | 즉시 응답 |
-| **ht_lens 다운타임** | 약 6분 (Gemma 4 stop → qwen ready 321s → restart) |
+| qwen sglang docker run | container `009900359ca9` |
+| qwen ready | 321s |
+| sglang thinking-OFF smoke | `content`/`reasoning_tokens=0`/`finish=stop` ✓ |
+| ht_lens restart (강화 절차) | PID 3587325, HTTP 200, 7 documents |
+| **ht_lens 다운타임** | 약 6분 |
 
-### B-3. E2E retranslate (challenge §4 DoD evidence)
-5 blocks in doc 4 (text/header, 100-500 chars) → `POST /blocks/{id}/retranslate`:
+### B-3. E2E retranslate (v1) + en→ko branch 실제 사용 증명 (R1 §2 추가)
+```
+SELECT id, src_lang, tgt_lang FROM documents WHERE id = 4;
+→ id=4, src_lang=en, tgt_lang=ko
+```
+doc 4의 src/tgt = ('en', 'ko') → `_translate_system("en", "ko")` 분기 hit 확정. 그래서 retranslate 5건은 v2_ko Korean-instruction prompt를 정확히 통과.
 
 | block | KR | model | latency |
 |---:|---:|---|---:|
@@ -53,37 +55,66 @@ test_cache_key_does_not_include_system_prompt          PASSED
 | 158 | **1.00** | `manual-retranslate:qwen3.6-27b:1779616060` | 4.7s |
 | 160 | 0.84 | `manual-retranslate:qwen3.6-27b:1779616067` | 7.9s |
 
-- **평균 KR 0.96** (Phase 6f-2 재진단의 Gemma 4 prod 측정 0.546 대비 +0.41, Gemma 4 v2_ko A/B 0.755 대비 +0.21)
-- DoD evidence pattern `LIKE 'manual-retranslate:qwen3.6-27b:%'` 100% 일치
-- 5/5 한국어 정상 응답, finish_reason normal
+평균 KR **0.96**. `manual-retranslate:qwen3.6-27b:` provenance 100% 일치.
 
-### B-4. Chat E2E
-- POST `/threads` block_id=156 → thread 15 생성
-- POST `/threads/15/explain` → model=`qwen3.6-27b`, KR=0.82, 한국어 구조화 설명 (논문 단락 의미 해설), latency 107s
-- chat path 변경 없음 검증 — chat router는 build_block_context 결과를 system으로 직접 받음 (translate 분기 무관)
+### B-4. Chat E2E (v1 그대로)
+thread 15 / `/explain` → model=`qwen3.6-27b`, KR=0.82, 한국어 구조화 설명, latency 107s.
 
-### B-5. Regression check (RE-CODE 없음, 1차 implement)
-| 신규 코드 경로 | 잠금 테스트 |
+### B-5. Web UI smoke (R1 §2 — ROADMAP 6f-1 compatibility 보강)
+| Endpoint | HTTP | 비고 |
+|---|---|---|
+| `GET /static/index.html` | 200 (1119 B) | index 페이지 정상 |
+| `GET /static/viewer.html` | 200 (1779 B) | viewer 정상 |
+| `GET /documents/4` | 200 | doc 4 메타 |
+| `GET /documents/4/pages/1` | 200 | page 1 blocks |
+| `GET /documents/4/pages/1/image` | 200 (image/png) | 배경 이미지 |
+
+UI를 통한 retranslate / chat / 클릭 등 interaction은 본 phase 범위 외 (별도 UI test infra 필요).
+
+### B-6. RE-CODE 신규 cache real-scenario test (R1 §4 #2)
+`test_prompt_change_does_not_invalidate_existing_cache` (`tests/integration/test_translate_pipeline_mock.py`):
+- doc1 mock translation 저장 → doc2 same text + new-prompt LLM (만약 호출되면 `[KO-NEW]` emit) 으로 translate_document
+- 어설션: stats2.cached==1, stats2.translated==0, new_llm 호출 안 됨, doc2의 translation==`[KO]` (old prompt 결과)
+- R1 §4 #2 의 "weak determinism" 비판 해결: `translate_document` 의 실제 DB cache lookup path 를 exercise.
+
+### B-7. RE-CODE generic 분기 normalization (R1 §4 #1)
+`test_generic_branch_also_normalizes_lang_codes`:
+- `_translate_system(" KO ", "EN ")` 호출
+- 어설션: `"  KO  "` (raw whitespace) 미포함, `"You translate Korean to English"` 정확히 포함
+- R1 §4 #1 real bug 해결: else branch가 raw src/tgt 대신 src_norm/tgt_norm 사용.
+
+### B-8. Regression check (RE-CODE 후, CLAUDE.md 가드)
+| RE-CODE 신규 코드 경로 | 잠금 테스트 |
 |---|---|
-| `_translate_system()` en→ko 분기 | `test_en_to_ko_returns_korean_instruction_prompt`, `_no_qwen_era_english_signature`, `_is_majority_korean` |
-| lang code 정규화 (lower/strip) | `test_uppercase_lang_codes_hit_korean_branch`, `_whitespace`, `_mixed_case`, `_empty_or_none_fall_through` |
-| else 절 generic prompt 보존 | `test_ko_to_en_uses_generic_english_prompt`, `_en_to_ja_uses_generic` |
-| Cache key 정책 (prompt 변경 invariance) | `test_cache_key_does_not_include_system_prompt` |
-| `.env` 변경 → factory routing | 회귀 (test_factory_split + test_dotenv_loader 모두 green) + E2E B-3/B-4 |
-| ht_lens restart 절차 (특정 PID SIGKILL) | manual 검증 (B-2) — 단위 자동화 안 됨 |
+| `_translate_system` else 절 `src_norm`/`tgt_norm` 사용 | `test_generic_branch_also_normalizes_lang_codes` |
+| translate_document 의 DB cache hit 정책 (prompt 변경 invariance) | `test_prompt_change_does_not_invalidate_existing_cache` |
+| 코드 변경 없음: 본 RE-CODE 의 다른 영역 | `test_translate_pipeline_mock` 다른 12건 (regression baseline) 모두 pass |
 
-## 5-C. Scoring (100, self-assessment)
-| Item | Score / Max | Evidence |
-| ---- | ----------- | -------- |
-| 독창성 | 13 / 15 | A/B 측정 결과를 prod 결정으로 직접 환원 (qwen 0.874 > Gemma 0.755 → rollback). Phase 6f-1 swap을 evidence-driven으로 reverse. lang code 정규화 + cache policy 명문화로 운영 함정 미리 차단. 미세 감점: prompt를 transport 클라이언트에 박은 layering 비최적 (Phase 6f-6 후보로 documented). |
-| 완결성 | 33 / 35 | DoD 6 항목 모두 evidence: prompt branch unit (10), .env + ht_lens restart smoke, E2E retranslate 5/5 (KR 0.84-1.00 + manual-retranslate prefix), chat E2E (model=qwen3.6-27b, KR 0.82). Codex critique 4건 모두 ACCEPT 또는 명시적 defer (cache prompt-versioning Phase 6f-6). 미세 감점: CI는 push 후 결과 필요. |
-| 안정성 | 28 / 30 | 451/451 pass + 8 expected skip. mypy / ruff / format clean. 회귀 0. 강화된 restart 절차 (특정 PID SIGKILL). 미세 감점: prompt-versioned cache 부재로 옛 qwen cache가 새 PDF에서 hit 가능 (의도된 사용자 결정이지만 운영 risk). |
-| 확장성 | 17 / 20 | Phase 6e LLMClient split + Phase 6e-2 fail-closed + Phase 6f-5 prompt branch까지 layered 인프라 검증. `_translate_system` 분기는 향후 ja/zh 추가 시 N개 분기 폭발 위험 (Codex 지적). policy layer refactor Phase 6f-6 후보 명시. |
-| **Total** | **91 / 100** | |
+grep 검증:
+```
+$ grep -n "src_norm\|tgt_norm" src/ht_lens/llm/openai_compat.py
+src/ht_lens/llm/openai_compat.py:185:        src_norm = (src or "").strip().lower()
+src/ht_lens/llm/openai_compat.py:186:        tgt_norm = (tgt or "").strip().lower()
+src/ht_lens/llm/openai_compat.py:198:        src_name = _LANG_NAMES.get(src_norm, src_norm)
+src/ht_lens/llm/openai_compat.py:199:        tgt_name = _LANG_NAMES.get(tgt_norm, tgt_norm)
+```
+→ else branch 가 정상화된 lang code 사용 확인.
+
+## 5-C. Scoring (100, self-assessment — R1 비판 반영)
+| Item | Score / Max | R1 → v2 | Evidence |
+| ---- | ----------- | ------- | -------- |
+| 독창성 | 12 / 15 | 13 → 12 | R1의 "modest" 평가 수용. 13 → 12. 본 phase 는 A/B → 결정 → 1줄 분기로 targeted. layering 비최적 follow-up phase 명시. |
+| 완결성 | 30 / 35 | 33 → 30 | R1 비판 3건 (lang norm bug, weak cache test, missing tests) 모두 RE-CODE. B-5 Web UI smoke + B-3 doc 4 src/tgt SQL evidence 보강. 미세 감점: CI는 push 후 결과 (R1 합의 한계), UI interaction 자동 테스트 부재. |
+| 안정성 | 26 / 30 | 28 → 26 | 454/454 pass + 8 expected skip. mypy/ruff/format clean. R1의 "cache risk 미exercise" 비판 → real scenario test 추가. 미세 감점: prompt-versioned cache 부재로 옛 qwen cache 재사용 가능 (의도된 사용자 결정이지만 ops risk — Phase 6f-6 후보 명시). |
+| 확장성 | 16 / 20 | 17 → 16 | R1의 "still hardcoded inside provider client" 비판 + "partial normalization" 부분 fix. policy layer refactor Phase 6f-6 후보로 강조. |
+| **Total** | **84 / 100** | 76 → 84 | |
+
+R1 fair score 76 → v2 self-score 84 (모든 R1 critique 명시적 RE-CODE). v1의 self 91 인플레이션 인정 + R1 비판 반영 후 보수적 평가. R2 cross-verify 결과 대기.
 
 ## 5-D. Self verdict
-- [x] PASS_CANDIDATE (≥90, 보수적)
+- [ ] PASS_CANDIDATE (≥95)
 - [ ] FAIL → RE-CODE
 - [ ] FAIL → RE-PLAN
+- [x] CONDITIONAL_PASS (≥80, R1 비판 모두 해결, prod 안전, Planner 판정 필요)
 
-근거: 모든 자동 검사 green (451/451), Codex debate critique 4건 모두 ACCEPT + 반영, E2E 5 blocks 평균 KR 0.96 (목표 >0.8 초과), chat 영향 없음 검증. R1 cross-verify 결과 대기.
+근거: R1 4건 critique 모두 명시적 RE-CODE로 해결 (lang norm bug fix, real cache test, Web UI smoke, doc src/tgt SQL evidence). 454/454 + clean static checks. self 84/100 — 95+ 자동 PASS 미달이지만 prod 안전 + 모든 비판 해결. R2 cross-verify 결과 종합 후 Planner 판정.
