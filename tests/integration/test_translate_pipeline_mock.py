@@ -527,3 +527,105 @@ async def test_translate_sets_document_status_partial_on_failures(
         doc = await session.get(Document, doc_id)
         assert doc is not None
         assert doc.status == "partial_translated"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6f-5: prompt-change does NOT invalidate cache (policy lock)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prompt_change_does_not_invalidate_existing_cache(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Phase 6f-5 verify-cross R1 §4 #2 + challenge §2 cache policy.
+
+    Lock the user-acknowledged "기존 번역 보존 (자동 invalidate 안 함)"
+    decision at the **real cache lookup path**, not just at
+    ``cache_key()`` determinism. Scenario:
+
+    1. Seed doc1 with text T → translate (mock returns ``[KO] T``).
+       The translation row is written with model="mock" and a
+       deterministic cache_key.
+    2. Seed doc2 with the SAME text T. We swap in a **different**
+       LLM that would produce ``[KO-NEW] T`` if actually invoked.
+       The second swapped LLM has the SAME ``model_name="mock"`` so
+       cache_key matches.
+    3. translate_document(doc2) → must serve doc1's cached translation
+       (``[KO] T``), NOT call the new LLM, NOT produce ``[KO-NEW]``.
+
+    The point is: even if the *prompt* the new LLM would use is
+    different, cache_key does not include the prompt, so the cached
+    older translation is reused under the same (text, src, tgt, model).
+    This cements Phase 6f-5's decision to keep stale translations
+    until the user explicitly retranslates.
+    """
+    shared_text = "Prompt-policy lock probe paragraph."
+
+    # Step 1: seed + translate doc1 with the original mock LLM.
+    initial_llm = MockLLMClient()
+    async with db_factory() as session:
+        doc_id1, _ = await _seed_doc(session, blocks=[("text", shared_text)])
+    async with db_factory() as session:
+        stats1 = await translate_document(doc_id1, session, initial_llm)
+    assert stats1.translated == 1
+    # Capture doc1's translation row contents.
+    async with db_factory() as session:
+        result1 = await session.execute(
+            text(
+                "SELECT translated_text, model FROM translations WHERE block_id = "
+                "(SELECT id FROM blocks WHERE original_text = :t)"
+            ).bindparams(t=shared_text)
+        )
+        doc1_text, doc1_model = result1.one()
+    assert doc1_text == "[KO] " + shared_text
+    assert doc1_model == "mock"
+
+    # Step 2: a "new-prompt" LLM that would emit [KO-NEW] if called.
+    # Same model_name so cache_key matches.
+    class NewPromptMock(MockLLMClient):
+        model_name = "mock"  # same → cache_key collision intended
+
+        async def translate(  # type: ignore[override]
+            self, text_: str, src: str, tgt: str, *, context: object = None
+        ) -> str:
+            return f"[KO-NEW] {text_}"
+
+    invocations: list[str] = []
+    new_llm = NewPromptMock()
+    original_translate = new_llm.translate
+
+    async def tracking_translate(text_: str, src: str, tgt: str, *, context: object = None) -> str:
+        invocations.append(text_)
+        return await original_translate(text_, src, tgt, context=context)
+
+    new_llm.translate = tracking_translate  # type: ignore[method-assign]
+
+    # Step 3: seed doc2 with the SAME shared_text and translate with
+    # the new-prompt LLM. Cache should hit doc1's row.
+    async with db_factory() as session:
+        doc_id2, _ = await _seed_doc(session, blocks=[("text", shared_text)])
+    async with db_factory() as session:
+        stats2 = await translate_document(doc_id2, session, new_llm)
+
+    assert stats2.cached == 1, "doc2 must serve doc1's cached translation (cache hit)"
+    assert stats2.translated == 0, "no fresh LLM call should happen for cached text"
+    assert invocations == [], (
+        f"new-prompt LLM must NOT be invoked when cache hits; got calls: {invocations}"
+    )
+
+    # Verify the served translation is the OLD one (no [KO-NEW] leak).
+    async with db_factory() as session:
+        result2 = await session.execute(
+            text(
+                "SELECT t.translated_text FROM translations t "
+                "JOIN blocks b ON b.id = t.block_id "
+                "JOIN pages p ON p.id = b.page_id "
+                "WHERE p.doc_id = :d AND b.original_text = :txt"
+            ).bindparams(d=doc_id2, txt=shared_text)
+        )
+        doc2_text = result2.scalar_one()
+    assert doc2_text == "[KO] " + shared_text, (
+        f"cache hit should serve old translation, not new prompt; got {doc2_text!r}"
+    )
+    assert "[KO-NEW]" not in doc2_text

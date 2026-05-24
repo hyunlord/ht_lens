@@ -182,6 +182,10 @@ class OpenAICompatibleClient:
         # English prompt — this is the documented backward-compat path
         # for non-Korean targets. Codes are lower/stripped so "EN" / " ko"
         # still hit the v2_ko branch (Codex debate §2).
+        # Phase 6f-5 R2 fix: normalize for BOTH branches. Previously the
+        # generic else branch used raw ``src``/``tgt``, so a sloppy " KO "
+        # would render as "You translate  KO  to EN." with stray spaces
+        # (Codex verify-cross R1 §4 catch).
         src_norm = (src or "").strip().lower()
         tgt_norm = (tgt or "").strip().lower()
         if src_norm == "en" and tgt_norm == "ko":
@@ -194,8 +198,8 @@ class OpenAICompatibleClient:
                 "- 다음만 영어 유지: 고유명사 (GPT-4 등), 수식 ($...$), 코드, URL, arXiv ID.\n"
                 "- 번역문만 출력합니다. 설명 없음."
             )
-        src_name = _LANG_NAMES.get(src, src)
-        tgt_name = _LANG_NAMES.get(tgt, tgt)
+        src_name = _LANG_NAMES.get(src_norm, src_norm)
+        tgt_name = _LANG_NAMES.get(tgt_norm, tgt_norm)
         return (
             f"You translate {src_name} to {tgt_name}. "
             "Output only the translation. "

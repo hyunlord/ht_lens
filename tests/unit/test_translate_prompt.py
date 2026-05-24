@@ -89,6 +89,22 @@ def test_en_to_ja_uses_generic_english_prompt() -> None:
     assert "You translate English to Japanese" in p
 
 
+def test_generic_branch_also_normalizes_lang_codes() -> None:
+    """Phase 6f-5 R2 fix (Codex verify-cross R1 §4): the else-branch
+    must use the normalized lang codes too, otherwise sloppy input
+    like ``" KO "`` / ``"EN"`` for a ko→en doc renders as
+    ``You translate  KO  to EN.`` with stray spaces and ALL-CAPS that
+    bypass the ``_LANG_NAMES`` lookup."""
+    p = _prompt(" KO ", "EN ")
+    # Must NOT contain the raw, un-normalized fragment.
+    assert "  KO  " not in p, f"raw whitespace leaked: {p!r}"
+    assert "EN " not in p
+    # Must contain the normalized lookup result.
+    assert "You translate Korean to English" in p, (
+        f"normalized lang names not used in generic branch: {p!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Lang-code normalization (Codex debate §2)
 # ---------------------------------------------------------------------------
