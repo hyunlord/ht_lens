@@ -21,10 +21,13 @@ PDF ─► [Extractor] ─► page PNG + block JSON
                               ▼
               ┌──────────[FastAPI]──────────┐
               ▼                              ▼
-        [Static Viewer]              [LLMClient]
-        - 배경 + 오버레이             - OpenAI-compatible
-        - 채팅 패널                   - sglang / Ollama / OpenRouter
-        - 핀 + 질문 리스트            - Mock (test)
+        [Static Viewer]              [LLMClient (split)]
+        - 배경 + 오버레이             - TranslateLLMClient
+        - 채팅 패널                   - ChatLLMClient
+        - 핀 + 질문 리스트            - sglang / Ollama / OpenRouter
+        - 자동 요약                   - Mock (test)
+                                      └─ qwen3.6-27b FP8 (prod, 2026-05)
+                                         + v2_ko Korean-instruction prompt
 ```
 
 핵심 단위는 **block**. block이 곧 번역 단위이자 클릭 단위이자 질문 단위.
@@ -33,367 +36,447 @@ PDF ─► [Extractor] ─► page PNG + block JSON
 
 ## Tech Stack
 
-| 영역      | 선택                                                  |
-| --------- | ----------------------------------------------------- |
-| Backend   | Python 3.11, FastAPI, SQLAlchemy 2.0 async, SQLite    |
-| PDF       | PyMuPDF (fitz), Pillow                                |
-| LLM       | OpenAI-compatible 인터페이스 (sglang Qwen3.6 기본)    |
-| Frontend  | vanilla HTML/JS (Phase 4~5), 향후 Electron 옵션       |
-| Dev tools | uv, ruff, mypy strict, pytest, GitHub Actions         |
+| 영역      | 선택                                                              |
+| --------- | ----------------------------------------------------------------- |
+| Backend   | Python 3.11, FastAPI, SQLAlchemy 2.0 async, SQLite                |
+| PDF       | PyMuPDF (fitz), Pillow                                            |
+| LLM       | OpenAI-compatible 인터페이스 (sglang qwen3.6-27b FP8, 2026-05)    |
+| Frontend  | vanilla HTML/JS (Phase 4~5), 향후 Electron 옵션                   |
+| Dev tools | uv, ruff, mypy strict, pytest, GitHub Actions                     |
 
 ---
 
-## Data Model (Phase 2a 확정 예정)
+## Data Model
 
 ```text
-documents     (id, filename, src_lang, tgt_lang, status, created_at)
+documents     (id, filename, src_pdf_sha256, src_lang, tgt_lang, status, created_at)
 pages         (id, doc_id, page_num, width, height, bg_image_path)
 blocks        (id, page_id, type, bbox_json, order_idx, original_text)
                   type ∈ {text, image, header, table}
-translations  (block_id PK, translated_text, model, status, updated_at)
+translations  (block_id PK, translated_text, model, status, cache_key, updated_at)
 threads       (id, block_id, title, created_at)
 messages      (id, thread_id, role, content, model, created_at)
+jobs          (id, kind, status, progress, payload_json, created_at)
+summaries     (doc_id PK, content, model, updated_at)
 ```
 
 ---
 
 ## Phases
 
-각 Phase는 한 Claude Code/Codex 세션 단위에 맞도록 잘랐다. 다음 Phase로
-넘어가기 전 반드시 DoD를 만족해야 한다.
-
 ### Phase 0 — Skeleton & Harness ✅
-**Deliverable**: 빈 골격 + CI green.
-- 디렉토리 구조, pyproject(uv), ruff, mypy strict, pytest markers(`llm`, `slow`)
+- 디렉토리 구조, pyproject(uv), ruff, mypy strict, pytest markers
 - GitHub Actions, pre-commit, Makefile
-- conftest fixture placeholder (sample_*_pdf, llm_mock)
-
-**DoD**
-- `make check` 로컬 green
-- push 후 GitHub Actions green
-- `src/ht_lens/` 하위에 도메인 코드 없음
-
----
 
 ### Phase 1 — PDF Extractor ✅
-**Deliverable**: `python -m ht_lens.extract <pdf> -o <out>` CLI.
-- 페이지별 PNG (200dpi)
-- block JSON: `{id, type, bbox, order, text}`
-- 한/영/혼재 fixture로 회귀 테스트
-
-**DoD**
-- 3종 sample PDF 모두 block JSON이 사람이 봐도 합리적
-- snapshot test 통과
-- `extract` 의존성은 `pymupdf`, `pillow`, `langdetect` 정도로 제한
-
-**완료 노트**
-- 88/100 self-score, cross-verify DOWNGRADE→PASS
-- Known issues: 멀티컬럼 reading order, header heuristic 정확도, samples.md determinism — Phase 4/6에서 다룸
-- v5 RE-CODE로 stale verify + subprocess CLI 3-fixture + plan stale 정리
-
----
+- 페이지별 PNG (200dpi) + block JSON
+- 한/영/혼재 fixture 회귀 테스트
+- Known issues (Phase 6h): 멀티컬럼 reading order, header heuristic, samples.md determinism
 
 ### Phase 2a — DB + LLMClient + Ingest ✅
-**Deliverable**
-- SQLite + SQLAlchemy 2.0 async + Alembic migration
-- `LLMClient` Protocol + `MockLLMClient` (실제 LLM 호출 0건)
-- `python -m ht_lens.ingest <extract_dir>` — Phase 1 산출물을 DB로 적재
-- Phase 0의 `llm_mock` placeholder를 실제 mock 구현으로 교체
-
-**DoD**
-- 3종 fixture extract 산출물을 ingest 가능, DB 행 합리적
-- `LLMClient` interface 정의 + `MockLLMClient`로 unit test 통과
-- mypy strict (SQLAlchemy 2.0 typed 포함), ruff clean
-- end-to-end ingest 1회 동작 (CLI exit 0)
-- Alembic migration 1개 생성, 적용 가능
-
-**위험**
-- SQLAlchemy 2.0 async + mypy strict 호환 (typed Mapped[...] 작성)
-- Phase 1의 ExtractResult가 ingest와 정합한지
-- DB schema가 Phase 2b/3 워크로드에 충분한지
-
-**Out of scope**
-- 실제 LLM 호출 (Phase 2b)
-- 캐시 (Phase 2b)
-- 번역 파이프라인 (Phase 2b)
-
-**완료 노트**
-- 89/100 self-score, cross-verify Round 2 DOWNGRADE → Planner PASS
-- 97 tests pass (unit + integration), mypy strict 0 위반
-- Known debt: `documents.src_pdf_sha256` 미저장 → Phase 2b에서 migration 0002로 추가, `translations.cache_key` 컬럼도 같이 추가
-- Round 2 상한이 의도대로 작동 (Phase 1의 4라운드 → 2라운드 종결)
-
----
+- SQLite + SQLAlchemy 2.0 async + Alembic
+- `LLMClient` Protocol + `MockLLMClient`
+- 97 tests pass
 
 ### Phase 2b — Translation Pipeline ✅
-**Deliverable**
-- `OpenAICompatibleClient` (sglang Qwen3.6 기본, `enable_thinking=false`)
-- `python -m ht_lens.translate --doc-id <id>` — block 단위 번역 + 캐시
-- 캐시 키: `hash(text + src + tgt + model)` 기반
-- async + semaphore batch (concurrent N, 기본 5)
-- 실패 block 재시도 (`--retry-failed`)
+- `OpenAICompatibleClient` (sglang qwen3.6, `enable_thinking=false`)
+- block 단위 번역 + cache (`hash(text + src + tgt + model)`)
+- async + semaphore batch
+- 147 tests pass, v0.1 마일스톤
 
-**DoD**
-- short fixture (5~10 페이지) 실제 sglang 호출로 번역 가능
-- 재실행 시 캐시 hit으로 비용 0
-- 실패 block 재시도 동작
-- `reasoning_tokens == 0` 회귀 체크 (chat template 변경 감지)
-- `finish_reason == "length" + content == ""` 가드 (thinking 토글 깨졌을 때)
+### Phase 3 — FastAPI Server ✅
+- REST API + 채팅 컨텍스트 자동 구성 (block ±2, **Phase 6h-1에서 확장 예정**)
 
-**위험**
-- 공유 GPU 환경에서 sglang latency 변동
-- rate limit / 동시성 (batch 부하)
-- block 경계를 넘는 문장 처리
-- LLM-호출 테스트가 `make test`에서 자동 skip (marker `llm`)
-
-**Versioning**
-- **v0.1 달성**: Phase 2a + 2b 완료 시점
-
-**완료 노트**
-- 88/100 self-score, Round 2 REJECT → Planner-directed targeted fix → PASS
-- 147 tests pass (unit + integration), mypy strict 0 위반
-- exit code 체계 정립: 0=success / 1=block failure / 2=invalid input / 3=DB error / 4=health check failed
-- v0.1 마일스톤 달성 (Phase 2a + 2b 완료)
-- Known debt:
-  - Sequential translate loop → Phase 3에서 asyncio.gather 병렬화
-  - Live sglang DoD evidence → `@pytest.mark.llm` (CI endpoint 부재로 강제 skip)
-
----
-
-### Phase 3 — FastAPI Server ⬜
-**Deliverable**: REST API.
-- `GET /documents`, `/documents/{id}`, `/documents/{id}/pages/{n}`
-- `/documents/{id}/pages/{n}/image` (PNG stream)
-- `/threads`, `/threads/{id}`, `/threads/{id}/explain`, `/threads/{id}/messages`
-- 채팅 컨텍스트 자동 구성 (원문 + 번역 + 주변 ±2 block)
-
-**DoD**
-- httpie/curl로 시나리오 통과: 문서 조회 → 스레드 생성 → AI 응답
-- async 일관, pydantic schema 분리
-- 정적 파일 마운트 (`/static`, Phase 4용)
-
----
-
-### Phase 4 — Viewer Frontend ⬜
-**Deliverable**: 정적 뷰어 (vanilla HTML/JS).
-- 페이지 배경 PNG + block absolute 오버레이
-- 키보드 네비(←→), 원본/번역 토글(T), 줌
-- block hover/click (패널은 자리만)
-
-**DoD**
-- 실제 문서 한 권을 자연스럽게 읽을 수 있음
-- 한/영 폰트 fitting 80% 이상 만족
-- 줌·이동 부드러움
-
-**위험**
-- bbox 기반 폰트 크기 자동 조정 (특히 한글)
-- 이미지 위 텍스트 z-index
-- 회전 페이지 bbox-to-pixel 매핑 (Phase 1 known issue)
-
----
+### Phase 4 — Viewer Frontend ✅
+- 정적 뷰어 (vanilla HTML/JS), v0.2 마일스톤
 
 ### Phase 5 — Chat Panel + Pins + Question List ✅
-**Deliverable**
-- block 클릭 → 우측 채팅 패널 (AI 설명 / 직접 질문 / 꼬리질문)
-- 핀 표시 (thread 있는 block 우상단)
-- 좌측 사이드바 "질문" 탭 (전체 thread 목록, 페이지 점프)
-
-**DoD**
-- 문서 한 권 읽으며 10개 이상 질문 자연스럽게 누적
-- 닫았다 다시 열어도 핀/스레드 그대로
-- 마크다운/코드블럭 렌더링
-
-**완료 노트**
-- 97/100 self-score, Round 2 REJECT → Planner-directed targeted fix (3건) → PASS
-- 268 fast tests + 8 vendor/XSS node tests, mypy strict 0 위반
-- 35 신규 회귀 테스트 (vendor + chat + state transitions + migration guard)
-- vendor pattern: marked@11 ESM + DOMPurify@3 ESM (~166KB committed)
-- 함수 분리 패턴 정립: closePanel / discardPanel / togglePanel + readPanelSnapshot()
-- v0.3 마일스톤 달성 (Phase 0~5 완료, 일상 도구로 사용 가능)
-- 잔여 debt (Phase 6 흡수):
-  - Playwright 자동 시나리오 (현재 수동)
-  - CI jsdom 미설치 (일부 노드 테스트 silent skip 가능성)
-  - Streaming response (SSE)
-  - LLM-driven thread title (현재 first user message 첫 30자)
-
----
+- block 클릭 → 채팅 패널, 핀, 질문 사이드바
+- 268 fast tests, vendor pattern (marked@11 + DOMPurify@3 ESM)
+- v0.3 마일스톤
 
 ### Phase 6a — Critical UX gaps ✅
-**Deliverable**
-- Cmd+K 전체 검색 (원문+번역 동시)
-- 질문 → markdown export
-- block 단위 재번역
+- Cmd+K 검색, 질문 export, block 재번역 (manual-retranslate provenance)
+- v0.4 마일스톤
 
-**DoD**
-- Cmd+K로 임의 문구 찾고 점프 가능 (latency < 200ms for 10K blocks)
-- 질문 export markdown 한 파일로 받기 가능 + 사람이 읽기 좋음
-- block 우클릭 → 재번역 → 캐시 무효화 + 새 번역 표시
+### Phase 6b — Viewer Rework ✅
+- 좌우 분할 비교, 자연 스크롤, View mode 토글
+- v0.5 마일스톤
+
+### Phase 6c — Viewer Polish ✅
+- LLM env 로드 (단 CLI는 Phase 6e-2에서 별도 fix)
+- fit-to-width zoom, 사이드바 토글, 자연 스크롤 버그 fix
+- v0.6 마일스톤
+
+### Phase 6d — File Management + Summary ✅
+- 파일 업로드 + 자동 처리 체인 (extract → ingest → translate)
+- 자동 요약 (LLM)
+- v0.7 마일스톤
+- Known debt: 자동 요약 hierarchical 미적용 → Phase 6h
+
+### Phase 6e — LLMClient Infrastructure Split ✅
+**Deliverable**
+- `LLMClient` Protocol → `TranslateLLMClient` + `ChatLLMClient` 분리
+- `factory.from_env_translate()` + `factory.from_env_chat()`
+- 환경 변수 분리: `TRANSLATE_LLM_*` + `CHAT_LLM_*` (with `LLM_*` legacy fallback)
+- max_tokens: translate=2048, chat=4096 / temperature: 0.0 vs 0.2
 
 **완료 노트**
-- 96/100 Planner-adjusted (Worker 98 vs Codex R2 95 절충)
-- 305 fast tests + 6 LLM tests + 7 screenshots + tracked scenario
-- R1 4 substantive 결함 모두 fix (cache pollution / multiline export / whitespace search / confirm modal behavioural)
-- R2 verify-scope critique 4건은 Phase 6d 위임
-- v0.4 마일스톤 달성
+- 회귀 0 (403 → 427 tests), coverage 68% → 71%
+- 환경 변수 1줄로 모델 swap 가능 (Phase 6f-1, 6f-5에서 두 번 검증)
+- legacy `LLM_*` env 100% backward compat
 
 ---
 
-### Phase 6b — Viewer Rework ⬜
+### Phase 6e-2 — CLI .env Load + Fail-closed Provider ✅
 **Deliverable**
-- 좌우 분할 비교 뷰 (원문 | 번역 동시 표시)
-- 자연 스크롤 페이지 네비 (PDF처럼 연속 스크롤)
-- View mode 토글: `translation` / `original` / `both`
-- 채팅 패널 + 좌우 비교 충돌 회피 (자동 single-pane)
+- 🚨 Critical bug fix: CLI `ht-lens translate` 진입 시 `.env` 자동 load
+  (이전엔 누락 → silent mock 사용 위험, doc 4/5에서 654건 mock 오염 발생, 정리됨)
+- 공유 모듈 `src/ht_lens/dotenv_loader.py` (api/app.py + CLI 둘 다 사용)
+- Factory `_resolve_provider()` fail-closed (provider env unset이면 `LLMConfigurationError`)
+- LLMConfigurationError 신규 (exit code 5)
 
 **DoD**
-- 200 페이지 PDF에서 스크롤 부드러움 (메모리 < 500MB)
-- 좌우 비교에서 페이지/zoom/scroll 정확히 동기화
-- block hover/click이 양쪽 pane에 동기 반영
-- 검색/사이드바 점프가 자연 스크롤 위치로 정확히
+- 442 tests pass (+12 신규), 회귀 0
+- subprocess로 console-script launcher path 검증
+- missing-file branch + file-exists branch 양쪽 lock
+- mypy strict 0 위반
 
-**위험**
-- intersection observer + lazy ±1 페이지 마운트 정확도
-- side-by-side scroll 동기화
-- 메모리 누수 (스크롤 멀어진 페이지의 DOM unmount)
-- 검색/사이드바 점프 시 lazy mount 대기 race
+**완료 노트** (2026-05-23)
+- Score: v1 91 / v2 84 / cross R2 79 → Planner-directed micro-fix → push + CI green
+- Round 2 DOWNGRADE는 prod 코드 결함 0, evidence presentation only
+- 직전 mock 오염 사건의 root cause 해결
 
-**Versioning**: v0.5
+**Known debt → Phase 6e-3**
+- Status 마킹 provider 인식 (`_finalize_document_status`가 mock도 'translated'로 마킹 가능)
+- .env fix로 root cause 해결되어 발생 빈도 0이지만 fail-safe 강화 필요
 
 ---
 
-### Phase 6c — Viewer Polish ⬜
+### Phase 6f — Production Model 영역 (다층)
+
+prod 모델 swap + 운영 최적화. Phase 6e 인프라 활용으로 도메인 코드 변경 최소.
+
+#### Phase 6f-1 — Gemma 4 26B-A4B prod swap ✅ → Phase 6f-5에서 Reverse
+
+**진행 결과** (2026-05-23)
+- prod 모델 qwen3.6-27b → Gemma 4 26B-A4B-IT
+- sglang docker 8082, qwen 8081 정지 (weights KEEP)
+- 디스크 218GB 회복
+- 평가 근거: Phase E1.5 chrF +3.7, LLM-judge 3/3 우세
+- Latency +22% (4.78s), 메모리 -45% (49GB BF16)
+
+**🚨 Reverse 사유** (Phase 6f-5에서)
+- 사용자 실 사용에서 번역 일관성 문제 발견 (영어/한국어 섞임)
+- Phase E1.5 평가가 chrF/LLM-judge만 측정 → **본문 한국어 일관성 누락**
+- 정교한 재진단: pure_text 본문 KR qwen 0.789 vs gemma 0.429
+- A/B test: qwen baseline 0.867 vs gemma_tuned_v2 0.755
+- Matched-block 14/0 qwen 압도
+- → Phase 6f-5로 rollback
+
+**학습 (미래 평가 protocol에 반영)**
+- 자동 metric + LLM-judge 외 **본문 KR (한국어 일관성)** 측정 필수
+- 평가셋 카테고리에 fragment 포함하면 통계 왜곡 (pure_text 분리)
+- Cross-prompt comparison (model × prompt matrix) 필요
+
+#### Phase 6f-2 — MoE Kernel Tuning ❌ (취소)
+**취소 사유**: Phase 6f-5 rollback으로 prod 모델이 qwen3.6-27b (dense FP8).
+MoE kernel tuning 대상 (Gemma 4 26B-A4B MoE) prod 아님.
+
+미래 Gemma 4 또는 다른 MoE 모델 prod 진입 시 재검토.
+
+#### Phase 6f-3 — Graceful Shutdown ⬜
 **Deliverable**
-- LLM env 로드 fix (`.env`가 `ht-lens serve` 진입 시 자동 반영)
-- 페이지 진입 시 fit-to-width 자동 zoom
-- 좌측 사이드바 토글 (열기/닫기 버튼)
-- 자연 스크롤 버그 fix (스크롤 다운 시 다음 페이지 정확히 마운트)
-- 메인 메뉴 / 문서 리스트 돌아가기 네비
+- ht_lens FastAPI에 SIGTERM handler (현재 SIGTERM 무시 → SIGKILL 필요)
+- Lifespan teardown 정상 동작 (DB 연결 정리, 진행 중 job 안전 종료)
 
 **DoD**
-- viewer에서 받은 AI 응답이 진짜 sglang 호출 (mock 아님)
-- 새 페이지 진입 시 자동으로 viewport 폭 fit
-- 사이드바 토글 동작 (좌측 200px → 0px → 200px)
-- 자연 스크롤로 6 페이지 sample_mixed.pdf 끝까지 이동 가능
-- viewer 좌상단 ht_lens 로고 클릭 → index.html 복귀
-- localStorage에 사이드바 열림/닫힘 상태 저장
+- `kill <pid>`로 graceful shutdown, SIGKILL 없이 ~5초 안에 종료
+- 진행 중 job은 status 'interrupted'로 마킹
 
-**위험**
-- Phase 6b의 자연 스크롤 일부만 동작 (실 측정 후 확인)
-- fit-to-width 시 zoom state localStorage 충돌
-- 사이드바 토글 시 stage container width 재계산 비용
+**위험**: async cleanup race condition, sglang/LLM 호출 중 connection cleanup
 
-**Versioning**: v0.6
+**Versioning**: v0.9 일부
 
----
+#### Phase 6f-4 — Gemma 4 Prompt 재튜닝 ❌ (취소)
+**취소 사유**: Phase 6f-5 rollback으로 prod 모델이 qwen 복귀. Gemma 4 prompt 변경 의미 없음.
 
-### Phase 6d — File Management + Summary ⬜
+#### Phase 6f-5 — qwen Rollback + v2_ko Prompt ✅
+
 **Deliverable**
-- 파일 업로드 UI (드래그 앤 드롭 + 파일 선택 버튼)
-- 백엔드 PDF upload → extract → ingest → translate 자동 체인
-- 백그라운드 작업 상태 추적 (jobs 테이블 + 진행 polling)
-- 업로드된 문서의 자동 요약 생성 (LLM)
-- 업로드된 PDF는 `data/uploads/` 보관 + sha256 dedup
-- index.html에 작업 진행 현황 (active jobs)
+- prod 모델 Gemma 4 → **qwen3.6-27b** 복귀 (Phase 6f-1 reverse)
+- v2_ko Korean-instruction prompt 적용 (en→ko 분기, 다른 방향은 generic 보존)
+- Translate + chat 둘 다 qwen 통일
+- Gemma 4 sglang docker stopped, weights 49GB + Docker image KEEP (re-swap 보험)
 
 **DoD**
-- 사용자가 브라우저에서 PDF 드롭 → 자동 처리 → viewer 진입까지 한 흐름
-- 200 페이지 PDF 처리 1~2시간 안에 완료 + 진행 표시
-- 자동 요약은 적절한 길이 (300~500 단어), 한국어 자연스러움, 문서 첫 페이지에 thread로 자동 attach (또는 별도 영역)
-- 같은 sha256 PDF 재업로드 시 dedup (기존 doc_id 반환)
-- 작업 실패 시 명확한 에러 표시
+- E2E retranslate 평균 KR 0.96 (이전 Gemma 4 0.755 → +27% 개선)
+- 회귀 0 (442 → 454 tests, +12 신규)
+- ht_lens 다운타임 ~6분
+- chat E2E model=qwen3.6-27b, KR 0.82, 한국어 정상
 
-**위험**
-- 동시 업로드 시 race condition
-- 큰 PDF (>100MB) 업로드 시 메모리/HTTP timeout
-- 진행 polling vs SSE 선택
-- 요약 LLM prompt 설계
-- 업로드된 PDF의 file system 보안 (path traversal)
+**완료 노트** (2026-05-23)
+- Score: v1 91 / v2 84 / R2 79 → Planner-directed micro-fix → push + CI green (208s)
+- 10 commits (plan → debate → feat → verify v1 → cross R1 → RE-CODE → verify v2 → cross R2 → summary → R2 micro-fix)
+- src_lang/tgt_lang 분기 lock (en→ko만 v2_ko, 미래 ko→en/en→ja 대비)
+- manual-retranslate provenance prefix `qwen3.6-27b:<ts>` 검증
 
-**Versioning**: v0.7
+**평가 근거** (Phase E1.5 보완 + qwen A/B 재측정)
+- 본문 KR: qwen 0.874 vs gemma_v2 0.755 (+16%)
+- AllKor>85%: qwen 65% vs gemma 25% (2.6x)
+- Matched-block 14/20 qwen 우세, gemma 우세 0건
+- qwen baseline (no prompt fix) 0.867조차 gemma_v2 0.755 초과
+- Latency 비용 +1.4s (5.8s vs 4.4s) — 수용
+
+**Versioning**: v0.8.5 (v0.8 Phase 6e + 6f-1의 reverse + v2_ko prompt)
 
 ---
 
-### Phase 6e — Polish Pack ⬜
+### Phase 6f-6 — Prompt Policy Layer 분리 ⬜
+(Phase 6f-5 Codex debate §4 alternative, follow-up)
+
 **Deliverable**
-- 핀 표시 더 직관적 (색깔/크기/위치 개선, 멀티 thread 표시)
-- 사이드바 리사이즈 (좌우 드래그)
+- Transport-agnostic prompt management layer (OpenAICompatibleClient에서 분리)
+- 모델별 prompt 분기 인프라 (Gemma 4 / qwen / 미래 모델별 prompt template)
+- Cache prompt-versioning (prompt 변경 시 cache_key 자동 invalidate)
+- Phase 6f-5에서 import path / 함수 안 hardcode 결정 미룬 영역 정리
+
+**DoD**
+- Prompt 변경 → cache miss 자동
+- 모델별 prompt template 명시적 분리
+- LLMClient interface clean (transport vs prompt 분리)
+
+**Versioning**: v0.9 일부
+
+---
+
+### Phase 6f-7 — Verification 자동화 ⬜
+(Phase 6f-5 Option B (e) 위임)
+
+**Deliverable**
+- Rollback runbook script (.env backup + sglang docker swap + ht_lens restart 자동화)
+- CI 통합 강화 (PR마다 회귀 + coverage 임계값)
+- E2E smoke test 자동화 (현재 manual curl)
+
+**DoD**
+- `./scripts/rollback.sh <model_name>` 실행으로 rollback 자동
+- CI에서 coverage 임계값 강제
+- E2E test가 pytest로 실행 가능 (LLM mock 또는 live)
+
+**Versioning**: v0.9 일부
+
+---
+
+### Phase 6e-3 — Status 마킹 Provider 인식 ⬜
+(Phase 6e-2 scope-out)
+
+**Deliverable**
+- `_finalize_document_status`가 provider 종류 인식
+- mock provider 사용 시 status='translated_mock' 또는 'translated' 마킹 skip
+- 일부 block만 성공한 case 정확 status (실패 block 비율 기반)
+
+**DoD**
+- Mock provider run → documents.status 'translated' 안 됨
+- 부분 실패 → status='partial' 새 값 또는 명확한 의미
+- 회귀 0
+
+**위험**: 기존 documents 데이터의 status 호환성
+
+**Versioning**: v0.9 일부 (low priority, .env fix로 root cause 해결됨)
+
+---
+
+### Phase 6g — UI Polish Residual ⬜
+(이전 Phase 6e Polish Pack의 잔여)
+
+**Deliverable**
+- 핀 표시 더 직관적 (색깔/크기/위치, 멀티 thread 표시)
+- 사이드바 리사이즈 (좌우 드래그, 200px ~ 500px)
 - 작은 이미지/도표 클릭 시 확대 모달
-- streaming 응답 (SSE)
-- 모델 빠른 토글 (Qwen ↔ Gemma ↔ OpenRouter)
+- streaming 응답 (SSE) — Phase 5 debt
 - 백그라운드 작업 패널 (Phase 6d 기반 확장)
-- Playwright 자동 시나리오 (Phase 5 debt)
-- CI jsdom 설치 (Phase 5/6b debt)
-- LLM-driven thread title (Phase 5 debt)
-- + Phase 6a R2 위임 (multiline translated test, search 200ms 엄격 단언, LLM live re-run after RE-CODE)
+- Playwright 자동 시나리오 — Phase 5 debt
+- CI jsdom 설치 — Phase 5/6b debt
+- LLM-driven thread title — Phase 5 debt
+- (선택) 모델 빠른 토글 UI — Phase 6e 인프라 활용
 
-**DoD**
-- 핀 시각 만족도 (사용자 spot check)
-- 사이드바 리사이즈 부드러움 (200px ~ 500px)
-- 이미지 확대 단축키 + 클릭
-- streaming 1자씩 표시 (체감 latency 절반 이하)
-- 모델 env 1줄 변경으로 swap, viewer 재시작 불필요 정도
-- README 일주일 실사용 캡처
-
-**Versioning**: v0.8
+**Versioning**: v0.9
 
 ---
 
-### Phase 6f — Extraction Quality Debt ⬜
+### Phase 6h — Extraction Quality + 후처리 ⬜
+
 **Deliverable**
-- header heuristic 보강 (Phase 1 known issue)
-- 멀티컬럼 reading order (Phase 1 known issue)
+
+기존 (Phase 1 known issues):
+- header heuristic 보강 (49,738 block 중 190만 header)
+- 멀티컬럼 reading order
+- 표 cell + figure 안 텍스트 분리 (Phase E1.5 발견: 64.7% short fragment)
 - samples.md determinism 검증
-- 회전 페이지 bbox→pixel 정밀 매핑 (Phase 4 known issue)
-- + sample_ko.pdf 같은 큰 fixture (52+ 페이지) 추가 (Phase 6b R2 위임)
+- 회전 페이지 bbox→pixel 정밀 매핑
+- + 큰 fixture (52+ 페이지) 추가
+
+추가 (사용자 Phase 6f-5 발견 issues):
+- **Issue B 후처리**: 번역 일관성 강화 (영어 leak 검출 + 자동 재시도 rule)
+- 자동 요약 hierarchical (Phase 6d debt, 1000+ 페이지 PDF)
 
 **DoD**
-- 3 fixture에서 header 정확도 ≥ 90% (수동 spot check)
+- 3 fixture에서 header 정확도 ≥ 90%
 - 멀티컬럼 PDF에서 reading order 시각적 검증
-- samples.md 두 번 생성 시 diff 0
-- 회전 페이지 viewer에서 정확한 block 위치
-- 52+ 페이지 fixture로 자연 스크롤 메모리 실측
+- 표 cell fragment skip/grouping (cost ↓, 품질 ↑)
+- 자동 요약이 첫 N pages 아닌 전체 문서 반영
+- 영어 leak 자동 검출 + 재번역 rule 동작
 
-**위험**
-- Phase 1 코드 회귀
-- snapshot test 다수 갱신 필요
-- 시각적 검증 어려움 (자동화 부족)
+**위험**: Phase 1 코드 회귀, snapshot test 다수 갱신
 
 **Versioning**: v1.0
 
 ---
 
+### Phase 6h-1 — Section-level Chat Context ⬜
+(사용자 Phase 6f-5 발견 Issue C)
+
+**Deliverable**
+- 현재 chat context (block ±2, page boundary 고정) 확장
+- header 인식 + section boundary detect
+- "same_section" 옵션 (radius 외)
+- Cross-page lookup 가능
+- UI에서 "이 section 선택" 멀티 block 가능 (선택)
+
+**DoD**
+- 사용자가 "이 section 전체에 대해 설명" 질문 가능
+- 1000+ 페이지 PDF에서 section grouping 정확
+- chat 응답이 본 block 외 같은 section context 반영
+
+**선행 조건**: Phase 6h header heuristic 보강
+
+**Versioning**: v1.0 일부
+
+---
+
+### Phase 6h-2 — 번역 언어 옵션 UI/API ⬜
+(사용자 Phase 6f-5 발견 Issue A)
+
+**Deliverable**
+- Upload API에 src/tgt 파라미터 추가
+- UI에 lang selector (en→ko / ko→en / en→ja 등)
+- 사후 retranslate 시 방향 override
+- `extract/language.py` langdetect ko/en 외 확장 (ja/zh)
+- Phase 6f-5의 src_norm 분기 인프라 사용
+
+**DoD**
+- 한국어 PDF 업로드 → 영어로 번역 옵션 동작
+- UI에서 명시적 lang 토글
+- documents row의 src/tgt 변경 API (선택)
+
+**Versioning**: v1.0 일부
+
+---
+
+## Evaluation Track
+
+ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모델 결정용.
+
+### Phase E1 — Baseline Translation Evaluation ✅
+**완료** (2026-05-22)
+- ~/llm_eval/ sandbox + Python venv 분리
+- 평가셋 eval_v1.jsonl (~580 sample), 6 카테고리
+- 비교 모델 5개: qwen3.6-27b, Hy-MT2-7B (BF16/4bit), NLLB-200-1.3B, M2M-100-1.2B
+- 결과: qwen 5/6 카테고리 우세, NLLB/M2M ML 도메인 부적합
+
+### Phase E1.5 — Large Model Comparison ✅
+**완료** (2026-05-23, **본문 KR 측정 누락 → Phase 6f-1 잘못된 결론**)
+- 평가셋 확장 v2 (~739 sample)
+- 큰 PDF 4개 ingest: Murphy PML 1370p, Aggarwal RecSys 518p, Open-Sora arXiv, 2603.03482v1
+- 비교 모델 7개 중 5개 성공: qwen3.6-27b (baseline), Hy-MT2-30B-A3B 4bit, Gemma-4-31B-IT 4bit, Gemma-4-26B-A4B-IT BF16, Gemma 4 E2B/E4B
+- 실패: Qwen3.6-35B-A3B-FP8 (deep-gemm 의존성), TranslateGemma-27B (gated), DeepSeek-V4-Flash (149GB > 85GB GPU)
+- chrF + LLM-judge: Gemma 4 26B-A4B 우세 → Phase 6f-1 swap 결정
+- **사후 학습**: 본문 KR 누락 → Phase 6f-5 rollback
+
+### Phase E1.5 보완 — qwen A/B Re-measurement ✅
+**완료** (2026-05-23)
+- block 분류 (15 카테고리: pure_text / fragment / author_list / arxiv_meta / 등)
+- 본문 (pure_text) 일관성 측정: qwen 78.9% vs gemma 42.9%
+- Prompt A/B test: gemma_v2_ko 0.755 vs qwen_v2_ko 0.874
+- qwen A/B broken (raw HTTP에서 thinking mode 활성) → root cause fix (chat_template_kwargs top-level)
+- Matched-block 14/0 qwen 우세 → Phase 6f-5 rollback 결정
+
+### Phase E2 — LoRA Fine-tune (Conditional) ⬜
+**Entry condition**: 실 PDF 번역 사용 시 부족 영역 명확히 식별. 만족 시 skip.
+
+**ROI 재평가**: qwen baseline 0.867 이미 강함. Fine-tune 효과 작을 가능성. 진입 결정 신중.
+
+**Deliverable** (보존)
+- Base: qwen3.6-27b 또는 다른 모델
+- 데이터 4 소스 통합:
+  - AI Hub Tech-Science 한-영 corpus (~1.6M, 회원가입 필요)
+  - ht_lens 4 PDF + Claude/GPT 합성 reference
+  - arXiv abstract bilingual
+  - ufal/bilingual-abstracts-corpus
+- Framework: Unsloth + LLaMA-Factory 또는 PEFT
+
+**DoD**
+- 부족 영역 카테고리에서 chrF ≥ +3 개선
+- 회귀 카테고리 없음
+- LLM-judge: base 대비 우세 카테고리 ≥ 2/3
+
+**Versioning**: v1.0 일부 (conditional)
+
+---
+
 ## Versioning
 
-| 버전 | 시점               | 의미                              |
-| ---- | ------------------ | --------------------------------- |
-| v0.1 ✅ | Phase 2a + 2b 완료 | CLI로 번역 가능                   |
-| v0.2 ✅ | Phase 3 + 4 완료   | 브라우저에서 읽기 가능            |
-| v0.3 ✅ | Phase 5 완료       | Q&A 동작, 핀                      |
-| v0.4 ✅ | Phase 6a 완료      | 검색 + export + 재번역            |
-| v0.5 ✅ | Phase 6b 완료      | 좌우 비교 + 자연 스크롤           |
-| v0.6 ⬜ | Phase 6c 완료      | Viewer polish (env fix, 사이드바, 메인 메뉴) |
-| v0.7 ⬜ | Phase 6d 완료      | 파일 업로드 + 자동 요약            |
-| v0.8 ⬜ | Phase 6e 완료      | UI polish (리사이즈, 확대, streaming, 모델 토글) |
-| v1.0 ⬜ | Phase 6f 완료      | 추출 품질 (일상 도구 polish 완료) |
+| 버전 | 시점 | 의미 |
+| ---- | ---- | ---- |
+| v0.1 ✅ | Phase 2a + 2b 완료 | CLI로 번역 가능 |
+| v0.2 ✅ | Phase 3 + 4 완료 | 브라우저에서 읽기 가능 |
+| v0.3 ✅ | Phase 5 완료 | Q&A 동작, 핀 |
+| v0.4 ✅ | Phase 6a 완료 | 검색 + export + 재번역 |
+| v0.5 ✅ | Phase 6b 완료 | 좌우 비교 + 자연 스크롤 |
+| v0.6 ✅ | Phase 6c 완료 | Viewer polish |
+| v0.7 ✅ | Phase 6d 완료 | 파일 업로드 + 자동 요약 |
+| v0.8 ✅ | Phase 6e + 6e-2 완료 | LLMClient 분리 + CLI .env fix |
+| v0.8.5 ✅ | Phase 6f-1 → 6f-5 완료 | prod swap Gemma 4 → qwen rollback + v2_ko prompt |
+| v0.9 ⬜ | Phase 6f-3 + 6f-6 + 6f-7 + 6e-3 + 6g 완료 | Graceful shutdown + prompt policy + 자동화 + status fix + UI polish |
+| v1.0 ⬜ | Phase 6h + 6h-1 + 6h-2 (+ E2 conditional) 완료 | 추출 품질 + section context + lang UI |
 
 ---
 
 ## Risks & Open Questions
 
 - **Block grouping 정확도**: 멀티컬럼/표/캡션에서 휴리스틱이 자주 깨진다.
-  Phase 1에서 80% 잡고 진행, Phase 6에서 보강.
-- **공유 GPU 환경**: DGX Spark의 sglang은 다른 사용자/세션과 공유. latency
-  변동 가능. Phase 2b에서 부하 테스트 필요.
-- **Reasoning model의 thinking 토글**: Qwen3.6은 hybrid. `enable_thinking=false`
-  가 작동함을 확인 (pre-Phase-2 exploration). chat template 변경 시 회귀 체크 필수.
-- **폰트 fitting**: bbox에 텍스트 욱여넣기. 한글은 영문 대비 폭/높이가
-  다르다. `fitty` 류 또는 CSS `clamp()` 검토.
-- **Reading order**: 채팅 맥락 품질에 직결. 컬럼 인식 실패 시 엉뚱한
-  context가 들어간다.
-- **이미지 위 텍스트**: 다이어그램 라벨이 텍스트로 잡힐 때 오버레이가
-  깨진다. z-index/투명도 별도 처리.
-- **로컬 모델 품질**: 실데이터 풀번역 후 부족하면 OpenRouter / 다른 모델
-  추가. 인터페이스 swap 가능.
+  Phase 1에서 80% 잡고 진행, Phase 6h에서 보강.
+
+- **표/figure fragment 처리**: Phase E1.5 발견 — book2.pdf의 text block 중 64.7%가
+  1~30 char fragment. 현재는 다 번역하지만 cost만 늘리고 의미 부정확. Phase 6h.
+
+- **공유 GPU 환경**: DGX Spark의 sglang은 다른 사용자/세션과 공유. latency 변동 가능.
+
+- **Reasoning model의 thinking 토글**: qwen3.6 prod 운영 시 `enable_thinking=false` 명시 필요.
+  raw HTTP에선 `chat_template_kwargs` top-level (extra_body 안 nested 아님).
+  ht_lens는 OpenAI SDK 사용 → 정상.
+
+- **번역 일관성 (사용자 발견 Issue B)**: qwen + v2_ko로 본문 KR 0.96 달성.
+  Phase 6h에서 후처리 강화 (영어 leak 검출 + 자동 재시도).
+
+- **Chat context 큰 틀 grouping (사용자 발견 Issue C)**: 현재 block ±2 + page boundary.
+  Phase 6h-1에서 section-level 확장.
+
+- **번역 언어 옵션 (사용자 발견 Issue A)**: 현재 en→ko 단일. UI 토글 + 다른 방향 지원.
+  Phase 6h-2.
+
+- **폰트 fitting**: bbox에 텍스트 욱여넣기. 한글은 영문 대비 폭/높이 다르다.
+
+- **Reading order**: 채팅 맥락 품질에 직결. Phase 6h.
+
+- **로컬 모델 품질**: qwen3.6-27b prod 운영 중. baseline 강함 (본문 KR 0.867).
+  Phase E2 fine-tune ROI 신중 평가 (효과 작을 가능성).
+
+- **평가 framework 한계 (Phase 6f-1 → 6f-5 학습)**: chrF + LLM-judge만으로 부족.
+  본문 KR (한국어 일관성) 측정 의무. fragment 분리 + pure_text 통계.
+
+- **자동 요약 hierarchical**: Phase 6d debt. 1000+ 페이지 PDF는 첫 N pages만 요약이라 부정확.
+  Phase 6h.
 
 ---
 
@@ -402,5 +485,35 @@ messages      (id, thread_id, role, content, model, created_at)
 - 각 Phase는 별도 브랜치(`phase-N-<short-name>`)에서 작업, PR로 머지
 - 커밋: Conventional Commits (`feat:`, `fix:`, `chore:`, `refactor:`)
 - Phase 종료 시: ROADMAP의 해당 Phase ⬜ → ✅ 갱신, README 상태 갱신
+  - **주의**: Worker는 ROADMAP 수정 금지 (CLAUDE.md 규정). 사용자가 직접.
 - 위에 명시되지 않은 dependency 추가 시 ROADMAP에 근거 기록
 - Cross-verify는 phase당 max 2회 (WORKFLOW.md Stage 5-B 참조)
+  - R2 후 Planner-directed micro-fix는 허용 (Phase 6e / 6e-2 / 6f-5 선례)
+- Evaluation Track (E1, E1.5, E2)는 ht_lens 도메인 코드 변경 0,
+  외부 sandbox 작업. plan/debate/verify 워크플로우 적용 안 함.
+- **평가 protocol 의무 (Phase 6f-1 → 6f-5 학습)**:
+  새 모델 평가 시 chrF + LLM-judge + **본문 KR (pure_text 카테고리)** 모두 측정.
+  Cross-prompt comparison (model × prompt matrix) 필요.
+
+---
+
+## prod 운영 메모 (2026-05-23 현재)
+
+- **prod 모델**: qwen3.6-27b FP8 (sglang docker 8081)
+  - speculative decoding NEXTN (4 steps, eagle-topk 1)
+  - context 32768
+  - mem-fraction-static 0.70 → ~90GB GPU
+- **prompt**: v2_ko Korean-instruction (en→ko 분기, 다른 방향 generic 보존)
+- **rollback 자산**: Gemma 4 26B-A4B-IT weights 49GB (`~/hf_models/gemma-4-26b-a4b-it/`)
+  + sglang Docker image (qwen 공유, 정리 안 함)
+  + `.env.backup.gemma4_*` (Phase 6f-5 진행 중 자동 생성)
+  → re-swap 시간 ~3분
+- **ht_lens 서버**: 8080
+- **DB**: `data/ht_lens.db`
+  - 7 documents ingest됨 (sample_mixed, phase6d_demo 2개, Open-Sora arXiv, 2603.03482v1, Aggarwal RecSys textbook 518p, Murphy PML 1370p)
+  - Translations: qwen3.6-27b (대부분, Phase 6f-5 이후) + Gemma 4 26B-A4B-IT 654건 (Phase 6f-1 시기, 보존)
+- **평가 sandbox**: `~/llm_eval/`
+  - eval_v1.jsonl (Phase E1, 580 sample)
+  - eval_v2.jsonl (Phase E1.5, 739 sample)
+  - block_classification.json (15 카테고리)
+  - prompt A/B 결과 (Gemma 4 × 3 + qwen × 3, fixed pattern)
