@@ -26,6 +26,7 @@ import os
 from typing import Any, cast
 
 from ht_lens.llm.client import ChatLLMClient, LLMClient, TranslateLLMClient
+from ht_lens.llm.errors import LLMConfigurationError
 
 _log = logging.getLogger("ht_lens.llm.factory")
 
@@ -85,6 +86,31 @@ def _resolve_float(scoped: str, legacy: str, default: float) -> float:
     return default
 
 
+def _resolve_provider(scoped_key: str) -> str:
+    """Provider resolution with **fail-closed** semantics — Phase 6e-2.
+
+    Returns the explicit provider value (scoped > legacy). Raises
+    :class:`LLMConfigurationError` if **neither** ``scoped_key`` nor
+    ``LLM_PROVIDER`` is set (or both present but empty/whitespace).
+
+    The pre-Phase-6e-2 behavior silently fell through to ``"mock"``.
+    That allowed ``ht-lens translate`` to run with ``MockLLMClient``
+    when the user forgot to export env vars and the repo ``.env`` was
+    not loaded — polluting the DB with ``[KO] <english>`` output.
+
+    Tests / opt-in mock paths must set ``LLM_PROVIDER=mock`` (or the
+    scoped variant) **explicitly**. An explicit ``=mock`` is honored.
+    """
+    v = _resolve(scoped_key, "LLM_PROVIDER")
+    if v is None:
+        raise LLMConfigurationError(
+            f"No LLM provider configured. Set one of: {scoped_key}, LLM_PROVIDER. "
+            "If you intend to use the in-memory mock, export "
+            "LLM_PROVIDER=mock explicitly."
+        )
+    return v
+
+
 def _build_client(
     *,
     provider: str,
@@ -134,8 +160,12 @@ def _build_client(
 
 
 def from_env_translate() -> TranslateLLMClient:
-    """Build the translate-path LLM client. ``TRANSLATE_LLM_*`` > ``LLM_*``."""
-    provider = _resolve("TRANSLATE_LLM_PROVIDER", "LLM_PROVIDER", "mock") or "mock"
+    """Build the translate-path LLM client. ``TRANSLATE_LLM_*`` > ``LLM_*``.
+
+    Phase 6e-2: fail-closed — raises :class:`LLMConfigurationError` if
+    neither ``TRANSLATE_LLM_PROVIDER`` nor ``LLM_PROVIDER`` is set.
+    """
+    provider = _resolve_provider("TRANSLATE_LLM_PROVIDER")
     base_url = _resolve("TRANSLATE_LLM_BASE_URL", "LLM_BASE_URL")
     model = _resolve("TRANSLATE_LLM_MODEL", "LLM_MODEL")
     api_key = _resolve("TRANSLATE_LLM_API_KEY", "LLM_API_KEY", "EMPTY") or "EMPTY"
@@ -159,8 +189,12 @@ def from_env_translate() -> TranslateLLMClient:
 
 
 def from_env_chat() -> ChatLLMClient:
-    """Build the chat-path LLM client. ``CHAT_LLM_*`` > ``LLM_*``."""
-    provider = _resolve("CHAT_LLM_PROVIDER", "LLM_PROVIDER", "mock") or "mock"
+    """Build the chat-path LLM client. ``CHAT_LLM_*`` > ``LLM_*``.
+
+    Phase 6e-2: fail-closed — raises :class:`LLMConfigurationError` if
+    neither ``CHAT_LLM_PROVIDER`` nor ``LLM_PROVIDER`` is set.
+    """
+    provider = _resolve_provider("CHAT_LLM_PROVIDER")
     base_url = _resolve("CHAT_LLM_BASE_URL", "LLM_BASE_URL")
     model = _resolve("CHAT_LLM_MODEL", "LLM_MODEL")
     api_key = _resolve("CHAT_LLM_API_KEY", "LLM_API_KEY", "EMPTY") or "EMPTY"
