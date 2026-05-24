@@ -13,7 +13,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +34,7 @@ from ht_lens.db.session import (
     make_engine,
     make_session_factory,
 )
+from ht_lens.dotenv_loader import load_repo_dotenv
 from ht_lens.errors import SchemaVersionMismatch
 from ht_lens.jobs.pipeline import mark_in_flight_jobs_failed
 from ht_lens.llm.errors import LLMHealthCheckFailed
@@ -129,28 +129,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await engine.dispose()
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _load_repo_dotenv() -> None:
-    """Load the repo-root ``.env`` into ``os.environ`` before any LLM client
-    is constructed — Phase 6c fix.
-
-    ``override=False`` keeps explicit shell exports authoritative (test
-    suites can still pin ``LLM_PROVIDER=mock`` without the file overriding
-    them). Looking only at the repo root avoids the CWD-vs-repo-root
-    surprise raised in debate §3: a stray ``.env`` in the user's current
-    document folder cannot switch the LLM provider out from under them.
-    """
-    dotenv = _REPO_ROOT / ".env"
-    if dotenv.is_file():
-        load_dotenv(dotenv_path=dotenv, override=False)
+# Phase 6e-2: loader moved to ht_lens.dotenv_loader (shared with CLI).
+# Backward-compat alias kept for existing tests/integration/test_dotenv_load.py
+# which imports ``_load_repo_dotenv`` directly.
+_load_repo_dotenv = load_repo_dotenv
 
 
 def create_app() -> FastAPI:
     """Build the FastAPI app. Called by ``uvicorn`` and tests."""
     # Phase 6c: pull .env into os.environ BEFORE the lifespan factory runs.
-    _load_repo_dotenv()
+    load_repo_dotenv()
 
     app = FastAPI(
         title="ht_lens API",
