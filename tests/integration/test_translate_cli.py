@@ -15,7 +15,16 @@ def _run_translate(
     db_path: Path | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ}
+    # Phase 6e-2: drop inherited LLM env so subprocess starts clean.
+    # The CLI now calls load_repo_dotenv() before building the LLM, which
+    # would otherwise populate scoped TRANSLATE_LLM_* keys from the repo
+    # .env and silently override the legacy LLM_PROVIDER the test sets
+    # via extra_env. extra_env still controls what the test exercises.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("LLM_", "TRANSLATE_LLM_", "CHAT_LLM_", "OLLAMA_"))
+    }
     if db_path is not None:
         env["HT_LENS_DB_URL"] = f"sqlite+aiosqlite:///{db_path}"
     if extra_env:
@@ -134,28 +143,37 @@ def test_translate_dry_run_exit_0(tmp_path: Path) -> None:
 
 
 def test_translate_exit_1_on_block_failure(tmp_path: Path) -> None:
-    """LLM_PROVIDER=mock_fail → every block fails → exit 1."""
+    """TRANSLATE_LLM_PROVIDER=mock_fail → every block fails → exit 1.
+
+    Phase 6e-2: switched from legacy ``LLM_PROVIDER`` to scoped
+    ``TRANSLATE_LLM_PROVIDER`` so the test wins over the repo ``.env``
+    (which sets the scoped var to ``openai_compat`` for prod). Scoped >
+    legacy is documented Phase 6e precedence.
+    """
     db_path, doc_id = _setup_db_with_doc(tmp_path)
     proc = _run_translate(
         "--doc-id",
         str(doc_id),
         db_path=db_path,
-        extra_env={"LLM_PROVIDER": "mock_fail"},
+        extra_env={"TRANSLATE_LLM_PROVIDER": "mock_fail"},
     )
     assert proc.returncode == 1, (proc.stdout, proc.stderr)
 
 
 def test_translate_exit_4_on_health_check_failed(tmp_path: Path) -> None:
-    """Unreachable openai_compat endpoint without --dry-run → health_check fails → exit 4."""
+    """Unreachable openai_compat endpoint without --dry-run → health_check fails → exit 4.
+
+    Phase 6e-2: scoped vars so the test wins over repo ``.env``.
+    """
     db_path, doc_id = _setup_db_with_doc(tmp_path)
     proc = _run_translate(
         "--doc-id",
         str(doc_id),
         db_path=db_path,
         extra_env={
-            "LLM_PROVIDER": "openai_compat",
-            "LLM_BASE_URL": "http://localhost:1",
-            "LLM_MODEL": "test-model",
+            "TRANSLATE_LLM_PROVIDER": "openai_compat",
+            "TRANSLATE_LLM_BASE_URL": "http://localhost:1",
+            "TRANSLATE_LLM_MODEL": "test-model",
         },
     )
     assert proc.returncode == 4, (proc.stdout, proc.stderr)
@@ -227,3 +245,86 @@ def test_translate_cli_prefers_translate_scoped_env_over_legacy(tmp_path: Path) 
         f"win over LLM_PROVIDER=mock; got {proc.returncode}.\n"
         f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 6e-2: CLI .env load + fail-closed regression coverage
+# ---------------------------------------------------------------------------
+
+
+def test_module_entrypoint_loads_repo_root_dotenv_without_env_exports(
+    tmp_path: Path,
+) -> None:
+    """Phase 6e-2 (Codex debate §5 #1): ``python -m ht_lens.translate``
+    with all ``LLM_*`` / ``TRANSLATE_LLM_*`` env cleared must still pick
+    up the repo-root ``.env`` and reach the openai_compat provider —
+    not silently fall back to mock.
+
+    Skipped on checkouts without ``.env`` (CI without secrets).
+    """
+    if not (REPO / ".env").is_file():
+        import pytest
+
+        pytest.skip("repo .env not present in this checkout")
+
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    # No extra_env → subprocess starts with all LLM keys cleared by
+    # _run_translate, then loads repo .env. Phase 6f-1 .env points at
+    # http://localhost:8082 with the openai_compat provider. The
+    # subprocess will either (a) reach a running endpoint and exit 0/1
+    # depending on outcome, or (b) hit health_check failure and exit 4.
+    # Either is acceptable — the regression we guard against is exit 0
+    # with mock-style ``[KO] <english>`` output, which means the .env
+    # never loaded and factory silently fell back to mock.
+    proc = _run_translate(
+        "--doc-id",
+        str(doc_id),
+        db_path=db_path,
+    )
+    assert "[KO]" not in proc.stdout, (
+        f"mock fallback detected (mock would emit '[KO] ...'). "
+        f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    # Exit code 5 (LLMConfigurationError) would indicate .env didn't
+    # load AND no env exports were present — that is the wrong outcome
+    # when .env IS present. The .env IS present here, so the call
+    # should NOT exit 5.
+    assert proc.returncode != 5, (
+        f"factory raised LLMConfigurationError despite .env being present "
+        f"(load_repo_dotenv() did not run).\n"
+        f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+
+
+def test_module_entrypoint_fails_closed_when_dotenv_absent(
+    tmp_path: Path,
+) -> None:
+    """Phase 6e-2 (Codex debate §2): when ``.env`` is absent AND no env
+    exports are set, the CLI must exit 5 (LLMConfigurationError),
+    NOT silently use mock. We simulate "no .env" by pointing the
+    subprocess at a tmp working directory that has no .env (it falls
+    back to the package's resolved repo root, but the loader is
+    no-op when that file is missing — and our env clears all keys)."""
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    # If repo .env exists, this test can't fully simulate "absent .env"
+    # since load_repo_dotenv() looks at the resolved package root, not
+    # CWD. We assert the *complementary* invariant: with .env present,
+    # the factory must NOT fall back to mock when no exports were set.
+    if (REPO / ".env").is_file():
+        import pytest
+
+        pytest.skip(
+            "repo .env present; covered by "
+            "test_module_entrypoint_loads_repo_root_dotenv_without_env_exports"
+        )
+    proc = _run_translate(
+        "--doc-id",
+        str(doc_id),
+        db_path=db_path,
+    )
+    assert proc.returncode == 5, (
+        f"expected exit 5 (LLMConfigurationError) when neither .env nor "
+        f"env exports configure a provider; got {proc.returncode}.\n"
+        f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    assert "[KO]" not in proc.stdout, "must not silently produce mock output"

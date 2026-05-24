@@ -54,10 +54,21 @@ async def test_mock_client_satisfies_protocol() -> None:
     assert await client.health_check() is True
 
 
-def test_from_env_returns_mock_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("LLM_PROVIDER", raising=False)
-    client = from_env()
-    assert isinstance(client, MockLLMClient)
+def test_from_env_fails_closed_when_no_provider_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 6e-2 — pre-6e-2 behavior was to return MockLLMClient when
+    no env var was set ("silent mock fallback"). That allowed CLI runs
+    without ``.env`` to pollute the DB with ``[KO] <english>`` mock
+    output. The factory now fails closed; tests / dev paths that want
+    mock must export ``LLM_PROVIDER=mock`` explicitly.
+    """
+    from ht_lens.llm.errors import LLMConfigurationError
+
+    for k in ("LLM_PROVIDER", "TRANSLATE_LLM_PROVIDER", "CHAT_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    with pytest.raises(LLMConfigurationError):
+        from_env()
 
 
 def test_from_env_returns_mock_when_set(monkeypatch: pytest.MonkeyPatch) -> None:

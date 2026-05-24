@@ -108,10 +108,18 @@ def test_scoped_empty_string_falls_back_to_legacy(
     assert client.model_name == "legacy-model"
 
 
-def test_from_env_does_not_emit_deprecation_warning() -> None:
+def test_from_env_does_not_emit_deprecation_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Challenge §1-b — legacy ``from_env()`` is preserved as a thin
     delegation; no ``DeprecationWarning`` in this phase. Add the warning
-    when a second concrete client lands."""
+    when a second concrete client lands.
+
+    Phase 6e-2: pin explicit ``LLM_PROVIDER=mock`` so the underlying
+    ``from_env_translate()`` does not fail-closed for missing provider.
+    The test's intent (warning behavior) is unchanged.
+    """
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         from_env()
@@ -241,3 +249,102 @@ def test_openai_client_implements_chat_protocol() -> None:
         temperature=0.2,
     )
     assert isinstance(client, ChatLLMClient)
+
+
+# ---------------------------------------------------------------------------
+# Phase 6e-2: fail-closed provider resolution
+# ---------------------------------------------------------------------------
+
+
+def test_translate_factory_raises_when_no_provider_env_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ``LLM_PROVIDER`` / ``TRANSLATE_LLM_PROVIDER`` set → raise
+    instead of silent mock fallback. This is the regression that lets
+    ``ht-lens translate`` pollute the DB with mock output."""
+    from ht_lens.llm.errors import LLMConfigurationError
+
+    for key in ("LLM_PROVIDER", "TRANSLATE_LLM_PROVIDER", "CHAT_LLM_PROVIDER"):
+        monkeypatch.delenv(key, raising=False)
+    with pytest.raises(LLMConfigurationError, match="No LLM provider configured"):
+        from_env_translate()
+
+
+def test_chat_factory_raises_when_no_provider_env_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ht_lens.llm.errors import LLMConfigurationError
+
+    for key in ("LLM_PROVIDER", "TRANSLATE_LLM_PROVIDER", "CHAT_LLM_PROVIDER"):
+        monkeypatch.delenv(key, raising=False)
+    with pytest.raises(LLMConfigurationError, match="No LLM provider configured"):
+        from_env_chat()
+
+
+def test_explicit_legacy_mock_still_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicit ``LLM_PROVIDER=mock`` is honored (test opt-in)."""
+    from ht_lens.llm.mock import MockLLMClient
+
+    for key in ("TRANSLATE_LLM_PROVIDER", "CHAT_LLM_PROVIDER"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    t = from_env_translate()
+    c = from_env_chat()
+    assert isinstance(t, MockLLMClient)
+    assert isinstance(c, MockLLMClient)
+
+
+def test_explicit_scoped_mock_still_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``TRANSLATE_LLM_PROVIDER=mock`` opts into mock for translate only."""
+    from ht_lens.llm.mock import MockLLMClient
+
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("CHAT_LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("TRANSLATE_LLM_PROVIDER", "mock")
+    t = from_env_translate()
+    assert isinstance(t, MockLLMClient)
+
+    # CHAT_LLM_PROVIDER unset and no legacy → chat still fails closed.
+    from ht_lens.llm.errors import LLMConfigurationError
+
+    with pytest.raises(LLMConfigurationError):
+        from_env_chat()
+
+
+def test_empty_provider_value_treated_as_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``LLM_PROVIDER=`` (empty) or whitespace-only must NOT silently
+    select mock — debate §3 partial coverage."""
+    from ht_lens.llm.errors import LLMConfigurationError
+
+    for k in ("TRANSLATE_LLM_PROVIDER", "CHAT_LLM_PROVIDER"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "   ")
+    with pytest.raises(LLMConfigurationError):
+        from_env_translate()
+
+
+def test_scoped_provider_wins_over_legacy_mock_pin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Locks the precedence semantics flagged in debate §2:
+    ``TRANSLATE_LLM_PROVIDER=openai_compat`` + ``LLM_PROVIDER=mock``
+    → translate uses openai_compat (scoped wins). The shell mock pin
+    does NOT prevent the scoped openai_compat from taking effect — that
+    is by design (Phase 6e split semantics), but we lock it in so a
+    future change doesn't quietly swap the order."""
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("TRANSLATE_LLM_PROVIDER", "openai_compat")
+    monkeypatch.setenv("TRANSLATE_LLM_BASE_URL", "http://scoped.test/v1")
+    monkeypatch.setenv("TRANSLATE_LLM_MODEL", "scoped-model")
+    monkeypatch.setenv("HT_LENS_SKIP_LLM_CHECK", "1")
+    t = from_env_translate()
+    # Scoped openai_compat wins despite legacy mock pin.
+    assert t.model_name == "scoped-model"
+
+    # Chat falls back to legacy mock (only LLM_PROVIDER=mock is set there).
+    from ht_lens.llm.mock import MockLLMClient
+
+    c = from_env_chat()
+    assert isinstance(c, MockLLMClient)
