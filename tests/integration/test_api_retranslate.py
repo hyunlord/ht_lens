@@ -268,3 +268,62 @@ async def test_retranslate_clears_cache_key_to_prevent_cache_reuse(
     assert row.model.startswith("manual-retranslate:"), (
         f"model must carry manual-retranslate provenance; got {row.model!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 6f-5: qwen-specific provenance prefix (Codex verify-cross R1/R2 §5)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retranslate_provenance_uses_qwen_model_in_prefix(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """Phase 6f-5 verify-cross R1/R2 §5: Codex flagged that the previous
+    coverage only asserted the generic ``manual-retranslate:`` prefix
+    (or the mock fixture's ``mock-retranslate`` model name), never the
+    actual qwen model. Lock the **model-specific** prefix shape so a
+    silent provenance regression (e.g., dropping ``self.model_name``
+    from the recorded string in `src/ht_lens/api/routers/blocks.py`)
+    fails the test instead of passing under any model name.
+    """
+
+    class _QwenSimMock(_RecordingMockLLM):
+        # Match the production model identifier the rollback uses.
+        model_name = "qwen3.6-27b"
+
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    async with factory() as session:
+        seeded = await seed_minimal_document(session, tmp_dir=tmp_path, blocks_per_page=1)
+    await engine.dispose()
+
+    bid = seeded.block_ids[0]
+    llm = _QwenSimMock(reply="[KO] qwen rollout probe")
+
+    with make_test_client(api_db_path, llm_override=llm) as client:
+        resp = client.post(f"/blocks/{bid}/retranslate")
+    assert resp.status_code == 202
+    body = resp.json()
+    model = body["translation"]["model"]
+
+    # Strong, model-specific assertion (not just generic prefix).
+    assert model.startswith("manual-retranslate:qwen3.6-27b:"), (
+        f"expected provenance to begin with "
+        f"'manual-retranslate:qwen3.6-27b:<unix_ts>'; got {model!r}"
+    )
+    # Trailing field is the unix timestamp — at least 10 digits today.
+    suffix = model.split("manual-retranslate:qwen3.6-27b:", 1)[1]
+    assert suffix.isdigit() and len(suffix) >= 10, (
+        f"manual-retranslate suffix must be a unix timestamp; got {suffix!r}"
+    )
+
+    # DB row mirrors the API response.
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    async with factory() as session:
+        row = (
+            await session.execute(select(Translation).where(Translation.block_id == bid))
+        ).scalar_one()
+    await engine.dispose()
+    assert row.model.startswith("manual-retranslate:qwen3.6-27b:")
