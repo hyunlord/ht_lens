@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -328,3 +329,148 @@ def test_module_entrypoint_fails_closed_when_dotenv_absent(
         f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
     )
     assert "[KO]" not in proc.stdout, "must not silently produce mock output"
+
+
+def test_module_entrypoint_exit_5_when_no_provider_and_no_dotenv(
+    tmp_path: Path,
+) -> None:
+    """Phase 6e-2 verify-cross R1: end-to-end test for the new exit-5
+    CLI path. The earlier `_fails_closed_when_dotenv_absent` test is
+    skipped in this checkout because repo .env exists; this variant
+    monkey-patches ``ht_lens.dotenv_loader._REPO_ROOT`` inside the
+    subprocess so ``load_repo_dotenv()`` is a no-op, and clears every
+    LLM env key. The CLI must then exit 5 (LLMConfigurationError) and
+    print the configuration-missing message to stderr.
+    """
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    fake_root = tmp_path / "fake_repo_root"
+    fake_root.mkdir()
+    # Subprocess: clear LLM env, repoint loader, then invoke CLI.
+    code = textwrap.dedent(
+        f"""
+        import os, sys
+        from pathlib import Path
+        PREFIXES = ("LLM_", "TRANSLATE_LLM_", "CHAT_LLM_", "OLLAMA_")
+        for k in list(os.environ):
+            if k.startswith(PREFIXES):
+                del os.environ[k]
+        os.environ["HT_LENS_DB_URL"] = "sqlite+aiosqlite:///{db_path}"
+        import ht_lens.dotenv_loader as loader
+        loader._REPO_ROOT = Path({str(fake_root)!r})
+        from ht_lens.translate.cli import main
+        raise SystemExit(main(["--doc-id", "{doc_id}"]))
+        """
+    ).strip()
+    # Subprocess inherits LLM-cleared env from a sanitized base.
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("LLM_", "TRANSLATE_LLM_", "CHAT_LLM_", "OLLAMA_"))
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        env=env,
+    )
+    assert proc.returncode == 5, (
+        f"expected exit 5 when no provider env and no .env load; got {proc.returncode}.\n"
+        f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    assert "LLM not configured" in proc.stderr or "No LLM provider configured" in proc.stderr, (
+        f"expected fail-closed message in stderr; got: {proc.stderr!r}"
+    )
+    assert "[KO]" not in proc.stdout
+
+
+def test_ht_lens_console_script_translate_exit_0_with_explicit_mock(
+    tmp_path: Path,
+) -> None:
+    """Phase 6e-2 verify-cross R1: covers the installed console-script
+    launcher ``ht-lens translate`` path promised in challenge §1. The
+    earlier coverage only exercised ``python -m ht_lens.translate``.
+    Pattern mirrored from ``tests/integration/test_module_cli.py:
+    test_ht_lens_console_script_extract``.
+    """
+    script = REPO / ".venv" / "bin" / "ht-lens"
+    if not script.exists():
+        import pytest
+
+        pytest.skip(f"ht-lens entry script not found at {script}")
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("LLM_", "TRANSLATE_LLM_", "CHAT_LLM_", "OLLAMA_"))
+    }
+    env["HT_LENS_DB_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    # Scoped TRANSLATE_LLM_PROVIDER=mock wins over any .env scoped value
+    # the CLI's load_repo_dotenv() might pull in.
+    env["TRANSLATE_LLM_PROVIDER"] = "mock"
+    proc = subprocess.run(
+        [str(script), "translate", "--doc-id", str(doc_id)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        env=env,
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "ok:" in proc.stdout
+
+
+def test_ht_lens_console_script_translate_exit_5_without_provider(
+    tmp_path: Path,
+) -> None:
+    """Phase 6e-2 verify-cross R1: end-to-end fail-closed via the
+    installed console script. Same monkey-patch trick as
+    ``test_module_entrypoint_exit_5_when_no_provider_and_no_dotenv``
+    but exercised through the ``ht-lens`` entry point so we cover
+    BOTH launcher paths challenge §1 promised. We inject the loader
+    patch via ``PYTHONSTARTUP``.
+    """
+    script = REPO / ".venv" / "bin" / "ht-lens"
+    if not script.exists():
+        import pytest
+
+        pytest.skip(f"ht-lens entry script not found at {script}")
+    db_path, doc_id = _setup_db_with_doc(tmp_path)
+    fake_root = tmp_path / "fake_repo_root"
+    fake_root.mkdir()
+    # PYTHONSTARTUP runs in interactive shells only; for the script we
+    # use ``sitecustomize`` injection via PYTHONPATH instead.
+    inject_dir = tmp_path / "inject"
+    inject_dir.mkdir()
+    (inject_dir / "sitecustomize.py").write_text(
+        textwrap.dedent(
+            f"""
+            import os
+            from pathlib import Path
+            PREFIXES = ("LLM_", "TRANSLATE_LLM_", "CHAT_LLM_", "OLLAMA_")
+            for k in list(os.environ):
+                if k.startswith(PREFIXES):
+                    del os.environ[k]
+            import ht_lens.dotenv_loader as loader
+            loader._REPO_ROOT = Path({str(fake_root)!r})
+            """
+        ).strip()
+    )
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("LLM_", "TRANSLATE_LLM_", "CHAT_LLM_", "OLLAMA_"))
+    }
+    env["HT_LENS_DB_URL"] = f"sqlite+aiosqlite:///{db_path}"
+    env["PYTHONPATH"] = f"{inject_dir}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    proc = subprocess.run(
+        [str(script), "translate", "--doc-id", str(doc_id)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        env=env,
+    )
+    assert proc.returncode == 5, (
+        f"expected ht-lens translate exit 5 without provider configured; "
+        f"got {proc.returncode}.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    assert "LLM not configured" in proc.stderr or "No LLM provider configured" in proc.stderr

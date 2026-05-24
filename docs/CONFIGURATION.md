@@ -50,12 +50,39 @@ Supported provider values: `mock`, `mock_fail`, `openai_compat`
 1. Scoped var (`TRANSLATE_LLM_*` or `CHAT_LLM_*`) — wins if set to a
    non-empty value.
 2. Legacy var (`LLM_*`).
-3. Default (built into the factory).
+3. Default (built into the factory) — **except for `*_PROVIDER`**,
+   which fails closed (Phase 6e-2).
 
 An empty or whitespace-only scoped value (e.g. `TRANSLATE_LLM_MODEL=""`)
 is treated as "not set" and falls through to the legacy slot — this is
 intentional so a stray export cannot replace a working `LLM_MODEL` with
 garbage.
+
+### Provider resolution is fail-closed (Phase 6e-2)
+
+Unlike the other keys, `TRANSLATE_LLM_PROVIDER` / `CHAT_LLM_PROVIDER` /
+`LLM_PROVIDER` have **no built-in default**. If none of the three is
+set to a non-empty value, `from_env_translate()` /  `from_env_chat()`
+raise `LLMConfigurationError` (CLI exit code 5).
+
+Why: prior versions silently fell back to `mock`, which let
+``ht-lens translate`` pollute the database with `MockLLMClient`'s
+``[KO] <english>`` output when the operator forgot to export env vars
+**and** the repo `.env` was not picked up (e.g. CLI ran without a
+loader, or `.env` was missing). The fail-closed behavior surfaces the
+misconfiguration immediately instead.
+
+To intentionally select mock for tests or local development, **export
+the provider explicitly**:
+
+```bash
+LLM_PROVIDER=mock  # or TRANSLATE_LLM_PROVIDER=mock, etc.
+```
+
+The repo-root `.env` is auto-loaded by both the API server
+(`create_app()`) and the translate CLI (`translate_command()`); see
+[Phase 6e-2 plan / challenge](../.claude/phases/phase-6e-2/) for the
+loader/launcher boundary.
 
 ### Migration from pre-6e
 

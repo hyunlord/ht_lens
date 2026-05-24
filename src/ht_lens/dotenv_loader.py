@@ -35,6 +35,10 @@ def load_repo_dotenv() -> None:
 
     No-op if the file is missing (common on fresh checkouts and in CI).
     Always uses ``override=False`` so pre-existing shell exports win.
+
+    Resolves the ``.env`` path each call (reads ``_REPO_ROOT`` at call
+    time, not import time) so tests can monkeypatch the module attribute
+    to exercise the missing-file branch (Phase 6e-2 verify-cross R1).
     """
     dotenv = _REPO_ROOT / ".env"
     if dotenv.is_file():

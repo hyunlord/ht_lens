@@ -29,17 +29,25 @@ def test_load_repo_dotenv_noop_when_file_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Missing repo-root .env is a no-op (common on fresh checkouts/CI),
-    not an exception. We can't actually remove the repo .env, but we can
-    cover the missing-file branch by pointing the loader at a temp
-    location via the helper's resolved root.
+    not an exception. Verify-cross R1 (Codex §4): genuinely exercise
+    the missing-file branch by pointing ``_REPO_ROOT`` at a tmp dir
+    that contains no ``.env`` file.
     """
-    # The function looks at ``Path(__file__).resolve().parents[2] / ".env"``.
-    # We just confirm it doesn't raise — repo .env may or may not exist
-    # in this checkout, but either way ``load_repo_dotenv()`` returns
-    # without error.
-    from ht_lens.dotenv_loader import load_repo_dotenv
+    import ht_lens.dotenv_loader as loader_mod
 
-    load_repo_dotenv()  # no raise = pass
+    monkeypatch.delenv("PHASE_6E2_NOENV_PROBE", raising=False)
+    # tmp_path is fresh from pytest — guaranteed no .env.
+    assert not (tmp_path / ".env").exists()
+    monkeypatch.setattr(loader_mod, "_REPO_ROOT", tmp_path)
+
+    # Call. The branch ``if dotenv.is_file()`` must short-circuit;
+    # otherwise we would somehow load a file that does not exist.
+    loader_mod.load_repo_dotenv()  # no raise = branch taken
+
+    # A non-existent file cannot have added env vars. Confirm by
+    # checking a sentinel key did not appear (would be set if
+    # load_dotenv() had been called on a stray file).
+    assert os.environ.get("PHASE_6E2_NOENV_PROBE") is None
 
 
 def test_load_repo_dotenv_override_false_preserves_shell_export(
