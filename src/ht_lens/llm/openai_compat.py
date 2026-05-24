@@ -174,6 +174,26 @@ class OpenAICompatibleClient:
 
     @staticmethod
     def _translate_system(src: str, tgt: str) -> str:
+        # Phase 6f-5: en→ko routes get a Korean-instruction prompt that
+        # was A/B-validated against the prior generic English prompt:
+        #   - qwen3.6-27b: KR 0.867 (legacy) → 0.874 (v2_ko), AllKor 55→65%
+        #   - gemma-4-26b-a4b-it: KR 0.546 → 0.755, AllKor 0→25%
+        # Other language pairs (ko→en, en→ja, etc.) keep the generic
+        # English prompt — this is the documented backward-compat path
+        # for non-Korean targets. Codes are lower/stripped so "EN" / " ko"
+        # still hit the v2_ko branch (Codex debate §2).
+        src_norm = (src or "").strip().lower()
+        tgt_norm = (tgt or "").strip().lower()
+        if src_norm == "en" and tgt_norm == "ko":
+            return (
+                "다음 영어 텍스트를 자연스러운 한국어로 번역하세요.\n\n"
+                "규칙:\n"
+                "- 모든 내용을 한국어로 번역합니다.\n"
+                "- 기술 용어는 표준 한국어 번역을 사용합니다 "
+                "(예: gradient descent → 경사 하강법).\n"
+                "- 다음만 영어 유지: 고유명사 (GPT-4 등), 수식 ($...$), 코드, URL, arXiv ID.\n"
+                "- 번역문만 출력합니다. 설명 없음."
+            )
         src_name = _LANG_NAMES.get(src, src)
         tgt_name = _LANG_NAMES.get(tgt, tgt)
         return (
