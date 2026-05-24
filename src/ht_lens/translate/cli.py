@@ -47,12 +47,26 @@ def translate_command(
     ),
 ) -> None:
     """Translate all text/header blocks for a document."""
+    # Phase 6e-2: pull repo-root .env into os.environ BEFORE building the
+    # LLM. Without this, missing shell exports silently fall through to
+    # MockLLMClient and the run pollutes the DB with ``[KO] <english>``
+    # output. Function-local (not module-level) so importing this module
+    # in tests does not mutate env at collection time.
+    from ht_lens.dotenv_loader import load_repo_dotenv
+
+    load_repo_dotenv()
+
     from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.llm.errors import LLMConfigurationError
     from ht_lens.llm.factory import from_env_translate
     from ht_lens.translate.pipeline import translate_document
 
     db_path = db if db is not None else _db_path_from_env()
-    llm = from_env_translate()
+    try:
+        llm = from_env_translate()
+    except LLMConfigurationError as exc:
+        typer.echo(f"error: LLM not configured: {exc}", err=True)
+        raise typer.Exit(code=5) from exc
 
     async def _run() -> None:
         if not dry_run:
