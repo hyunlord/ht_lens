@@ -256,44 +256,82 @@ def test_translate_cli_prefers_translate_scoped_env_over_legacy(tmp_path: Path) 
 def test_module_entrypoint_loads_repo_root_dotenv_without_env_exports(
     tmp_path: Path,
 ) -> None:
-    """Phase 6e-2 (Codex debate §5 #1): ``python -m ht_lens.translate``
-    with all ``LLM_*`` / ``TRANSLATE_LLM_*`` env cleared must still pick
-    up the repo-root ``.env`` and reach the openai_compat provider —
-    not silently fall back to mock.
+    """Phase 6e-2 verify-cross R2 §4 #2 — strong positive assertion.
 
-    Skipped on checkouts without ``.env`` (CI without secrets).
+    Originally (R1) this test asserted ``"[KO]" not in proc.stdout`` as
+    evidence that ``ht-lens translate`` did not silently fall back to
+    mock. R2 (Codex) pointed out that assertion is weak: the CLI's
+    success path emits only ``ok: doc_id=... translated=...``, so a
+    silent mock run would also satisfy ``"[KO]" not in stdout``.
+
+    The strong fix: a self-contained subprocess that
+
+    1. clears every ``LLM_* / TRANSLATE_LLM_* / CHAT_LLM_*`` key,
+    2. monkeypatches ``ht_lens.dotenv_loader._REPO_ROOT`` to a tmp dir
+       containing a control ``.env`` with a **unique marker model name**,
+    3. calls ``load_repo_dotenv()`` and then ``from_env_translate()``,
+    4. prints the resulting ``client.model_name``.
+
+    The test then asserts the printed model exactly matches the marker.
+    If ``load_repo_dotenv()`` had failed to populate ``os.environ``,
+    the factory would raise ``LLMConfigurationError`` and the marker
+    would never appear in stdout. This proves the .env values reached
+    the factory — not merely "no mock output appeared".
     """
-    if not (REPO / ".env").is_file():
-        import pytest
+    # Unique marker — extremely unlikely to collide with anything
+    # already in the operator's shell.
+    marker_model = "phase6e2-r2-marker-d8c1a4f9"
+    marker_url = "http://localhost:65535/v1"
 
-        pytest.skip("repo .env not present in this checkout")
+    fake_repo_root = tmp_path / "fake_repo_root"
+    fake_repo_root.mkdir()
+    (fake_repo_root / ".env").write_text(
+        "TRANSLATE_LLM_PROVIDER=openai_compat\n"
+        f"TRANSLATE_LLM_BASE_URL={marker_url}\n"
+        f"TRANSLATE_LLM_MODEL={marker_model}\n"
+    )
 
-    db_path, doc_id = _setup_db_with_doc(tmp_path)
-    # No extra_env → subprocess starts with all LLM keys cleared by
-    # _run_translate, then loads repo .env. Phase 6f-1 .env points at
-    # http://localhost:8082 with the openai_compat provider. The
-    # subprocess will either (a) reach a running endpoint and exit 0/1
-    # depending on outcome, or (b) hit health_check failure and exit 4.
-    # Either is acceptable — the regression we guard against is exit 0
-    # with mock-style ``[KO] <english>`` output, which means the .env
-    # never loaded and factory silently fell back to mock.
-    proc = _run_translate(
-        "--doc-id",
-        str(doc_id),
-        db_path=db_path,
+    code = textwrap.dedent(
+        f"""
+        import os, sys
+        from pathlib import Path
+        PREFIXES = ("LLM_", "TRANSLATE_LLM_", "CHAT_LLM_", "OLLAMA_")
+        for k in list(os.environ):
+            if k.startswith(PREFIXES):
+                del os.environ[k]
+        import ht_lens.dotenv_loader as loader
+        loader._REPO_ROOT = Path({str(fake_repo_root)!r})
+
+        # Disable health_check because the marker URL is unreachable.
+        os.environ["HT_LENS_SKIP_LLM_CHECK"] = "1"
+
+        loader.load_repo_dotenv()
+
+        from ht_lens.llm.factory import from_env_translate
+        client = from_env_translate()
+        print(f"MODEL={{client.model_name}}", flush=True)
+        """
+    ).strip()
+
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("LLM_", "TRANSLATE_LLM_", "CHAT_LLM_", "OLLAMA_"))
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        env=env,
     )
-    assert "[KO]" not in proc.stdout, (
-        f"mock fallback detected (mock would emit '[KO] ...'). "
-        f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
-    )
-    # Exit code 5 (LLMConfigurationError) would indicate .env didn't
-    # load AND no env exports were present — that is the wrong outcome
-    # when .env IS present. The .env IS present here, so the call
-    # should NOT exit 5.
-    assert proc.returncode != 5, (
-        f"factory raised LLMConfigurationError despite .env being present "
-        f"(load_repo_dotenv() did not run).\n"
-        f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+    assert proc.returncode == 0, f"subprocess failed.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    # Strong positive assertion: the marker model from the tmp .env
+    # actually reached the factory.
+    assert f"MODEL={marker_model}" in proc.stdout, (
+        f"loader did not propagate .env to factory.\n"
+        f"expected: MODEL={marker_model}\n"
+        f"stdout: {proc.stdout!r}\nstderr: {proc.stderr!r}"
     )
 
 
