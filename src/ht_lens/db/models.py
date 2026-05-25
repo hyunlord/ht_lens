@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKey, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ht_lens.db.base import Base
@@ -166,9 +166,31 @@ class Job(Base):
     created_at: Mapped[datetime]
 
 
+class BlockEmbedding(Base):
+    """Phase 7a — one vector per translated block (bge-m3, 1024d).
+
+    See ``src/ht_lens/db/migrations/versions/0004_block_embeddings.py``
+    for column rationale. ``vector`` is raw ``numpy float32`` bytes
+    (``len == dim * 4``); ``source_hash`` is the SHA-256 of the source
+    text at embed time and drives idempotent backfill.
+    """
+
+    __tablename__ = "block_embeddings"
+
+    block_id: Mapped[int] = mapped_column(
+        ForeignKey("blocks.id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str]
+    dim: Mapped[int]
+    vector: Mapped[bytes] = mapped_column(LargeBinary)
+    source_hash: Mapped[str]
+    updated_at: Mapped[datetime]
+
+
 __all__ = [
     "Base",
     "Block",
+    "BlockEmbedding",
     "Document",
     "Job",
     "Message",

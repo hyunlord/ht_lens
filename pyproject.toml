@@ -20,6 +20,9 @@ dependencies = [
   "uvicorn[standard]>=0.32,<1",
   "python-dotenv>=1.0",
   "python-multipart>=0.0.9",
+  # Phase 7a: cross-document RAG (bge-m3 embedding + brute-force search)
+  "sentence-transformers>=3,<5",
+  "numpy>=1.26,<3",
 ]
 
 [project.optional-dependencies]
