@@ -15,10 +15,20 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ht_lens.api.chat_context import BlockNotFoundError, build_block_context
-from ht_lens.api.deps import get_chat_llm_client, get_chat_semaphore, get_session
-from ht_lens.api.schemas import MessageCreate, MessageRead
+from ht_lens.api.chat_context import (
+    BlockNotFoundError,
+    RelatedBlockRef,
+    build_block_context_with_refs,
+)
+from ht_lens.api.deps import (
+    get_chat_llm_client,
+    get_chat_semaphore,
+    get_embedding_client,
+    get_session,
+)
+from ht_lens.api.schemas import MessageCreate, MessageRead, RelatedBlock
 from ht_lens.db.models import Message, Thread
+from ht_lens.embedding.service import EmbeddingClient
 from ht_lens.llm.client import ChatLLMClient
 from ht_lens.llm.client import Message as LLMMessage
 from ht_lens.llm.errors import LLMError, LLMPermanentError, LLMTransientError
@@ -86,13 +96,19 @@ async def explain_thread(
     session: Annotated[AsyncSession, Depends(get_session)],
     llm: Annotated[ChatLLMClient, Depends(get_chat_llm_client)],
     sem: Annotated[asyncio.Semaphore, Depends(get_chat_semaphore)],
+    embedding_client: Annotated[EmbeddingClient | None, Depends(get_embedding_client)],
 ) -> MessageRead:
     thread = await _load_thread(session, thread_id)
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="thread not found")
 
     try:
-        block_ctx = await build_block_context(session, thread.block_id, radius=2)
+        block_ctx, refs = await build_block_context_with_refs(
+            session,
+            thread.block_id,
+            radius=2,
+            embedding_client=embedding_client,
+        )
     except BlockNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -124,7 +140,9 @@ async def explain_thread(
     session.add_all([user_msg, assistant_msg])
     await session.commit()
     await session.refresh(assistant_msg)
-    return MessageRead.model_validate(assistant_msg)
+    response = MessageRead.model_validate(assistant_msg)
+    response.related_blocks = _refs_to_schemas(refs)
+    return response
 
 
 @router.post(
@@ -138,13 +156,19 @@ async def post_message(
     session: Annotated[AsyncSession, Depends(get_session)],
     llm: Annotated[ChatLLMClient, Depends(get_chat_llm_client)],
     sem: Annotated[asyncio.Semaphore, Depends(get_chat_semaphore)],
+    embedding_client: Annotated[EmbeddingClient | None, Depends(get_embedding_client)],
 ) -> MessageRead:
     thread = await _load_thread(session, thread_id)
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="thread not found")
 
     try:
-        block_ctx = await build_block_context(session, thread.block_id, radius=2)
+        block_ctx, refs = await build_block_context_with_refs(
+            session,
+            thread.block_id,
+            radius=2,
+            embedding_client=embedding_client,
+        )
     except BlockNotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
@@ -176,7 +200,26 @@ async def post_message(
     session.add_all([user_msg, assistant_msg])
     await session.commit()
     await session.refresh(assistant_msg)
-    return MessageRead.model_validate(assistant_msg)
+    response = MessageRead.model_validate(assistant_msg)
+    response.related_blocks = _refs_to_schemas(refs)
+    return response
+
+
+def _refs_to_schemas(refs: list[RelatedBlockRef]) -> list[RelatedBlock]:
+    """Convert chat_context dataclass refs to API response schema."""
+    return [
+        RelatedBlock(
+            block_id=r.block_id,
+            doc_id=r.doc_id,
+            doc_filename=r.doc_filename,
+            page_num=r.page_num,
+            block_local_id=r.block_local_id,
+            score=r.score,
+            original_preview=r.original_preview,
+            translated_preview=r.translated_preview,
+        )
+        for r in refs
+    ]
 
 
 __all__ = ["router"]

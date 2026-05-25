@@ -131,6 +131,7 @@ def make_test_client(
     llm_override: Any | None = None,
     translate_llm_override: Any | None = None,
     chat_llm_override: Any | None = None,
+    embedding_override: Any | None = None,
     skip_llm_check: bool = True,
 ) -> Iterator[TestClient]:
     """Return a TestClient with lifespan executed (DB path via env).
@@ -147,9 +148,13 @@ def make_test_client(
     prev_provider = os.environ.get("LLM_PROVIDER")
     prev_t_provider = os.environ.get("TRANSLATE_LLM_PROVIDER")
     prev_c_provider = os.environ.get("CHAT_LLM_PROVIDER")
+    prev_rag_disabled = os.environ.get("RAG_DISABLED")
     os.environ["HT_LENS_DB_URL"] = f"sqlite+aiosqlite:///{db_path}"
     if skip_llm_check:
         os.environ["HT_LENS_SKIP_LLM_CHECK"] = "1"
+    # Phase 7a: avoid bge-m3 2GB download in tests. Override
+    # is injected via DI below; lifespan path is bypassed via RAG_DISABLED.
+    os.environ.setdefault("RAG_DISABLED", "1")
     # Phase 6c R1 fix: pin mock provider when the caller hasn't opted in.
     # Phase 6e extension: pin BOTH scoped providers (otherwise an explicit
     # ``LLM_PROVIDER=openai_compat`` from .env would still leak through
@@ -164,6 +169,7 @@ def make_test_client(
         from ht_lens.api.app import create_app
         from ht_lens.api.deps import (
             get_chat_llm_client,
+            get_embedding_client,
             get_llm_client,
             get_translate_llm_client,
         )
@@ -183,6 +189,12 @@ def make_test_client(
         legacy_target = llm_override or translate_llm_override or chat_llm_override
         if legacy_target is not None:
             app.dependency_overrides[get_llm_client] = lambda: legacy_target
+        # Phase 7a: embedding override (MockEmbeddingClient) for chat-RAG
+        # tests. If None, get_embedding_client returns ``app.state.embedding_client``
+        # which RAG_DISABLED keeps at None — chat path then degrades to
+        # same-doc-only context.
+        if embedding_override is not None:
+            app.dependency_overrides[get_embedding_client] = lambda: embedding_override
         with TestClient(app) as client:
             yield client
     finally:
@@ -206,6 +218,10 @@ def make_test_client(
             os.environ.pop("CHAT_LLM_PROVIDER", None)
         else:
             os.environ["CHAT_LLM_PROVIDER"] = prev_c_provider
+        if prev_rag_disabled is None:
+            os.environ.pop("RAG_DISABLED", None)
+        else:
+            os.environ["RAG_DISABLED"] = prev_rag_disabled
         # The autouse ``_isolate_llm_env`` fixture in tests/conftest.py
         # restores LLM_*/OLLAMA_*/TRANSLATE_LLM_*/CHAT_LLM_* keys to their
         # pre-test snapshot, so we don't need to redo that work here.

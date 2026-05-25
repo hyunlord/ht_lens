@@ -18,9 +18,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ht_lens.api.deps import get_chat_semaphore, get_session, get_translate_llm_client
-from ht_lens.api.schemas import RetranslateResponse, TranslationRead
+from ht_lens.api.deps import (
+    get_chat_semaphore,
+    get_embedding_client,
+    get_session,
+    get_translate_llm_client,
+)
+from ht_lens.api.schemas import RelatedBlock, RetranslateResponse, TranslationRead
 from ht_lens.db.models import Block, Document, Translation
+from ht_lens.embedding.search import fetch_hit_details, search
+from ht_lens.embedding.service import EmbeddingClient
 from ht_lens.llm.client import TranslateLLMClient
 from ht_lens.llm.errors import LLMError, LLMPermanentError, LLMTransientError
 from ht_lens.translate.cache import cache_key as make_cache_key
@@ -122,6 +129,84 @@ async def retranslate_block(
         block_id=block_id,
         translation=TranslationRead.model_validate(translation),
     )
+
+
+@router.get("/{block_id}/related", response_model=list[RelatedBlock])
+async def related_blocks(
+    block_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    embedding_client: Annotated[EmbeddingClient | None, Depends(get_embedding_client)],
+    k: int = 5,
+    threshold: float = 0.5,
+) -> list[RelatedBlock]:
+    """Phase 7a — list cross-doc vector-similar blocks for a target block.
+
+    Returns up to ``k`` results with score ≥ ``threshold``, excluding the
+    target block's own document. ``503`` when the embedding subsystem is
+    unavailable (model load failed at startup, ``RAG_DISABLED=1``).
+    """
+    if embedding_client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="embedding subsystem unavailable",
+        )
+    if k <= 0 or k > 50:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="k must be between 1 and 50",
+        )
+
+    target = (
+        await session.execute(
+            select(Block).options(selectinload(Block.page)).where(Block.id == block_id)
+        )
+    ).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="block not found")
+
+    text = (target.original_text or "").strip()
+    if not text:
+        return []
+    query_vec = embedding_client.encode([text])[0]
+    hits = await search(
+        session,
+        query_vector=query_vec,
+        top_k=k,
+        threshold=threshold,
+        exclude_doc_ids={target.page.doc_id},
+        exclude_block_ids={target.id},
+    )
+    if not hits:
+        return []
+    details = await fetch_hit_details(session, hits)
+    doc_ids = {h.doc_id for h in hits}
+    filenames = {
+        did: name
+        for did, name in (
+            await session.execute(
+                select(Document.id, Document.filename).where(Document.id.in_(doc_ids))
+            )
+        ).all()
+    }
+    out: list[RelatedBlock] = []
+    for hit in hits:
+        d = details.get(hit.block_id)
+        if d is None:
+            continue
+        blk, page, tr = d
+        out.append(
+            RelatedBlock(
+                block_id=blk.id,
+                doc_id=hit.doc_id,
+                doc_filename=filenames.get(hit.doc_id, ""),
+                page_num=page.page_num,
+                block_local_id=blk.block_local_id,
+                score=hit.score,
+                original_preview=(blk.original_text or "").strip()[:200],
+                translated_preview=((tr.translated_text or "").strip()[:200] if tr else None),
+            )
+        )
+    return out
 
 
 __all__ = ["router"]

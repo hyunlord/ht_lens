@@ -111,6 +111,24 @@ class PageRead(BaseModel):
     blocks: list[BlockRead]
 
 
+class RelatedBlock(BaseModel):
+    """Phase 7a — one cross-doc vector-search hit surfaced into chat.
+
+    Mirrors :class:`ht_lens.api.chat_context.RelatedBlockRef`. Used by
+    ``/blocks/{id}/related`` and by ``MessageRead.related_blocks`` so
+    the viewer can render "다른 책의 관련 부분" links (ROADMAP DoD ④).
+    """
+
+    block_id: int
+    doc_id: int
+    doc_filename: str
+    page_num: int
+    block_local_id: str
+    score: float
+    original_preview: str
+    translated_preview: str | None = None
+
+
 class MessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -119,6 +137,10 @@ class MessageRead(BaseModel):
     content: str
     model: str | None = None
     created_at: datetime
+    # Phase 7a: cross-doc references the LLM saw in its system context.
+    # Empty when RAG is disabled, embedding client unavailable, or no
+    # hit cleared the threshold. Not persisted (computed per response).
+    related_blocks: list[RelatedBlock] = []
 
 
 class ThreadSummary(BaseModel):

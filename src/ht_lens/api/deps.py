@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ht_lens.embedding.service import EmbeddingClient
 from ht_lens.llm.client import ChatLLMClient, LLMClient, TranslateLLMClient
 
 
@@ -51,6 +52,17 @@ def get_llm_client(request: Request) -> LLMClient:
     return client
 
 
+def get_embedding_client(request: Request) -> EmbeddingClient | None:
+    """Return the lifespan-bound embedding client, or ``None`` if init failed.
+
+    Phase 7a: cross-doc RAG is best-effort. The chat path degrades to
+    same-doc-only context when this is ``None``; ``/blocks/{id}/related``
+    returns 503.
+    """
+    client = getattr(request.app.state, "embedding_client", None)
+    return client
+
+
 def get_chat_semaphore(request: Request) -> asyncio.Semaphore:
     """Return the shared chat-concurrency semaphore (default size 2)."""
     sem: asyncio.Semaphore = request.app.state.chat_semaphore
@@ -71,6 +83,7 @@ __all__ = [
     "get_chat_concurrency",
     "get_chat_llm_client",
     "get_chat_semaphore",
+    "get_embedding_client",
     "get_llm_client",
     "get_session",
     "get_translate_llm_client",

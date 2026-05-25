@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import select
 
-from ht_lens.db.models import Message
+from ht_lens.db.models import Block, Message
 from ht_lens.db.session import make_engine, make_session_factory
 from ht_lens.llm.client import Message as LLMMessage
 from ht_lens.llm.errors import LLMPermanentError, LLMTransientError
@@ -218,3 +218,176 @@ async def test_messages_whitespace_only_content_returns_422(
     with make_test_client(api_db_path) as client:
         resp = client.post(f"/threads/{thread_id}/messages", json={"content": "   \t\n  "})
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Phase 7a: cross-doc RAG enriches /explain + /messages responses
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_explain_includes_related_blocks_when_embedding_available(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """``/explain`` returns ``related_blocks`` for cross-doc RAG hits."""
+    from ht_lens.embedding.service import MockEmbeddingClient, text_source_hash
+    from ht_lens.embedding.store import upsert_embedding
+
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    embed_client = MockEmbeddingClient(dim=32)
+    # Seed doc1 (with our thread block) + doc2 (cross-doc match).
+    async with factory() as session:
+        seeded = await seed_minimal_document(
+            session,
+            tmp_dir=tmp_path,
+            filename="doc1.pdf",
+            blocks_per_page=3,
+            num_pages=1,
+        )
+        # Embed all doc1 blocks
+        for bid in seeded.block_ids:
+            blk = await session.get(Block, bid)
+            vec = embed_client.encode([blk.original_text])[0]
+            await upsert_embedding(
+                session,
+                block_id=blk.id,
+                vector=vec,
+                model=embed_client.model_name,
+                dim=embed_client.dim,
+                source_hash=text_source_hash(blk.original_text),
+            )
+        # Seed doc2 with one block whose text mirrors doc1 block 1.
+        doc1_block = await session.get(Block, seeded.block_ids[1])
+        mirror_seeded = await seed_minimal_document(
+            session,
+            tmp_dir=tmp_path,
+            filename="doc2.pdf",
+            blocks_per_page=1,
+            num_pages=1,
+        )
+        mirror_block = await session.get(Block, mirror_seeded.block_ids[0])
+        # Phase 7a search drops blocks < 50 chars; lengthen both sides.
+        long_text = (
+            "Detailed Phase 7a probe paragraph for cross-doc RAG integration assertion coverage."
+        )
+        doc1_block.original_text = long_text
+        for bid in seeded.block_ids:
+            blk = await session.get(Block, bid)
+            blk.original_text = long_text
+        mirror_block.original_text = long_text
+        # Re-embed doc1 blocks with new text
+        for bid in seeded.block_ids:
+            blk = await session.get(Block, bid)
+            vec = embed_client.encode([blk.original_text])[0]
+            await upsert_embedding(
+                session,
+                block_id=blk.id,
+                vector=vec,
+                model=embed_client.model_name,
+                dim=embed_client.dim,
+                source_hash=text_source_hash(blk.original_text),
+            )
+        vec = embed_client.encode([mirror_block.original_text])[0]
+        await upsert_embedding(
+            session,
+            block_id=mirror_block.id,
+            vector=vec,
+            model=embed_client.model_name,
+            dim=embed_client.dim,
+            source_hash=text_source_hash(mirror_block.original_text),
+        )
+        await session.commit()
+        target_block_id = seeded.block_ids[1]
+    await engine.dispose()
+
+    # Create thread on doc1 block 1
+    with make_test_client(api_db_path, embedding_override=embed_client) as client:
+        thread = client.post("/threads", json={"block_id": target_block_id}).json()
+    with make_test_client(
+        api_db_path,
+        llm_override=RecordingMockLLM(reply="explained"),
+        embedding_override=embed_client,
+    ) as client:
+        resp = client.post(f"/threads/{thread['id']}/explain")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert "related_blocks" in body
+    assert body["related_blocks"], "expected at least 1 cross-doc related block"
+    # The mirror doc2 block should be in results.
+    doc_ids = {r["doc_id"] for r in body["related_blocks"]}
+    assert mirror_seeded.doc_id in doc_ids
+    # Same-doc must be excluded.
+    assert seeded.doc_id not in doc_ids
+
+
+@pytest.mark.asyncio
+async def test_explain_related_blocks_empty_when_no_embedding_client(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """Without embedding override, ``related_blocks`` is an empty list
+    (RAG_DISABLED in helper → app.state.embedding_client is None)."""
+    thread_id, _ = await _make_seed_and_thread(api_db_path, tmp_path)
+    llm = RecordingMockLLM(reply="ok")
+    with make_test_client(api_db_path, llm_override=llm) as client:
+        resp = client.post(f"/threads/{thread_id}/explain")
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["related_blocks"] == []
+
+
+@pytest.mark.asyncio
+async def test_explain_includes_cross_doc_section_in_system_prompt(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """The cross-doc section MUST appear in the system message the LLM saw.
+
+    Codex debate §5: lock by inspecting RecordingMockLLM's recorded
+    system content, not by inferring from the assistant text.
+    """
+    from ht_lens.embedding.service import MockEmbeddingClient, text_source_hash
+    from ht_lens.embedding.store import upsert_embedding
+
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    embed_client = MockEmbeddingClient(dim=32)
+    async with factory() as session:
+        seeded = await seed_minimal_document(
+            session, tmp_dir=tmp_path, filename="d1.pdf", blocks_per_page=2
+        )
+        mirror_seeded = await seed_minimal_document(
+            session, tmp_dir=tmp_path, filename="d2.pdf", blocks_per_page=1
+        )
+        target_block = await session.get(Block, seeded.block_ids[0])
+        mirror_block = await session.get(Block, mirror_seeded.block_ids[0])
+        long_text2 = (
+            "Yet another long enough Phase 7a probe paragraph for "
+            "cross-doc RAG system prompt assertion."
+        )
+        target_block.original_text = long_text2
+        mirror_block.original_text = long_text2
+        for blk in (target_block, mirror_block):
+            vec = embed_client.encode([blk.original_text])[0]
+            await upsert_embedding(
+                session,
+                block_id=blk.id,
+                vector=vec,
+                model=embed_client.model_name,
+                dim=embed_client.dim,
+                source_hash=text_source_hash(blk.original_text),
+            )
+        await session.commit()
+        thread_target = seeded.block_ids[0]
+    await engine.dispose()
+
+    llm = RecordingMockLLM(reply="ok")
+    with make_test_client(api_db_path, llm_override=llm, embedding_override=embed_client) as client:
+        thread = client.post("/threads", json={"block_id": thread_target}).json()
+        client.post(f"/threads/{thread['id']}/explain")
+    assert len(llm.calls) == 1
+    _msgs, system_text = llm.calls[0]
+    assert system_text is not None
+    assert "다른 문서 관련 참조" in system_text, (
+        f"system context should contain cross-doc section; got:\n{system_text}"
+    )
+    assert "d2.pdf" in system_text

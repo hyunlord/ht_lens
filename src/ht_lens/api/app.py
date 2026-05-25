@@ -104,6 +104,26 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.llm = translate_llm
     app.state.chat_semaphore = asyncio.Semaphore(get_chat_concurrency())
 
+    # Phase 7a: embedding client for cross-document RAG. Init is lazy and
+    # *fail-soft* — if bge-m3 can't load (e.g. fresh machine with no
+    # internet, missing 2GB model download), the API still starts. Chat
+    # falls back to same-doc-only context, and ``/blocks/{id}/related``
+    # returns 503. Test overrides set this directly to a MockEmbedding-
+    # Client. ``RAG_DISABLED=1`` skips init entirely (no torch import).
+    app.state.embedding_client = None
+    if os.environ.get("RAG_DISABLED", "").lower() not in ("1", "true", "yes"):
+        try:
+            from ht_lens.embedding.service import BgeM3Client
+
+            app.state.embedding_client = BgeM3Client()
+            _log.info(
+                "embedding client ready: %s (dim=%d)",
+                app.state.embedding_client.model_name,
+                app.state.embedding_client.dim,
+            )
+        except Exception as exc:
+            _log.warning("embedding client init failed; cross-doc RAG disabled: %s", exc)
+
     # Phase 6d: uploads directory + background-task pool + restart recovery.
     uploads_dir = _DEFAULT_UPLOADS_DIR
     if not uploads_dir.is_absolute():
