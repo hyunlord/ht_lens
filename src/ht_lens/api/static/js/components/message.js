@@ -33,8 +33,81 @@ export function renderMessage(container, msg) {
     body.textContent = msg.content || "";
   }
   wrap.appendChild(body);
+
+  // Phase 7a: render cross-doc references the LLM used in its context.
+  // ``related_blocks`` is empty when RAG is disabled, the embedding
+  // client failed to load, or no hit cleared the threshold.
+  if (
+    msg.role === "assistant"
+    && Array.isArray(msg.related_blocks)
+    && msg.related_blocks.length > 0
+  ) {
+    renderRelatedBlocks(wrap, msg.related_blocks);
+  }
+
   container.appendChild(wrap);
   return wrap;
+}
+
+/** Render the "다른 책의 관련 부분" section under an assistant message
+ *  (Phase 7a / ROADMAP DoD ④). */
+function renderRelatedBlocks(container, refs) {
+  const section = document.createElement("section");
+  section.className = "related-blocks";
+
+  const heading = document.createElement("h4");
+  heading.className = "related-blocks-title";
+  heading.textContent = `다른 책의 관련 부분 (${refs.length})`;
+  section.appendChild(heading);
+
+  const list = document.createElement("ul");
+  list.className = "related-blocks-list";
+  for (const r of refs) {
+    const li = document.createElement("li");
+    li.className = "related-block";
+
+    const head = document.createElement("div");
+    head.className = "related-head";
+    const docName = document.createElement("span");
+    docName.className = "related-doc";
+    docName.textContent = String(r.doc_filename || "");
+    head.appendChild(docName);
+    const page = document.createElement("span");
+    page.className = "related-page";
+    page.textContent = `p.${r.page_num}`;
+    head.appendChild(page);
+    const score = document.createElement("span");
+    score.className = "related-score";
+    score.textContent = `score ${(r.score ?? 0).toFixed(2)}`;
+    head.appendChild(score);
+    li.appendChild(head);
+
+    if (r.original_preview) {
+      const orig = document.createElement("div");
+      orig.className = "related-original";
+      orig.textContent = r.original_preview;
+      li.appendChild(orig);
+    }
+    if (r.translated_preview) {
+      const tr = document.createElement("div");
+      tr.className = "related-translated";
+      tr.textContent = r.translated_preview;
+      li.appendChild(tr);
+    }
+
+    // Open the related block's viewer page in a new tab.
+    const link = document.createElement("a");
+    link.className = "related-open";
+    link.href = `/static/viewer.html?doc=${r.doc_id}&page=${r.page_num}#block-${r.block_id}`;
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "→ 열기";
+    li.appendChild(link);
+
+    list.appendChild(li);
+  }
+  section.appendChild(list);
+  container.appendChild(section);
 }
 
 /** Skeleton "AI is thinking" placeholder shown while a request is in flight. */
