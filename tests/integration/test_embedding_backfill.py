@@ -185,3 +185,88 @@ async def test_backfill_scope_filters_doc_id(
         only_doc2 = await backfill(session, client, doc_id=2)
     assert only_doc2["candidates"] == 1
     assert only_doc2["embedded"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 7a R1 fixes — Codex verify-cross §4 missed-issues regression
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_backfill_skips_failed_translations(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """R1 §4 #3 — failed translation rows must not pollute the candidate set."""
+    async with db_factory() as session:
+        await _seed_doc_with_blocks(
+            session,
+            blocks=[
+                ("text", "Healthy block with translation text long enough for backfill.", True),
+                ("text", "Block with FAILED translation status, long enough text here.", True),
+            ],
+        )
+        # Mark the second block's translation as failed.
+        from sqlalchemy import select as _select
+
+        rows = (await session.execute(_select(Translation))).scalars().all()
+        rows[1].status = "failed"
+        rows[1].translated_text = ""
+        await session.commit()
+
+    client = MockEmbeddingClient(dim=8)
+    async with db_factory() as session:
+        stats = await backfill(session, client)
+    assert stats["candidates"] == 1, (
+        f"failed translation must be excluded; got candidates={stats['candidates']}"
+    )
+    assert stats["embedded"] == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_skips_empty_translated_text(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """R1 §4 #3 — empty translated_text rows must also be excluded."""
+    async with db_factory() as session:
+        await _seed_doc_with_blocks(
+            session,
+            blocks=[
+                ("text", "Healthy block with real translation text content for backfill.", True),
+                ("text", "Block with EMPTY translation text, length is fine on source.", True),
+            ],
+        )
+        from sqlalchemy import select as _select
+
+        rows = (await session.execute(_select(Translation))).scalars().all()
+        rows[1].translated_text = ""
+        await session.commit()
+
+    client = MockEmbeddingClient(dim=8)
+    async with db_factory() as session:
+        stats = await backfill(session, client)
+    assert stats["candidates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_refreshes_on_model_swap(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """R1 §4 #4 — backfill must re-embed when the model_name changes,
+    even if the source text (and thus source_hash) is unchanged."""
+    async with db_factory() as session:
+        await _seed_doc_with_blocks(session)
+
+    client_a = MockEmbeddingClient(dim=8, model_name="model-a")
+    client_b = MockEmbeddingClient(dim=8, model_name="model-b")
+
+    async with db_factory() as session:
+        first = await backfill(session, client_a)
+    assert first["embedded"] == 2
+
+    async with db_factory() as session:
+        second = await backfill(session, client_b)
+    # Same text → same source_hash, but model_name differs → re-embed.
+    assert second["embedded"] == 2, (
+        f"model swap must trigger re-embed; got embedded={second['embedded']}"
+    )
+    assert second["skipped"] == 0

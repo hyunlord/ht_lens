@@ -18,9 +18,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ht_lens.db.models import Block, Page, Translation
+from ht_lens.db.models import Block, BlockEmbedding, Page, Translation
 from ht_lens.embedding.service import EmbeddingClient, text_source_hash
-from ht_lens.embedding.store import get_source_hash, upsert_embedding
+from ht_lens.embedding.store import upsert_embedding
 
 _log = logging.getLogger("ht_lens.embedding.backfill")
 
@@ -30,12 +30,23 @@ _BACKFILL_MIN_CHARS = 30
 
 
 async def _candidate_blocks(session: AsyncSession, doc_id: int | None) -> list[Block]:
-    """Translated blocks of type text/header with text length > min."""
+    """Translated blocks of type text/header with text length >= min.
+
+    Phase 7a R1 fix (Codex verify-cross §4 #3): exclude rows where the
+    translate pipeline marked ``Translation.status='failed'`` or where
+    the actual Korean text is empty/whitespace. Without these guards a
+    failed-translation row would still be embedded and pollute
+    retrieval with garbage source content.
+    """
     stmt = (
         select(Block)
         .join(Translation, Translation.block_id == Block.id)
         .join(Page, Page.id == Block.page_id)
-        .where(Block.type.in_(_BACKFILL_BLOCK_TYPES))
+        .where(
+            Block.type.in_(_BACKFILL_BLOCK_TYPES),
+            Translation.status == "translated",
+            Translation.translated_text != "",
+        )
         .options(selectinload(Block.page))
     )
     if doc_id is not None:
@@ -61,12 +72,20 @@ async def backfill(
     skipped = 0
 
     # Filter to needs-embed first to keep encoder batches dense.
+    # Phase 7a R1 fix (Codex verify-cross §4 #4): refresh on **either**
+    # a source_hash change OR a model_name change. Skipping by hash
+    # alone made model swaps silently no-op despite the file claiming
+    # idempotent-per-source semantics.
     needs: list[Block] = []
     expected: list[str] = []
     for blk in candidates:
         h = text_source_hash(blk.original_text)
-        current = await get_source_hash(session, blk.id)
-        if current == h:
+        existing = await session.get(BlockEmbedding, blk.id)
+        if (
+            existing is not None
+            and existing.source_hash == h
+            and existing.model == client.model_name
+        ):
             skipped += 1
             continue
         needs.append(blk)

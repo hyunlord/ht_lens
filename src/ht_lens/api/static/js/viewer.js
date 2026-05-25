@@ -25,6 +25,7 @@ import {
   setActiveThreadId,
   setLoadingMessage,
   setPageSummaries,
+  setRelatedBlocksForMessage,
   setRetranslateInProgress,
   setSearchError,
   setSearchLoading,
@@ -504,8 +505,14 @@ async function handleExplain() {
   try {
     const threadId = await ensureThreadForActiveBlock();
     if (state.panelToken !== token) return;
-    await explainThread(threadId);
+    const explainResp = await explainThread(threadId);
     if (state.panelToken !== token) return;
+    // Phase 7a: persist response-time related_blocks so the subsequent
+    // GET /threads/{id} reload (which lacks the computed field) keeps
+    // surfacing the "다른 책의 관련 부분" section.
+    if (explainResp?.id) {
+      setRelatedBlocksForMessage(explainResp.id, explainResp.related_blocks || []);
+    }
     await ensureThreadDetail(threadId);
     if (state.panelToken !== token) return;
     try {
@@ -539,8 +546,12 @@ async function handleSubmit(text) {
   try {
     const threadId = await ensureThreadForActiveBlock();
     if (state.panelToken !== token) return;
-    await postMessage(threadId, text);
+    const msgResp = await postMessage(threadId, text);
     if (state.panelToken !== token) return;
+    // Phase 7a: same response-time persistence as the /explain path.
+    if (msgResp?.id) {
+      setRelatedBlocksForMessage(msgResp.id, msgResp.related_blocks || []);
+    }
     await ensureThreadDetail(threadId);
     if (state.panelToken !== token) return;
     try {

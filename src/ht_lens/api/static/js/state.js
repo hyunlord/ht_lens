@@ -138,6 +138,12 @@ export const state = {
   // Runtime caches — do NOT persist.
   threadsByDoc: {}, // { [docId]: Thread[] }
   threadDetailById: {}, // { [threadId]: ThreadDetail (full incl. messages) }
+  // Phase 7a: cross-doc related references per assistant message_id.
+  // /explain and /messages responses carry ``related_blocks`` but the
+  // subsequent ``GET /threads/{id}`` reload (rebuilt from ORM ``Message``
+  // rows) does not. We cache the response-time refs here so the UI
+  // keeps rendering "다른 책의 관련 부분" after the panel rehydrates.
+  relatedBlocksByMessageId: {}, // { [messageId]: RelatedBlock[] }
   loadingMessage: false,
   panelToken: 0, // bumped on every panel async op to cancel stale results
   // Phase 6a — search modal (volatile, never persisted).
@@ -345,6 +351,22 @@ export function setThreadsForDoc(docId, threads) {
 export function setThreadDetail(detail) {
   state.threadDetailById[detail.id] = detail;
   notify();
+}
+
+/** Phase 7a — remember cross-doc refs returned alongside an assistant
+ *  message so the subsequent thread reload (which fetches from ORM and
+ *  drops the computed-per-response ``related_blocks`` field) doesn't
+ *  lose them. ``message.js`` looks here when ``msg.related_blocks`` is
+ *  absent. */
+export function setRelatedBlocksForMessage(messageId, refs) {
+  if (!messageId) return;
+  state.relatedBlocksByMessageId[messageId] = Array.isArray(refs) ? refs : [];
+  notify();
+}
+
+/** Read helper used by the renderer. */
+export function getRelatedBlocksForMessage(messageId) {
+  return state.relatedBlocksByMessageId[messageId] || [];
 }
 
 /** Cache helper: replace activeThreadId persisted state. */

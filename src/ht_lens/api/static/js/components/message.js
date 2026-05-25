@@ -1,6 +1,7 @@
 "use strict";
 
 import { renderMarkdown } from "../utils/render_markdown.js";
+import { getRelatedBlocksForMessage } from "../state.js";
 
 /** Render a single message into ``container``. ``role === 'assistant'`` goes
  *  through the markdown pipeline; user messages stay plain text to avoid any
@@ -35,14 +36,17 @@ export function renderMessage(container, msg) {
   wrap.appendChild(body);
 
   // Phase 7a: render cross-doc references the LLM used in its context.
-  // ``related_blocks`` is empty when RAG is disabled, the embedding
-  // client failed to load, or no hit cleared the threshold.
-  if (
-    msg.role === "assistant"
-    && Array.isArray(msg.related_blocks)
-    && msg.related_blocks.length > 0
-  ) {
-    renderRelatedBlocks(wrap, msg.related_blocks);
+  // The /explain and /messages responses carry ``related_blocks``, but
+  // the subsequent ``GET /threads/{id}`` reload rebuilds messages from
+  // ORM rows and drops the computed-per-response field. Fall back to
+  // the runtime cache in state.js (Phase 7a R1 verify-cross fix).
+  if (msg.role === "assistant") {
+    const refs = Array.isArray(msg.related_blocks) && msg.related_blocks.length > 0
+      ? msg.related_blocks
+      : getRelatedBlocksForMessage(msg.id);
+    if (refs && refs.length > 0) {
+      renderRelatedBlocks(wrap, refs);
+    }
   }
 
   container.appendChild(wrap);
@@ -96,9 +100,13 @@ function renderRelatedBlocks(container, refs) {
     }
 
     // Open the related block's viewer page in a new tab.
+    // Phase 7a R1 fix (Codex verify-cross §4 #2): viewer.js
+    // parseQuery() only honors ?doc=&page=&block= query params; the
+    // earlier ``#block-N`` fragment was silently ignored and the
+    // viewer landed on the page without highlighting the block.
     const link = document.createElement("a");
     link.className = "related-open";
-    link.href = `/static/viewer.html?doc=${r.doc_id}&page=${r.page_num}#block-${r.block_id}`;
+    link.href = `/static/viewer.html?doc=${r.doc_id}&page=${r.page_num}&block=${r.block_id}`;
     link.target = "_blank";
     link.rel = "noopener";
     link.textContent = "→ 열기";
