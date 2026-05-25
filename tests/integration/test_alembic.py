@@ -65,8 +65,43 @@ def test_alembic_upgrade_head_creates_all_tables(tmp_path: Path) -> None:
         "threads",
         "messages",
         "alembic_version",
+        # Phase 7a: cross-doc RAG embeddings
+        "block_embeddings",
     }
     assert expected.issubset(set(tables)), f"missing tables: {expected - set(tables)}"
+
+
+def test_alembic_phase7a_block_embeddings_schema(tmp_path: Path) -> None:
+    """Phase 7a migration 0004 — verify table columns + the model index."""
+    db_path = tmp_path / "test_emb.db"
+    proc = _run_alembic_upgrade(db_path)
+    assert proc.returncode == 0, (proc.stderr,)
+
+    import asyncio
+
+    engine = make_engine(db_path)
+
+    async def _inspect() -> tuple[list[tuple[str, str]], list[str]]:
+        async with engine.connect() as conn:
+            from sqlalchemy import text
+
+            cols = await conn.execute(text("PRAGMA table_info(block_embeddings)"))
+            col_pairs = [(r[1], r[2]) for r in cols.fetchall()]
+            idx_rows = await conn.execute(
+                text(
+                    "SELECT name FROM sqlite_master WHERE type='index' "
+                    "AND tbl_name='block_embeddings'"
+                )
+            )
+            indexes = [r[0] for r in idx_rows.fetchall()]
+            return col_pairs, indexes
+
+    cols, indexes = asyncio.run(_inspect())
+    asyncio.run(engine.dispose())
+
+    col_names = {c[0] for c in cols}
+    assert {"block_id", "model", "dim", "vector", "source_hash", "updated_at"}.issubset(col_names)
+    assert any("model" in name.lower() for name in indexes), f"missing model index; got {indexes}"
 
 
 @pytest.mark.asyncio

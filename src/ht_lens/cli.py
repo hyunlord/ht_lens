@@ -183,6 +183,60 @@ def ingest_command(
         raise typer.Exit(code=exc.exit_code) from exc
 
 
+@app.command("embed")
+def embed_command(
+    doc_id: int | None = typer.Option(
+        None,
+        "--doc-id",
+        help="Embed only this document's translated blocks. Omit to embed all.",
+    ),
+    batch_size: int = typer.Option(16, "--batch-size", min=1, max=256, help="Encoder batch size."),
+    db: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--db",
+        resolve_path=True,
+        help="SQLite DB path. Defaults to HT_LENS_DB_URL env var or data/ht_lens.db.",
+    ),
+) -> None:
+    """Phase 7a — backfill ``block_embeddings`` for translated blocks.
+
+    Idempotent: blocks already at the current ``source_hash`` are skipped.
+    Uses ``BAAI/bge-m3`` on CPU; first run downloads ~2 GB.
+    """
+    from ht_lens.dotenv_loader import load_repo_dotenv
+
+    load_repo_dotenv()
+
+    from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.embedding.backfill import backfill
+    from ht_lens.embedding.service import BgeM3Client
+
+    db_path = db if db is not None else _db_path_from_env()
+
+    async def _run() -> None:
+        client = BgeM3Client()
+        engine = make_engine(db_path)
+        factory = make_session_factory(engine)
+        try:
+            async with factory() as session:
+                stats = await backfill(session, client, doc_id=doc_id, batch_size=batch_size)
+            typer.echo(
+                f"ok: doc_id={doc_id} candidates={stats['candidates']} "
+                f"embedded={stats['embedded']} skipped={stats['skipped']}"
+            )
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_run())
+    except SchemaVersionMismatch as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    except HtLensError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         app(argv if argv is not None else sys.argv[1:], standalone_mode=True)
