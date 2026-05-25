@@ -1,4 +1,28 @@
-<!--
-이 파일은 `bash scripts/run_verify_cross.sh N`이 자동 생성합니다.
-Worker(Claude Code)가 직접 작성하지 마세요.
--->
+## 1. Verification of automated checks
+- `verify.md` is not stale. `git log` shows `aa2a3b4 chore(phase-7a): verify` at HEAD, after the Phase 7a code commits, so I do not see a “verified old code” problem here.
+- Lint, format, type, and test evidence is broadly credible. The commands match repo config, and nothing in the commit order suggests the report predates later code.
+- Coverage evidence is not credible enough. `pyproject.toml` enables `--cov=ht_lens --cov-report=term-missing`, but the report records `TOTAL N/A` instead of the actual current-head percentage. That leaves the coverage cell effectively unproven.
+- CI is unverified. The 5-A table explicitly says push/GitHub Actions were deferred, so CI should be treated as “not run”, not as a green verification item.
+
+## 2. Verification of functional checks
+- The backend checks are mostly real. `tests/integration/test_embedding_backfill.py`, `tests/integration/test_api_related.py`, and `tests/integration/test_api_messages.py::test_explain_includes_cross_doc_section_in_system_prompt` do exercise the main server-side RAG path.
+- The UI verification is not credible. The viewer ignores the `MessageRead` body returned by `/threads/{id}/explain` and `/messages`, then immediately reloads thread history via [`viewer.js`](/home/hyunlord/github/ht_lens/src/ht_lens/api/static/js/viewer.js:507) and [`viewer.js`](/home/hyunlord/github/ht_lens/src/ht_lens/api/static/js/viewer.js:542). That history is rebuilt from plain ORM messages in [`threads.py`](/home/hyunlord/github/ht_lens/src/ht_lens/api/routers/threads.py:161), so `related_blocks` is lost.
+- The “→ 열기” flow was not functionally checked. The UI emits a hash-based URL in [`message.js`](/home/hyunlord/github/ht_lens/src/ht_lens/api/static/js/components/message.js:101), but the viewer only parses `?block=` query params in [`viewer.js`](/home/hyunlord/github/ht_lens/src/ht_lens/api/static/js/viewer.js:83). No test covers an actual click-through.
+- The roadmap deliverable “새 PDF 업로드 시 자동 embedding” in [`ROADMAP.md`](/home/hyunlord/github/ht_lens/ROADMAP.md:281) was neither implemented nor verified. The self-report mentions this as scope-out, so completeness evidence is weaker than the score implies.
+- Latency DoD is explicitly failed by their own benchmark: 581ms average versus `< +500ms` in [`ROADMAP.md`](/home/hyunlord/github/ht_lens/ROADMAP.md:289). That is not a pass on functional verification.
+
+## 3. Score audit
+- 독창성 / 15: `14` is acceptable. The phase is a pragmatic first RAG slice; not especially novel, but coherent.
+- 완결성 / 35: `32` is not justified. I would cut this to about `21`. One DoD is failed by benchmark, one is functionally broken in the viewer, and the upload-chain auto-embed deliverable is absent.
+- 안정성 / 30: `28` is too high. I would cut this to about `20`. There is no CI evidence, no usable coverage number, and the new user-visible frontend path has no regression test despite being the phase’s visible outcome.
+- 확장성 / 20: `17` is too high. I would cut this to about `10`. [`backfill.py`](/home/hyunlord/github/ht_lens/src/ht_lens/embedding/backfill.py:66) only keys idempotency on `source_hash`, so model swaps with unchanged text do not refresh rows, and [`store.py`](/home/hyunlord/github/ht_lens/src/ht_lens/embedding/store.py:77) mishandles mixed-dim corpora while [`search.py`](/home/hyunlord/github/ht_lens/src/ht_lens/embedding/search.py:61) assumes aligned `ids` and `matrix`.
+- Fair total: about `65/100`, not `91/100`.
+
+## 4. Issues missed (new this round)
+- UI DoD is effectively broken. `/explain` and `/messages` do attach `response.related_blocks` in [`messages.py`](/home/hyunlord/github/ht_lens/src/ht_lens/api/routers/messages.py:143) and [`messages.py`](/home/hyunlord/github/ht_lens/src/ht_lens/api/routers/messages.py:203), but the viewer discards those responses and overwrites panel state with `GET /threads/{id}` data in [`viewer.js`](/home/hyunlord/github/ht_lens/src/ht_lens/api/static/js/viewer.js:509). Since [`threads.py`](/home/hyunlord/github/ht_lens/src/ht_lens/api/routers/threads.py:167) returns `MessageRead.model_validate(m)` only, the “다른 책의 관련 부분” section will not persist and likely never appears in the real chat flow.
+- The new “→ 열기” link does not target the related block. It builds `...#block-{id}` in [`message.js`](/home/hyunlord/github/ht_lens/src/ht_lens/api/static/js/components/message.js:101), but the viewer only reads `doc/page/block` from query params in [`viewer.js`](/home/hyunlord/github/ht_lens/src/ht_lens/api/static/js/viewer.js:83), and rendered blocks expose only `data-block-id` in [`block.js`](/home/hyunlord/github/ht_lens/src/ht_lens/api/static/js/components/block.js:28). Result: the link opens the page, not the referenced block.
+- Backfill candidate filtering contradicts its own contract. The docstring says only blocks with non-empty translated rows are considered in [`backfill.py`](/home/hyunlord/github/ht_lens/src/ht_lens/embedding/backfill.py:8), but `_candidate_blocks()` only joins `Translation` and never filters `status == "translated"` or non-empty `translated_text` in [`backfill.py`](/home/hyunlord/github/ht_lens/src/ht_lens/embedding/backfill.py:32). Failed rows from `translate/pipeline.py` can therefore be embedded and pollute retrieval.
+- Model-refresh and mixed-dim handling are broken and untested. `backfill()` skips whenever `source_hash` matches in [`backfill.py`](/home/hyunlord/github/ht_lens/src/ht_lens/embedding/backfill.py:69), so a model bump does not re-embed despite the file claiming it should. Separately, [`store.py`](/home/hyunlord/github/ht_lens/src/ht_lens/embedding/store.py:78) preallocates matrix rows for all embeddings but drops mismatched dims from `ids`, which can desynchronize indexing in [`search.py`](/home/hyunlord/github/ht_lens/src/ht_lens/embedding/search.py:94).
+
+## 5. Verdict
+**REJECT** — the self-assessment is not credible as a pass. The report is current, but current HEAD still misses core phase goals: the latency DoD is failed by measurement, and the user-facing UI DoD is broken by the actual viewer integration. With those issues plus the backfill/search contract bugs and missing CI/coverage evidence, this needs RE-CODE rather than a minor score trim.
