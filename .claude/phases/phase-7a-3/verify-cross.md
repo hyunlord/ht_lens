@@ -1,53 +1,43 @@
 ## 1. Verification of automated checks
 
-- `verify.md` is not stale relative to the code. It was written against code commit `2ddc59b` (`verify.md:3`), and current HEAD `9d9dc3d` only changes `.claude/phases/phase-7a-3/verify.md`, not `src/` or `tests/`.
+- `verify.md` is not stale relative to the code. I checked `git log --name-only 50b39ca..HEAD`; the only post-RE-CODE change is `.claude/phases/phase-7a-3/verify.md`, so the report still maps to the current `src/` and `tests/` tree.
 
-- The lint/format evidence is weaker than reported. `WORKFLOW.md:138-145` requires `uv run ruff check .` and `uv run ruff format --check .`, but `verify.md:9-10` only ran those commands on `src/ tests/`. That is a narrower scope than the project policy.
+- Round 1’s RE-CODE itself was test-only. `git show --stat 50b39ca` touches only `tests/integration/test_api_startup.py` and `tests/integration/test_translate_cli_auto_embed.py`, so there is no new production diff to re-audit for regression in Round 2.
 
-- Type-check evidence is credible enough. `verify.md:11` ran `mypy` on `src/`, which matches the intended scope for typed code.
+- The automated-check table is still incomplete against policy. `verify.md:13-18` ran `ruff` only on `src/ tests/`, not `.` as required by `WORKFLOW.md:140-141`; coverage is still `n/a`; CI is still pending. Those are not fatal for this phase, but 5-A is not fully satisfied.
 
-- Test evidence is plausible but not fully auditable from the report alone. `verify.md:12` reports `529 passed, 1 skipped`; however it never identifies the skipped test. That matters because `verify.md:47` treats the console-script contract as proven, but `tests/integration/test_translate_cli_auto_embed.py:230-245` can skip if `ht-lens` is not on `PATH`.
+- One credibility issue remains unchanged since Round 1: V2 still overclaims coverage of the factory’s default `BgeM3Client()` branch. `verify.md:36` says test 4 covers the default-provider path, but `tests/integration/test_translate_cli_auto_embed.py:235-240` explicitly sets `EMBEDDING_PROVIDER=mock`, and `verify.md:92` again treats the default branch as “locked” even though `src/ht_lens/embedding/factory.py:46-50` has no direct test hit.
 
-- Coverage was effectively not run. The test command in `verify.md:12` uses `--no-cov`, and the coverage row is `n/a` at `verify.md:13`, which does not match the `WORKFLOW.md:144` expectation that coverage is part of the automated check set.
-
-- CI is still missing. `verify.md:14` marks CI pending, so 5-A is incomplete even if the local commands were real.
+- I could not replay the exact `uv` commands in this sandbox because `uv` is unavailable here and the repo’s `.venv` is not runnable, so the command results are not independently reproduced below; this section is a static credibility audit.
 
 ## 2. Verification of functional checks
 
-- The core Phase 7a-3 CLI behavior is exercised well. The new tests cover default auto-embed, `--no-embed`, `RAG_DISABLED`, rerun idempotence, partial translation failure, and translate-path factory init failure: `tests/integration/test_translate_cli_auto_embed.py:183-276` and `tests/unit/test_translate_command_unit.py:162-229`.
+- The core DoD behavior is now exercised directly. `tests/integration/test_translate_cli_auto_embed.py:183-320` covers default auto-embed, `--no-embed`, `RAG_DISABLED`, console-script entrypoint, rerun idempotence, and dry-run silence. `tests/unit/test_translate_command_unit.py:162-229` covers partial translation failure and translate-path factory init failure.
 
-- The main debate findings were addressed. The console-script path exists (`tests/integration/test_translate_cli_auto_embed.py:230-245`), env filtering was expanded (`tests/integration/test_translate_cli_auto_embed.py:53-82`), and the V1 init-failure bug is directly targeted in `tests/unit/test_translate_command_unit.py:198-229`.
+- The concrete Round 1 gaps were addressed. `tests/integration/test_translate_cli_auto_embed.py:323-355` locks the `ht-lens embed` happy path after the factory refactor, and `tests/integration/test_api_startup.py:138-193` locks both `_lifespan` factory-hit and factory-raise branches.
 
-- But the report overstates factory branch coverage. `verify.md:54` says Tests 1/2/3 cover “BgeM3 / mock / None”; they do not. Test 1 explicitly sets `EMBEDDING_PROVIDER=mock` at `tests/integration/test_translate_cli_auto_embed.py:192`, so the real `BgeM3Client()` branch is still unverified.
+- What is still missing is a realistic functional check of the true default embedding-provider path. The current matrix proves `None`, `mock`, and monkeypatched `raise`, but not the `from_env_embedding()` fallthrough to `BgeM3Client()` in `src/ht_lens/embedding/factory.py:46-50`. That is acceptable if intentionally deferred, but `verify.md` should not describe it as tested.
 
-- The API caller is not functionally verified the way `verify.md:56` claims. Most API integration tests bypass the lifespan embedding path by forcing `RAG_DISABLED=1` in `tests/integration/_api_helpers.py:151-157`, and `tests/integration/test_api_startup.py:43-129` never asserts which embedding client was created or how factory failure is handled.
-
-- The new `embed_command` wiring is only partially checked. `tests/integration/test_translate_cli_auto_embed.py:279-292` verifies the `RAG_DISABLED` refusal path, but not the normal/default/mock path after switching `src/ht_lens/cli.py:217-229` to `from_env_embedding()`.
-
-- One new translate path is still unproven: `src/ht_lens/translate/cli.py:128-129` skips embed silently on `--dry-run`, but there is no explicit assertion that dry-run prints no `embed:` line and writes no embeddings.
+- Because the RE-CODE commit added tests only, I do not see a new Round 2 regression surface or any newly introduced identifier lacking a test reference.
 
 ## 3. Score audit
 
-- 독창성: `12/15` is justified. The factory refactor in `src/ht_lens/embedding/factory.py:27-50` is standard, and the work is more about operational cleanup than new design. I would keep `12/15`.
+- 독창성 `12/15`: justified. The factory in `src/ht_lens/embedding/factory.py:27-50` is straightforward cleanup, not novel design, and the self-score already reflects that.
 
-- 완결성: `32/35` is high for the evidence provided. The core CLI DoD is mostly met, but `verify.md:50-79` overclaims “3 caller wire-up” verification when API lifespan and `embed_command` normal-path coverage are missing. I would deduct to `29/35`.
+- 완결성 `30/35`: slightly high. The user-visible DoD is covered, but `verify.md:36` and `verify.md:92` still overstate default-branch coverage, and 5-A still omits repo-wide lint/format, coverage, and CI completion. I would trim this to `29/35`.
 
-- 안정성: `27/30` is not justified. CI is pending (`verify.md:14`), coverage was disabled (`verify.md:12-13`), the real `BgeM3Client` branch is untested, and new exception paths in `src/ht_lens/api/app.py:117-130` and `src/ht_lens/cli.py:217-229` are not explicitly locked. I would score `23/30`.
+- 안정성 `25/30`: slightly high. Stability evidence improved materially with `tests/integration/test_api_startup.py:162-193` and `tests/unit/test_translate_command_unit.py:198-229`, but the default `BgeM3Client()` branch in `src/ht_lens/embedding/factory.py:46-50` remains unproven and CI/coverage are still absent. I would trim this to `24/30`.
 
-- 확장성: `18/20` is somewhat generous. Centralizing provider choice helps, but the public `EMBEDDING_PROVIDER=mock` path can create mixed-dimension DB state (`src/ht_lens/embedding/factory.py:36-40`, `src/ht_lens/embedding/store.py:77-96`) and caller behavior is inconsistent between translate/API/embed. I would score `16/20`.
+- 확장성 `17/20`: justified. Centralizing the factory across `translate/cli.py`, `cli.py`, and `api/app.py` is the right direction, and the mixed-dimension mock risk is at least documented in `src/ht_lens/embedding/factory.py:36-44`.
 
-- Fair total: `80/100`. The implementation looks directionally correct, but the self-verify is more confident than the actual evidence supports.
+- Fair total: `82/100`. That is close to the self-score of `84/100`, but I would not let V2’s remaining coverage overclaim stand without a small deduction.
 
 ## 4. Issues missed (new this round)
 
-- `verify.md` claims `api/app.py::_lifespan` is covered, but there is no direct lock on the new factory path. The new code at `src/ht_lens/api/app.py:117-130` can now return `None`, return mock, or raise; most API tests bypass that with `RAG_DISABLED=1` in `tests/integration/_api_helpers.py:151-157`.
+- No new production regressions or new untested RE-CODE paths surfaced in Round 2. `50b39ca` added tests only.
 
-- The new public `EMBEDDING_PROVIDER=mock` path can poison a real DB. `src/ht_lens/translate/cli.py:133-140` and `src/ht_lens/cli.py:217-229` will backfill 32-dim mock rows from `src/ht_lens/embedding/factory.py:48-49`; later RAG either silently drops minority dims in `src/ht_lens/embedding/store.py:77-96` or throws on dim mismatch in `src/ht_lens/embedding/search.py:65-69`. The risk is documented, not prevented.
-
-- Auto-embed on partial translation failure changes retrieval semantics in a way the verify does not discuss. `src/ht_lens/translate/cli.py:149-156` embeds even when the command exits 1, `src/ht_lens/translate/pipeline.py:433-436` marks the doc `partial_translated`, and cross-doc search does not filter document status in `src/ht_lens/embedding/search.py:78-105`. That means partially translated documents can enter RAG automatically.
-
-- The new `embed_command` caller path still has an untested init-failure branch. After the refactor, `src/ht_lens/cli.py:217` calls `from_env_embedding()` before any generic exception handling; only the `None` branch is tested in `tests/integration/test_translate_cli_auto_embed.py:279-292`. `verify.md:78` credits this caller as locked more strongly than the test evidence supports.
+- Unchanged since Round 1: the factory’s default `BgeM3Client()` branch is still untested, despite V2 claiming that gap is closed. The actual tests only exercise `RAG_DISABLED`, `EMBEDDING_PROVIDER=mock`, and injected failure paths (`tests/integration/test_translate_cli_auto_embed.py:192`, `:223`, `:239`, `:312`, `:350`; `tests/integration/test_api_startup.py:148`; `tests/unit/test_translate_command_unit.py:216`). This is an evidence/reporting gap, not a proven runtime bug.
 
 ## 5. Verdict
 
-**DOWNGRADE** — the CLI auto-embed chain itself appears implemented and the main debate issues were mostly addressed, but the self-verification overstates both automated-check completeness and caller-path coverage. A fair score is about `80/100`, not `89/100`: repo-wide lint/format/coverage/CI are incomplete, `api/app.py::_lifespan` is not actually verified, `embed_command` only has its `RAG_DISABLED` branch covered, and the new mock-provider surface introduces a real mixed-dimension RAG hazard that the report does not surface.
+**DOWNGRADE** — the implementation now looks sound for Phase 7a-3, and the substantive Round 1 findings were addressed, but the self-verify still overstates one key point: the default `from_env_embedding() -> BgeM3Client()` branch is not actually tested even though `verify.md` says it is. I would treat this as a modest score correction, not grounds for more RE-CODE: a fair final score is about `82/100`, with the remaining concerns concentrated in verification hygiene (`ruff .`, coverage, CI, and default-branch evidence), not in the landed feature itself.
