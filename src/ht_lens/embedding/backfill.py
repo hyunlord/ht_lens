@@ -37,9 +37,14 @@ async def _candidate_blocks(session: AsyncSession, doc_id: int | None) -> list[B
     the actual Korean text is empty/whitespace. Without these guards a
     failed-translation row would still be embedded and pollute
     retrieval with garbage source content.
+
+    R2 fix (verify-cross §4): also exclude rows whose ``translated_text``
+    is whitespace-only (e.g. ``"   "`` / ``"\\n\\t"``). SQLite's ``trim()``
+    only strips literal spaces, so we do the Python-side check after
+    loading instead of relying on the SQL layer.
     """
     stmt = (
-        select(Block)
+        select(Block, Translation.translated_text)
         .join(Translation, Translation.block_id == Block.id)
         .join(Page, Page.id == Block.page_id)
         .where(
@@ -51,8 +56,13 @@ async def _candidate_blocks(session: AsyncSession, doc_id: int | None) -> list[B
     )
     if doc_id is not None:
         stmt = stmt.where(Page.doc_id == doc_id)
-    rows = (await session.execute(stmt)).scalars().all()
-    return [b for b in rows if len((b.original_text or "").strip()) >= _BACKFILL_MIN_CHARS]
+    rows = (await session.execute(stmt)).all()
+    return [
+        blk
+        for blk, translated_text in rows
+        if (translated_text or "").strip()
+        and len((blk.original_text or "").strip()) >= _BACKFILL_MIN_CHARS
+    ]
 
 
 async def backfill(

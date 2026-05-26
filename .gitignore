@@ -40,6 +40,7 @@ Thumbs.db
 # Env
 .env
 .env.local
+.env.backup.*
 
 # Project artifacts
 data/*

@@ -248,6 +248,39 @@ async def test_backfill_skips_empty_translated_text(
 
 
 @pytest.mark.asyncio
+async def test_backfill_excludes_whitespace_only_translations(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """R2 verify-cross §4 — translations that are whitespace-only
+    (e.g. ``"   "`` / ``"\\n\\t"``) must not be embedded.
+
+    The R1 SQL filter only rejected exact ``""``; this test locks the
+    R2 fix that uses ``trim(translated_text) != ''``.
+    """
+    async with db_factory() as session:
+        await _seed_doc_with_blocks(
+            session,
+            blocks=[
+                ("text", "Healthy block with real translation text content for backfill.", True),
+                ("text", "Block whose translation is whitespace-only, long enough source.", True),
+            ],
+        )
+        from sqlalchemy import select as _select
+
+        rows = (await session.execute(_select(Translation))).scalars().all()
+        rows[1].translated_text = "   \n\t  "
+        await session.commit()
+
+    client = MockEmbeddingClient(dim=8)
+    async with db_factory() as session:
+        stats = await backfill(session, client)
+    assert stats["candidates"] == 1, (
+        f"whitespace-only translations must be excluded; got candidates={stats['candidates']}"
+    )
+    assert stats["embedded"] == 1
+
+
+@pytest.mark.asyncio
 async def test_backfill_refreshes_on_model_swap(
     db_factory: async_sessionmaker[AsyncSession],
 ) -> None:

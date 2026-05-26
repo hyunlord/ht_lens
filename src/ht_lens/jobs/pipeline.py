@@ -205,6 +205,34 @@ async def process_upload_job(job_id: int, app: FastAPI) -> None:
                 on_progress=_on_progress,
             )
 
+        # --- Auto-embed (Phase 7a ROADMAP DoD). Runs after translate so
+        # the new document is immediately retrievable by cross-doc RAG
+        # without a manual ``ht-lens embed`` invocation. Failure here is
+        # non-fatal: chat still works on same-doc context, and the job
+        # transitions to ``done`` with a warning in error_message. The
+        # embedding client is taken from ``app.state.embedding_client``
+        # (set up by the lifespan, may be ``None`` when RAG_DISABLED=1
+        # or bge-m3 init failed).
+        embedding_client = getattr(app.state, "embedding_client", None)
+        embed_error: str | None = None
+        if embedding_client is not None and document_id is not None:
+            try:
+                from ht_lens.embedding.backfill import backfill
+
+                async with factory() as session:
+                    embed_stats = await backfill(session, embedding_client, doc_id=document_id)
+                _log.info("job %s auto-embedded doc_id=%s: %s", job_id, document_id, embed_stats)
+            except Exception as exc:  # non-fatal — log + record
+                embed_error = f"임베딩 실패: {exc}"
+                _log.warning("job %s auto-embed failed: %s", job_id, exc)
+        else:
+            _log.info(
+                "job %s auto-embed skipped (embedding_client=%s, document_id=%s)",
+                job_id,
+                "None" if embedding_client is None else "ready",
+                document_id,
+            )
+
         # --- Summarize (own session). Empty body is non-fatal — done with
         # a clear error_message so the viewer can still load. ---
         await update_job(
@@ -232,13 +260,17 @@ async def process_upload_job(job_id: int, app: FastAPI) -> None:
             summary_error = f"요약 실패: {exc}"
             _log.warning("job %s summarize failed: %s", job_id, exc)
 
+        # Merge non-fatal warnings (embed + summarize) into one error_message
+        # field so the viewer can surface either or both.
+        warnings = [w for w in (embed_error, summary_error) if w]
+        final_error: str | None = "; ".join(warnings) if warnings else None
         await update_job(
             factory,
             job_id,
             status="done",
             progress_pct=100,
             progress_message="완료",
-            error_message=summary_error,
+            error_message=final_error,
             finished_at=datetime.now(UTC),
         )
     except Exception as exc:  # top-level fatal handler — mark job failed

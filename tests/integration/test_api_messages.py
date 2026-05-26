@@ -337,6 +337,113 @@ async def test_explain_related_blocks_empty_when_no_embedding_client(
 
 
 @pytest.mark.asyncio
+async def test_messages_includes_related_blocks_when_embedding_available(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """Phase 7a R2 — ``POST /threads/{id}/messages`` returns
+    ``related_blocks`` for cross-doc RAG hits (mirroring ``/explain``).
+
+    The R2 verify-cross flagged that only ``/explain`` was tested even
+    though both endpoints share the cross-doc retrieval code path. This
+    test locks the follow-up chat branch as well.
+    """
+    from ht_lens.embedding.service import MockEmbeddingClient, text_source_hash
+    from ht_lens.embedding.store import upsert_embedding
+
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    embed_client = MockEmbeddingClient(dim=32)
+    async with factory() as session:
+        seeded = await seed_minimal_document(
+            session,
+            tmp_dir=tmp_path,
+            filename="doc1.pdf",
+            blocks_per_page=3,
+            num_pages=1,
+        )
+        mirror_seeded = await seed_minimal_document(
+            session,
+            tmp_dir=tmp_path,
+            filename="doc2.pdf",
+            blocks_per_page=1,
+            num_pages=1,
+        )
+        long_text = (
+            "Detailed Phase 7a probe paragraph for /messages cross-doc "
+            "RAG integration assertion coverage."
+        )
+        # Stretch all candidate blocks past the 50-char search floor and
+        # embed them so the cross-doc search has something to return.
+        for bid in seeded.block_ids:
+            blk = await session.get(Block, bid)
+            blk.original_text = long_text
+            vec = embed_client.encode([blk.original_text])[0]
+            await upsert_embedding(
+                session,
+                block_id=blk.id,
+                vector=vec,
+                model=embed_client.model_name,
+                dim=embed_client.dim,
+                source_hash=text_source_hash(blk.original_text),
+            )
+        mirror_block = await session.get(Block, mirror_seeded.block_ids[0])
+        mirror_block.original_text = long_text
+        vec = embed_client.encode([mirror_block.original_text])[0]
+        await upsert_embedding(
+            session,
+            block_id=mirror_block.id,
+            vector=vec,
+            model=embed_client.model_name,
+            dim=embed_client.dim,
+            source_hash=text_source_hash(mirror_block.original_text),
+        )
+        await session.commit()
+        target_block_id = seeded.block_ids[1]
+    await engine.dispose()
+
+    with make_test_client(api_db_path, embedding_override=embed_client) as client:
+        thread = client.post("/threads", json={"block_id": target_block_id}).json()
+    with make_test_client(
+        api_db_path,
+        llm_override=RecordingMockLLM(reply="follow-up reply"),
+        embedding_override=embed_client,
+    ) as client:
+        resp = client.post(
+            f"/threads/{thread['id']}/messages",
+            json={"content": "이 단락의 핵심 개념을 다른 문서와 연결해서 설명해주세요."},
+        )
+    assert resp.status_code == 202
+    body = resp.json()
+    assert "related_blocks" in body, "/messages response must carry related_blocks (Phase 7a)"
+    assert body["related_blocks"], "expected at least 1 cross-doc related block from /messages"
+    doc_ids = {r["doc_id"] for r in body["related_blocks"]}
+    assert mirror_seeded.doc_id in doc_ids
+    # Same-doc must be excluded (matching /explain semantics).
+    assert seeded.doc_id not in doc_ids
+    # Schema parity with /explain.
+    for r in body["related_blocks"]:
+        assert "block_id" in r
+        assert "score" in r
+        assert "doc_filename" in r
+        assert "page_num" in r
+
+
+@pytest.mark.asyncio
+async def test_messages_related_blocks_empty_when_no_embedding_client(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """Without embedding override, ``/messages`` returns an empty
+    ``related_blocks`` list (RAG disabled fallback)."""
+    thread_id, _ = await _make_seed_and_thread(api_db_path, tmp_path)
+    llm = RecordingMockLLM(reply="ok")
+    with make_test_client(api_db_path, llm_override=llm) as client:
+        resp = client.post(f"/threads/{thread_id}/messages", json={"content": "안녕하세요"})
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["related_blocks"] == []
+
+
+@pytest.mark.asyncio
 async def test_explain_includes_cross_doc_section_in_system_prompt(
     api_db_path: Path, tmp_path: Path
 ) -> None:
