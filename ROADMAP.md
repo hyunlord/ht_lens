@@ -7,12 +7,12 @@ PDF(한/영) 문서를 페이지 레이아웃과 이미지 위치를 유지하�
 저장·관리할 수 있는 **로컬 도구**.
 
 **v2.0 비전 (Phase 7)**: 사용자의 학습 히스토리를 활용한 personalization agent.
-같은 PDF 안 ±2 block 외 cross-document RAG, user profile/persona, memory system,
-learning progress 추적 → "내 학습 동반자".
+같은 PDF 안 ±2 block 외 cross-document RAG (Phase 7a 완료), user profile/persona,
+memory system, learning progress 추적 → "내 학습 동반자".
 
 ---
 
-## Architecture Overview (v2.0 비전)
+## Architecture Overview
 
 ```
 PDF ─► [Extractor] ─► page PNG + block JSON
@@ -20,18 +20,18 @@ PDF ─► [Extractor] ─► page PNG + block JSON
                               ▼
                          [Ingest] ─► SQLite
                               │
-                              ├──► [Embedding Service] ─► vector index  ←─ Phase 7a
-                              │                              │
-                              ▼                              │
-                       [Translator] ─► translations          │
-                              │                              │
-                              ▼                              ▼
-              ┌──────────[FastAPI]──────────┐         [Cross-doc RAG]
-              ▼                              ▼               │
-        [Static Viewer]              [LLMClient (split)]    │
-        - 배경 + 오버레이             - TranslateLLMClient    │
-        - 채팅 패널                   - ChatLLMClient ◄──────┤
-        - 핀 + 질문 리스트                                    │
+                              ├──► [Embedding Service] ─► block_embeddings  ✅ Phase 7a
+                              │     (bge-m3, 1024d, numpy brute-force)         │
+                              ▼                                                │
+                       [Translator] ─► translations                            │
+                              │                                                │
+                              ▼                              ▼                 │
+              ┌──────────[FastAPI]──────────┐         [Cross-doc RAG]  ✅ 7a   │
+              ▼                              ▼               │                 │
+        [Static Viewer]              [LLMClient (split)]    │                 │
+        - 배경 + 오버레이             - TranslateLLMClient    │                 │
+        - 채팅 패널 + related_blocks  - ChatLLMClient ◄──────┤                 │
+        - 핀 + 질문 리스트                                    │                 │
         - 자동 요약                              [User Profile + Persona]  ←─ Phase 7b
                                                  [Memory System]          ←─ Phase 7c
                                                  [Learning Progress]      ←─ Phase 7d
@@ -40,21 +40,21 @@ PDF ─► [Extractor] ─► page PNG + block JSON
 ```
 
 핵심 단위는 **block**. block이 곧 번역 단위이자 클릭 단위이자 질문 단위이자
-**embedding 단위** (Phase 7a부터).
+**embedding 단위**.
 
 ---
 
 ## Tech Stack
 
-| 영역      | 선택                                                              |
-| --------- | ----------------------------------------------------------------- |
-| Backend   | Python 3.11, FastAPI, SQLAlchemy 2.0 async, SQLite                |
-| PDF       | PyMuPDF (fitz), Pillow                                            |
-| LLM       | OpenAI-compatible 인터페이스 (sglang qwen3.6-27b FP8, 2026-05)    |
-| Vector DB | (Phase 7a) sqlite-vec or chromadb                                 |
-| Embedding | (Phase 7a) bge-m3 또는 multilingual-e5-large                      |
-| Frontend  | vanilla HTML/JS (Phase 4~5), 향후 Electron 옵션                   |
-| Dev tools | uv, ruff, mypy strict, pytest, GitHub Actions                     |
+| 영역       | 선택                                                                  |
+| ---------- | --------------------------------------------------------------------- |
+| Backend    | Python 3.11, FastAPI, SQLAlchemy 2.0 async, SQLite                    |
+| PDF        | PyMuPDF (fitz), Pillow                                                |
+| LLM        | OpenAI-compatible 인터페이스 (sglang qwen3.6-27b FP8, 2026-05)        |
+| Vector DB  | numpy brute-force (Phase 7a, ~16K block scale에 충분)                 |
+| Embedding  | BAAI/bge-m3 (Phase 7a, 1024d, multilingual)                           |
+| Frontend   | vanilla HTML/JS (Phase 4~5), 향후 Electron 옵션                       |
+| Dev tools  | uv, ruff, mypy strict, pytest, GitHub Actions                         |
 
 ---
 
@@ -70,17 +70,17 @@ threads       (id, block_id, title, created_at)
 messages      (id, thread_id, role, content, model, created_at)
 jobs          (id, kind, status, progress, payload_json, created_at)
 summaries     (doc_id PK, content, model, updated_at)
+block_embeddings (block_id PK, model, dim, vector BLOB, source_hash, updated_at)  ✅ 7a
 
-# Phase 7 추가 예정
-block_embeddings (block_id PK, vector BLOB, model, dim, updated_at)        ← 7a
-user_profile     (id PK, name, background, expertise_areas, persona_text)  ← 7b
-memory_notes     (id, content, importance, source_thread_id, created_at)   ← 7c
-learning_log     (id, doc_id, action, block_id, timestamp, ...)            ← 7d
+# Phase 7b/c/d 추가 예정
+user_profile     (id PK, name, background, expertise_areas, persona_text)   ← 7b
+memory_notes     (id, content, importance, source_thread_id, created_at)    ← 7c
+learning_log     (id, doc_id, action, block_id, timestamp, ...)             ← 7d
 ```
 
 ---
 
-## Phases — Completed (v1.0 path)
+## Phases — Completed (v0.1 ~ v1.5)
 
 ### Phase 0 — Skeleton & Harness ✅
 - 디렉토리 구조, pyproject(uv), ruff, mypy strict, pytest markers
@@ -98,12 +98,11 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)            ← 7
 
 ### Phase 2b — Translation Pipeline ✅
 - `OpenAICompatibleClient` (sglang qwen3.6, `enable_thinking=false`)
-- block 단위 번역 + cache (`hash(text + src + tgt + model)`)
-- async + semaphore batch
+- block 단위 번역 + cache, async + semaphore batch
 - 147 tests pass, v0.1 마일스톤
 
 ### Phase 3 — FastAPI Server ✅
-- REST API + 채팅 컨텍스트 자동 구성 (block ±2, **Phase 6h-1에서 확장 예정**)
+- REST API + 채팅 컨텍스트 자동 구성 (block ±2)
 
 ### Phase 4 — Viewer Frontend ✅
 - 정적 뷰어 (vanilla HTML/JS), v0.2 마일스톤
@@ -114,7 +113,7 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)            ← 7
 - v0.3 마일스톤
 
 ### Phase 6a — Critical UX gaps ✅
-- Cmd+K 검색, 질문 export, block 재번역 (manual-retranslate provenance)
+- Cmd+K 검색, 질문 export, block 재번역
 - v0.4 마일스톤
 
 ### Phase 6b — Viewer Rework ✅
@@ -122,85 +121,65 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)            ← 7
 - v0.5 마일스톤
 
 ### Phase 6c — Viewer Polish ✅
-- LLM env 로드 (단 CLI는 Phase 6e-2에서 별도 fix)
-- fit-to-width zoom, 사이드바 토글, 자연 스크롤 버그 fix
+- LLM env 로드, fit-to-width zoom, 사이드바 토글
 - v0.6 마일스톤
 
 ### Phase 6d — File Management + Summary ✅
-- 파일 업로드 + 자동 처리 체인 (extract → ingest → translate)
-- 자동 요약 (LLM)
+- 파일 업로드 + 자동 처리 체인, 자동 요약 (LLM)
 - v0.7 마일스톤
-- Known debt: 자동 요약 hierarchical 미적용 → Phase 6h
 
 ### Phase 6e — LLMClient Infrastructure Split ✅
-- `LLMClient` Protocol → `TranslateLLMClient` + `ChatLLMClient` 분리
-- 환경 변수 분리: `TRANSLATE_LLM_*` + `CHAT_LLM_*` (with `LLM_*` legacy fallback)
-- max_tokens: translate=2048, chat=4096 / temperature: 0.0 vs 0.2
-- 회귀 0 (403 → 427 tests), coverage 68% → 71%
-- 환경 변수 1줄로 모델 swap 가능 (Phase 6f-1, 6f-5에서 두 번 검증)
+- TranslateLLMClient + ChatLLMClient 분리
+- 환경 변수 분리, 1줄 변경으로 모델 swap 가능
 
 ### Phase 6e-2 — CLI .env Load + Fail-closed Provider ✅
-- 🚨 Critical bug fix: CLI `ht-lens translate` 진입 시 `.env` 자동 load
-- 공유 모듈 `src/ht_lens/dotenv_loader.py`
-- Factory `_resolve_provider()` fail-closed (LLMConfigurationError 신규)
-- 442 tests pass (+12 신규), 회귀 0
-- v0.8 마일스톤 (Phase 6e + 6e-2)
+- 🚨 Critical bug fix: CLI silent mock 위험 해결
+- 442 tests pass (+12 신규), v0.8 마일스톤
 
-### Phase 6f-1 → 6f-5 — Production Model 결정 흐름
+### Phase 6f-1 → 6f-5 — Production Model 결정
+- Phase 6f-1: qwen → Gemma 4 swap (Phase E1.5 결과 기반)
+- 사용자 실 사용에서 번역 일관성 문제 발견 → 본문 KR 측정 누락 발견
+- Phase 6f-5: qwen rollback + v2_ko Korean-instruction prompt
+- 454 tests pass, E2E KR 0.96 (이전 0.755 대비 +27%)
+- v0.8.5 마일스톤
 
-#### Phase 6f-1 — Gemma 4 26B-A4B prod swap ✅ → 6f-5에서 Reverse
-**진행 결과** (2026-05-23)
-- prod 모델 qwen3.6-27b → Gemma 4 26B-A4B-IT
-- 평가 근거: Phase E1.5 chrF +3.7, LLM-judge 3/3 우세
-- 디스크 218GB 회복
-
-**🚨 Reverse 사유** (Phase 6f-5에서)
-- 사용자 실 사용에서 번역 일관성 문제 발견 (영어/한국어 섞임)
-- Phase E1.5 평가가 chrF/LLM-judge만 측정 → **본문 한국어 일관성 누락**
-- 정교한 재진단: pure_text 본문 KR qwen 0.789 vs gemma 0.429
-- A/B test: qwen baseline 0.867 vs gemma_tuned_v2 0.755
-- Matched-block 14/0 qwen 압도
-
-**학습 (미래 평가 protocol에 반영)**
-- 자동 metric + LLM-judge 외 **본문 KR** 측정 필수
-- Cross-prompt comparison (model × prompt matrix) 필요
-
-#### Phase 6f-2 — MoE Kernel Tuning ❌ (취소)
-6f-5 rollback으로 prod 모델이 qwen3.6-27b. MoE kernel 대상 prod 아님.
-
-#### Phase 6f-4 — Gemma 4 Prompt 재튜닝 ❌ (취소)
-6f-5 rollback으로 의미 없음.
-
-#### Phase 6f-5 — qwen Rollback + v2_ko Prompt ✅
+### Phase 7a — Cross-document RAG ✅ (v1.5 마일스톤)
 **Deliverable**
-- prod 모델 Gemma 4 → **qwen3.6-27b** 복귀
-- v2_ko Korean-instruction prompt 적용 (en→ko 분기)
-- Translate + chat 둘 다 qwen 통일
+- `block_embeddings` 테이블 + numpy brute-force search
+- bge-m3 embedding service (1024d, multilingual)
+- `chat_context.py` cross-doc top-K retrieval
+- `/blocks/{id}/related` API
+- `/explain` + `/messages` 응답에 `related_blocks` 필드
+- Frontend: message.js renderRelatedBlocks, state.js cache
+- CLI: `ht-lens embed`
+- Upload-chain auto-embed (jobs/pipeline.py)
+- Alembic migration 0004
 
 **DoD**
-- E2E retranslate 평균 KR **0.96** (이전 Gemma 4 0.755 → +27%)
-- 회귀 0 (442 → 454 tests, +12 신규)
-- ht_lens 다운타임 ~6분
+- 모든 기존 block embedding 완료 (485 vectors backfilled, docs 1-5)
+- Chat 호출 시 cross-doc context 자동 포함
+- E2E /explain: 5 cross-doc hits, top-1 score 1.00 (Open-Sora exact match)
+- Latency 575ms (DoD <500ms 미충족 → Phase 7a-2 위임)
 
-**완료 노트** (2026-05-23)
-- Score: v1 91 / v2 84 / R2 79 → Planner-directed micro-fix → push + CI green
-- src_lang/tgt_lang 분기 lock (en→ko만 v2_ko)
-- **v0.8.5 마일스톤** — prod swap → reverse 학습 완료
+**완료 노트** (2026-05-26)
+- 508 tests pass (+43 신규, 0 regression)
+- 16 commits (plan → debate → feat → verify v1/R1/RE-CODE/v2/R2/summary → micro-fix v3)
+- R2 micro-fix (Option B+): a frontend test + b /messages test + c auto-embed + e whitespace + f .gitignore
+- CI green (run 26427252749)
+- **v1.5 마일스톤 달성**
 
-**평가 근거** (Phase E1.5 보완 + qwen A/B 재측정)
-- 본문 KR: qwen 0.874 vs gemma_v2 0.755 (+16%)
-- AllKor>85%: qwen 65% vs gemma 25% (2.6x)
-- Matched-block 14/20 qwen 우세, gemma 우세 0건
-- Latency 비용 +1.4s (5.8s vs 4.4s) — 수용
+**Known debt → Phase 7a-2 / 7a-3**
+- Latency 575ms (75ms over DoD) — Phase 7a-2
+- CLI auto-embed (translate/cli.py에는 backfill chain 미적용, jobs만) — Phase 7a-3
 
 ---
 
-## Phases — Pending (v1.0 path)
+## Phases — Pending (v0.9 / v1.0 / Phase 7 정리)
 
 ### Phase 6f-3 — Graceful Shutdown ⬜
-- ht_lens FastAPI에 SIGTERM handler (현재 SIGTERM 무시 → SIGKILL 필요)
+- ht_lens FastAPI에 SIGTERM handler
 - Lifespan teardown 정상 동작
-- DoD: `kill <pid>`로 ~5초 안에 종료, 진행 중 job 'interrupted' 마킹
+- DoD: `kill <pid>`로 ~5초 안에 종료
 - Versioning: v0.9 일부
 
 ### Phase 6f-6 — Prompt Policy Layer 분리 ⬜
@@ -222,14 +201,12 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)            ← 7
 
 ### Phase 6g — UI Polish Residual ⬜
 **기존 항목**:
-- 핀 표시 더 직관적
-- 사이드바 리사이즈 (200px ~ 500px)
+- 핀 표시 더 직관적, 사이드바 리사이즈
 - 이미지 클릭 시 확대 모달
 - streaming 응답 (SSE) — Phase 5 debt
 - Playwright 자동 시나리오 — Phase 5 debt
 - CI jsdom 설치 — Phase 5/6b debt
 - LLM-driven thread title — Phase 5 debt
-- (선택) 모델 빠른 토글 UI
 
 **추가 (사용자 발견)**:
 - 페이지 간 공백 줄이기 (자연 스크롤 spacing)
@@ -238,24 +215,19 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)            ← 7
 Versioning: v0.9
 
 ### Phase 6h — Extraction Quality + 후처리 ⬜
-**기존 (Phase 1 known issues)**:
 - header heuristic 보강
 - 멀티컬럼 reading order
 - 표 cell + figure 안 텍스트 분리 (Phase E1.5 발견: 64.7% short fragment)
 - samples.md determinism
 - 회전 페이지 bbox→pixel 매핑
-
-**추가 (사용자 Phase 6f-5 발견)**:
-- Issue B 후처리: 번역 일관성 강화 (영어 leak 검출 + 자동 재시도)
+- Issue B 후처리: 번역 일관성 강화
 - 자동 요약 hierarchical (Phase 6d debt)
-
-Versioning: v1.0
+- Versioning: v1.0
 
 ### Phase 6h-1 — Section-level Chat Context ⬜
 (사용자 Issue C)
 - Block ±2 → 같은 section 전체 확장
 - Header 인식 + section boundary
-- Cross-page lookup
 - 선행 조건: Phase 6h header heuristic 보강
 - Versioning: v1.0 일부
 
@@ -263,40 +235,56 @@ Versioning: v1.0
 (사용자 Issue A)
 - Upload API에 src/tgt 파라미터
 - UI에 lang selector (en→ko / ko→en / en→ja)
-- langdetect ko/en 외 확장 (ja/zh)
 - Versioning: v1.0 일부
 
 ---
 
-## Phases — v2.0 Personalization Agent (Phase 7 series)
+## Phase 7 — Personalization Agent 시리즈
 
-**비전**: 사용자의 학습 히스토리를 활용한 personalization agent.
-같은 PDF의 ±2 block 외 cross-document RAG, user profile/persona, memory system,
-learning progress 추적. 점진적으로 "내 학습 동반자"로 발달.
+**비전**: 사용자의 학습 히스토리를 활용한 personalization agent. Phase 7a (cross-doc RAG)
+위에서 점진적 발달.
 
-### Phase 7a — Cross-document RAG ⬜
-**핵심 가치**: 같은 PDF 안에서만이 아니라 **다른 PDF의 관련 부분도 chat context로**.
+### Phase 7a — Cross-document RAG ✅ (v1.5 마일스톤, 위 참조)
+
+### Phase 7a-2 — Latency Optimization ⬜
+(Phase 7a (d) DoD 미충족 위임)
 
 **Deliverable**
-- `block_embeddings` 테이블 (block_id PK, vector BLOB, model, dim, updated_at)
-- Embedding service (bge-m3 또는 multilingual-e5-large)
-- Vector DB integration (sqlite-vec 권장 — ht_lens DB와 통합)
-- 모든 block embedding 인덱싱 (~50K block × 1024d = ~200MB)
-- `chat_context.py` 확장: block ±2 외 cross-doc top-K (5~10) 검색 추가
-- 새 PDF 업로드 시 자동 embedding (extract → ingest → translate → embed chain)
+- 575ms → <500ms 달성
+- Investigation:
+  - bge-m3 CPU encode가 dominant cost — GPU offload 검토
+  - Query embedding cache (반복 query 빠르게)
+  - numpy brute-force → sqlite-vec/faiss swap 검토
+  - Batch embedding (UI는 단발 query라 batch 안 됨, 단 backfill은 가능)
 
 **DoD**
-- 모든 기존 block embedding 완료 (backfill)
-- Chat 호출 시 cross-doc context 자동 포함
-- Latency 영향 < +500ms (vector search)
-- "다른 책의 관련 부분" 시각적 표시 (UI에서)
+- /explain latency p95 < 500ms (3 sample 측정)
+- 회귀 0
+- 메모리 영향 < 1GB 추가
 
 **위험**
-- Embedding model GPU 사용 — qwen sglang과 동시 운영 시 메모리
-- bge-m3 BF16 ~2GB, multilingual-e5-large ~2GB → CPU도 가능
-- 검색 quality (irrelevant block이 chat 품질 떨어뜨릴 가능성)
+- GPU offload 시 qwen sglang과 메모리 경쟁
+- sqlite-vec extension wheel 호환성
 
-**Versioning**: v1.5 또는 v2.0 일부 (다른 7 phase와 묶음)
+**Versioning**: v1.5 일부 또는 v1.6
+
+### Phase 7a-3 — CLI Auto-embed 영구화 ⬜
+(Phase 7a worker 발견 debt)
+
+**Deliverable**
+- `src/ht_lens/translate/cli.py`에 backfill chain 추가
+- jobs/pipeline.py의 auto-embed 패턴 그대로 (graceful degradation)
+- 단위 테스트 (CLI translate → embedding 자동)
+- 미래 큰 PDF CLI 번역 시 shell chain 불필요
+
+**DoD**
+- `ht-lens translate --doc-id N` 호출 시 자동 embedding 트리거
+- Embedding 실패 시 graceful degradation (translate는 성공)
+- 회귀 0
+
+**위험**: Phase 7a 패턴 그대로라 위험 작음
+
+**Versioning**: v1.5 일부 또는 v1.6
 
 ### Phase 7b — User Profile + Persona Injection ⬜
 - `user_profile` 테이블 (background, expertise_areas, persona_text)
@@ -308,22 +296,20 @@ learning progress 추적. 점진적으로 "내 학습 동반자"로 발달.
 ### Phase 7c — Memory System ⬜
 - `memory_notes` 테이블 (cross-thread 참조)
 - "저번에 X 봤지" 형식의 메모리 retrieval
-- 사용자 직접 메모 추가 ("이 부분 중요")
-- Time-based ("일주일 전에 본 내용")
-- Cross-doc 메모리 (Phase 7a RAG와 연계)
+- 사용자 직접 메모 추가
+- Time-based + Cross-doc 메모리 (7a RAG 연계)
 - Versioning: v2.0 일부
 
 ### Phase 7d — Learning Progress ⬜
-- `learning_log` 테이블 (어느 챕터까지, 어떤 용어가 자주 막혔나)
+- `learning_log` 테이블
 - 적응형 설명 깊이 (사용자가 익숙한 용어는 짧게)
 - 진도 시각화
 - Versioning: v2.0 일부
 
 ### Phase 7e — Persona UI ⬜
-- Profile 편집 화면
-- Memory viewer ("내 메모리 보기")
+- Profile 편집 화면, Memory viewer
 - Persona preset selector
-- "잊어줘" 기능 (memory delete)
+- "잊어줘" 기능
 - Versioning: v2.0 일부
 
 ---
@@ -336,7 +322,7 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 **완료** (2026-05-22)
 - 평가셋 eval_v1.jsonl (~580 sample), 6 카테고리
 - 비교 모델 5개: qwen3.6-27b, Hy-MT2-7B (BF16/4bit), NLLB-200-1.3B, M2M-100-1.2B
-- 결과: qwen 5/6 카테고리 우세, NLLB/M2M ML 도메인 부적합
+- 결과: qwen 5/6 카테고리 우세
 
 ### Phase E1.5 — Large Model Comparison ✅
 **완료** (2026-05-23, **본문 KR 측정 누락 → Phase 6f-1 잘못된 결론**)
@@ -347,21 +333,17 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 
 ### Phase E1.5 보완 — qwen A/B Re-measurement ✅
 **완료** (2026-05-23)
-- block 분류 (15 카테고리: pure_text / fragment / author_list / arxiv_meta / 등)
-- 본문 (pure_text) 일관성 측정: qwen 78.9% vs gemma 42.9%
-- Prompt A/B test: gemma_v2_ko 0.755 vs qwen_v2_ko 0.874
-- qwen A/B broken (raw HTTP에서 thinking mode 활성) → root cause fix
+- block 분류 (15 카테고리)
+- 본문 일관성 측정: qwen 78.9% vs gemma 42.9%
+- qwen A/B root cause fix (chat_template_kwargs top-level)
 - Matched-block 14/0 qwen 우세 → Phase 6f-5 rollback 결정
 
 ### Phase E2 — LoRA Fine-tune (Conditional) ⬜
-**Entry condition**: 실 PDF 번역 사용 시 부족 영역 명확히 식별. 만족 시 skip.
+**Entry condition**: 실 PDF 번역 사용 시 부족 영역 명확히 식별.
 
-**ROI 재평가**: qwen baseline 0.867 이미 강함. Fine-tune 효과 작을 가능성.
+**ROI 재평가**: qwen baseline 0.867 강함. doc 4 KR 0.859, doc 6 검증 대기. Fine-tune 효과 작을 가능성.
 
-**Deliverable** (보존)
-- Base: qwen3.6-27b 또는 다른 모델
-- 데이터: AI Hub Tech-Science, ht_lens 4 PDF 합성 reference, arXiv abstract
-- Framework: Unsloth + LLaMA-Factory 또는 PEFT
+**Deliverable** (보존): qwen3.6-27b 또는 다른 모델, AI Hub corpus + 합성 reference + arXiv abstract.
 
 **Versioning**: v1.0 일부 (conditional)
 
@@ -369,67 +351,59 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 
 ## Versioning
 
-| 버전 | 시점 | 의미 |
-| ---- | ---- | ---- |
-| v0.1 ✅ | Phase 2a + 2b 완료 | CLI로 번역 가능 |
-| v0.2 ✅ | Phase 3 + 4 완료 | 브라우저에서 읽기 가능 |
-| v0.3 ✅ | Phase 5 완료 | Q&A 동작, 핀 |
-| v0.4 ✅ | Phase 6a 완료 | 검색 + export + 재번역 |
-| v0.5 ✅ | Phase 6b 완료 | 좌우 비교 + 자연 스크롤 |
-| v0.6 ✅ | Phase 6c 완료 | Viewer polish |
-| v0.7 ✅ | Phase 6d 완료 | 파일 업로드 + 자동 요약 |
-| v0.8 ✅ | Phase 6e + 6e-2 완료 | LLMClient 분리 + CLI .env fix |
-| v0.8.5 ✅ | Phase 6f-1 → 6f-5 완료 | prod swap → rollback + v2_ko prompt |
-| v0.9 ⬜ | Phase 6f-3 + 6f-6 + 6f-7 + 6e-3 + 6g | 운영 polish |
-| v1.0 ⬜ | Phase 6h + 6h-1 + 6h-2 (+ E2 conditional) | 추출 품질 + UX 완성 |
-| **v1.5** ⬜ | **Phase 7a 완료** | **Cross-doc RAG (다른 책 관련 부분 자동 참조)** |
-| **v2.0** ⬜ | **Phase 7b/c/d/e 완료** | **Personalization agent (profile + memory + progress + UI)** |
+| 버전     | 시점                        | 의미                                                  |
+| -------- | --------------------------- | ----------------------------------------------------- |
+| v0.1 ✅  | Phase 2a + 2b 완료          | CLI로 번역 가능                                       |
+| v0.2 ✅  | Phase 3 + 4 완료            | 브라우저에서 읽기 가능                                |
+| v0.3 ✅  | Phase 5 완료                | Q&A 동작, 핀                                          |
+| v0.4 ✅  | Phase 6a 완료               | 검색 + export + 재번역                                |
+| v0.5 ✅  | Phase 6b 완료               | 좌우 비교 + 자연 스크롤                               |
+| v0.6 ✅  | Phase 6c 완료               | Viewer polish                                         |
+| v0.7 ✅  | Phase 6d 완료               | 파일 업로드 + 자동 요약                               |
+| v0.8 ✅  | Phase 6e + 6e-2 완료        | LLMClient 분리 + CLI .env fix                         |
+| v0.8.5 ✅| Phase 6f-1 → 6f-5 완료      | prod swap → rollback + v2_ko prompt                   |
+| v0.9 ⬜  | Phase 6f-3 + 6f-6 + 6f-7 + 6e-3 + 6g | 운영 polish                                  |
+| v1.0 ⬜  | Phase 6h + 6h-1 + 6h-2      | 추출 품질 + UX 완성                                   |
+| **v1.5 ✅** | **Phase 7a 완료**         | **Cross-doc RAG (다른 책 관련 부분 자동 참조)**        |
+| v1.6 ⬜  | Phase 7a-2 + 7a-3           | Latency optimization + CLI auto-embed 영구화          |
+| **v2.0 ⬜** | **Phase 7b/c/d/e 완료**   | **Personalization agent (profile + memory + progress + UI)** |
 
 ---
 
 ## Risks & Open Questions
 
-- **Block grouping 정확도**: 멀티컬럼/표/캡션에서 휴리스틱이 자주 깨진다.
-  Phase 1에서 80% 잡고 진행, Phase 6h에서 보강.
+- **Block grouping 정확도**: 멀티컬럼/표/캡션에서 휴리스틱 자주 깨짐. Phase 6h.
 
-- **표/figure fragment 처리**: Phase E1.5 발견 — book2.pdf의 text block 중 64.7%가
-  1~30 char fragment. cost만 늘리고 의미 부정확. Phase 6h.
+- **표/figure fragment 처리**: book2.pdf의 text block 중 64.7%가 1~30 char fragment.
+  Phase 6h.
 
-- **공유 GPU 환경**: DGX Spark의 sglang은 다른 사용자/세션과 공유. latency 변동.
+- **공유 GPU 환경**: DGX Spark의 sglang은 다른 사용자/세션과 공유.
 
-- **Reasoning model의 thinking 토글**: qwen3.6 prod 운영 시 `enable_thinking=false` 명시.
-  raw HTTP에선 `chat_template_kwargs` top-level. ht_lens는 OpenAI SDK 사용 → 정상.
+- **Reasoning model의 thinking 토글**: qwen3.6 prod 운영 시 `enable_thinking=false` 명시 필수.
 
-- **번역 일관성 (사용자 발견 Issue B)**: qwen + v2_ko로 본문 KR 0.96 달성.
-  Phase 6h에서 후처리 강화 (영어 leak 검출 + 자동 재시도).
+- **번역 일관성 (사용자 Issue B)**: qwen + v2_ko로 doc 4 KR 0.859, doc 6 검증 대기.
 
-- **Chat context 큰 틀 grouping (사용자 발견 Issue C)**: 현재 block ±2 + page boundary.
-  Phase 6h-1에서 section-level 확장. **Phase 7a Cross-doc RAG로 cross-document 확장**.
+- **Chat context 큰 틀 grouping (사용자 Issue C)**: Phase 6h-1 (section), Phase 7a (cross-doc) 둘 다 보완.
 
-- **번역 언어 옵션 (사용자 발견 Issue A)**: 현재 en→ko 단일. UI 토글.
-  Phase 6h-2.
+- **번역 언어 옵션 (사용자 Issue A)**: Phase 6h-2.
 
-- **폰트 fitting**: bbox에 텍스트 욱여넣기. 한글은 영문 대비 폭/높이 다르다.
+- **폰트 fitting**: bbox에 텍스트 욱여넣기.
 
 - **Reading order**: 채팅 맥락 품질에 직결. Phase 6h.
 
-- **로컬 모델 품질**: qwen3.6-27b prod 운영 중. baseline 강함 (본문 KR 0.867).
-  Phase E2 fine-tune ROI 신중 평가.
+- **로컬 모델 품질**: qwen3.6-27b prod 안정. baseline 강함 (KR 0.867).
 
 - **평가 framework 한계 (Phase 6f-1 → 6f-5 학습)**: chrF + LLM-judge만으로 부족.
-  본문 KR 측정 의무. fragment 분리 + pure_text 통계.
+  본문 KR 측정 의무.
 
-- **자동 요약 hierarchical**: Phase 6d debt. 1000+ 페이지 PDF는 첫 N pages만 요약.
-  Phase 6h.
+- **자동 요약 hierarchical**: Phase 6d debt. Phase 6h.
 
-- **Phase 7a Vector DB 선택**: sqlite-vec (간단, 통합) vs chromadb (별도, prod-grade).
-  Plan 단계에서 결정.
+- **Phase 7a Latency**: 575ms vs DoD <500ms. 75ms 초과, Phase 7a-2 위임.
 
-- **Phase 7a Embedding 모델**: bge-m3 vs multilingual-e5-large vs jina-embeddings-v3.
-  한/영 bilingual 성능 + GPU 메모리 비용 trade-off.
+- **Phase 7a Retrieval quality**: 현재 threshold + top-K default 안정적 (E2E top-1 1.00).
+  doc 6 추가 후 cross-doc 효과 재측정 필요.
 
-- **Phase 7a Retrieval quality**: Cross-doc 검색 결과가 irrelevant이면 chat 품질 저하.
-  Threshold + ranking 신중.
+- **Phase 7b Persona 디자인**: 어디까지 사용자가 직접 입력 vs 자동 학습? Plan 단계 결정.
 
 ---
 
@@ -439,34 +413,32 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 - 커밋: Conventional Commits (`feat:`, `fix:`, `chore:`, `refactor:`)
 - Phase 종료 시: ROADMAP의 해당 Phase ⬜ → ✅ 갱신, README 상태 갱신
   - **주의**: Worker는 ROADMAP 수정 금지 (CLAUDE.md 규정). 사용자가 직접.
-- 위에 명시되지 않은 dependency 추가 시 ROADMAP에 근거 기록
 - Cross-verify는 phase당 max 2회 (WORKFLOW.md Stage 5-B 참조)
-  - R2 후 Planner-directed micro-fix는 허용 (Phase 6e / 6e-2 / 6f-5 선례)
-- Evaluation Track (E1, E1.5, E2)는 ht_lens 도메인 코드 변경 0,
-  외부 sandbox 작업. plan/debate/verify 워크플로우 적용 안 함.
+  - R2 후 Planner-directed micro-fix는 허용 (Phase 6e / 6e-2 / 6f-5 / 7a 선례)
+- Evaluation Track은 ht_lens 도메인 코드 변경 0, 외부 sandbox 작업.
 - **평가 protocol 의무 (Phase 6f-1 → 6f-5 학습)**:
   새 모델 평가 시 chrF + LLM-judge + **본문 KR (pure_text 카테고리)** 모두 측정.
-  Cross-prompt comparison (model × prompt matrix) 필요.
 
 ---
 
-## prod 운영 메모 (2026-05-23 현재)
+## prod 운영 메모 (2026-05-26 현재)
 
 - **prod 모델**: qwen3.6-27b FP8 (sglang docker 8081)
   - speculative decoding NEXTN (4 steps, eagle-topk 1)
-  - context 32768
-  - mem-fraction-static 0.70 → ~90GB GPU
-- **prompt**: v2_ko Korean-instruction (en→ko 분기, 다른 방향 generic 보존)
-- **rollback 자산**: Gemma 4 26B-A4B-IT weights 49GB (`~/hf_models/gemma-4-26b-a4b-it/`)
-  + sglang Docker image (qwen 공유)
-  + `.env.backup.gemma4_*`
+  - context 32768, mem-fraction-static 0.70 → ~90GB GPU
+- **prompt**: v2_ko Korean-instruction (en→ko 분기)
+- **embedding 모델**: bge-m3 (BAAI, 1024d, CPU, ~2GB) — Phase 7a
+- **vector search**: numpy brute-force (block_embeddings 테이블)
+- **rollback 자산**: Gemma 4 26B-A4B-IT weights 49GB + sglang Docker image
   → re-swap 시간 ~3분
 - **ht_lens 서버**: 8080
 - **DB**: `data/ht_lens.db`
-  - 7 documents ingest됨 (sample_mixed, phase6d_demo 2개, Open-Sora arXiv,
-    2603.03482v1, Aggarwal RecSys textbook 518p, Murphy PML 1370p)
-  - Translations: qwen3.6-27b (대부분) + Gemma 4 26B-A4B-IT 일부 (보존)
+  - 7 documents (doc 1-5 번역 완료 qwen+v2_ko, doc 6 진행 중, doc 7 대기)
+  - block_embeddings: 485 baseline + doc 6 진행 중 추가
+  - Translations: qwen3.6-27b (대부분, Phase 6f-5 이후)
+- **doc 6 (Aggarwal RecSys textbook)**: 2026-05-26 12:51 KST 시작, ETA 8~15시간
+  + auto-embed chain (shell &&)
 - **평가 sandbox**: `~/llm_eval/`
   - eval_v1.jsonl, eval_v2.jsonl (739 sample)
   - block_classification.json (15 카테고리)
-  - prompt A/B 결과 (Gemma 4 × 3 + qwen × 3, fixed pattern)
+  - prompt A/B 결과 (Gemma 4 × 3 + qwen × 3 fixed pattern)
