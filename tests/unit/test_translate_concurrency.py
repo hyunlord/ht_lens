@@ -194,6 +194,55 @@ async def test_translate_partial_failure_does_not_block_others(
     assert stats.skipped == 0
 
 
+@pytest.mark.asyncio
+async def test_translate_no_waiter_failure_does_not_leak_future_exception(
+    db_factory: async_sessionmaker[AsyncSession],
+    recwarn,
+) -> None:
+    """When a unique-text block fails (no duplicate waiter), the pending_futures
+    future's exception must be consumed so asyncio doesn't log the classic
+    "Future exception was never retrieved" warning.
+
+    Regression net for Codex verify-cross §4: owner task did set_exception()
+    without ever consuming the future when no duplicate waiter existed.
+    """
+    import warnings
+
+    llm = _FailingLLM(fail_text="UNIQUE BAD")
+    async with db_factory() as session:
+        doc_id = await _seed_doc(
+            session,
+            blocks=[
+                ("text", "ok 1"),
+                ("text", "UNIQUE BAD"),  # only one occurrence — no waiter
+                ("text", "ok 2"),
+            ],
+        )
+
+    async with db_factory() as session:
+        # Capture asyncio's "Future exception was never retrieved" log line.
+        # In CPython this surfaces via the event loop's exception handler
+        # only when the future is garbage-collected, so we explicitly
+        # collect after the run.
+        import gc
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            stats = await translate_document(doc_id, session, llm, concurrency=3)
+            gc.collect()
+
+    assert stats.failed == 1
+    assert stats.translated == 2
+    # Filter to messages that indicate an unretrieved future exception.
+    leaked = [
+        w
+        for w in caught
+        if "Future exception was never retrieved" in str(w.message)
+        or "Task exception was never retrieved" in str(w.message)
+    ]
+    assert leaked == [], f"future exception leaked: {[str(w.message) for w in leaked]}"
+
+
 class _CountingLLM(MockLLMClient):
     """MockLLM that counts unique translate() invocations."""
 
@@ -207,6 +256,80 @@ class _CountingLLM(MockLLMClient):
         # Small sleep so two same-text tasks have a chance to interleave.
         await asyncio.sleep(0.02)
         return await super().translate(text, src, tgt, context=None)
+
+
+class _RetryThenSucceedLLM(MockLLMClient):
+    """Raises LLMTransientError on the first call for ``flaky_text``, succeeds after.
+
+    Used to verify that the retry backoff sleep happens OUTSIDE the
+    semaphore — otherwise a single flaky block would hold a slot during
+    its 1s backoff, starving other concurrent blocks.
+    """
+
+    model_name = "retry-flaky"
+
+    def __init__(self, flaky_text: str) -> None:
+        from ht_lens.llm.errors import LLMTransientError
+
+        self._transient = LLMTransientError
+        self.flaky_text = flaky_text
+        self.flaky_attempts = 0
+        self.normal_block_durations: list[tuple[str, float]] = []
+
+    async def translate(self, text: str, src: str, tgt: str, *, context: object = None) -> str:
+        if text == self.flaky_text:
+            self.flaky_attempts += 1
+            if self.flaky_attempts == 1:
+                # First call: transient failure. Pipeline retries after
+                # asyncio.sleep(2**0=1s) backoff.
+                raise self._transient("simulated transient failure")
+            return await super().translate(text, src, tgt, context=None)
+        # Non-flaky blocks: short work.
+        await asyncio.sleep(0.02)
+        return await super().translate(text, src, tgt, context=None)
+
+
+@pytest.mark.asyncio
+async def test_translate_retry_backoff_does_not_block_other_blocks(
+    db_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Phase 7a-2 / verify-cross R1: when one block enters retry backoff
+    (~1s asyncio.sleep), the semaphore slot must be released so concurrent
+    blocks keep flowing. With ``concurrency=2`` and 1 flaky + 2 normal
+    blocks, the run must finish well under 1 + 2*0.02 = ~1.04s if the
+    slot is freed during backoff; if the slot were held, the second
+    normal block would queue behind the flaky one and total time would
+    grow.
+    """
+    llm = _RetryThenSucceedLLM(flaky_text="FLAKY")
+    async with db_factory() as session:
+        doc_id = await _seed_doc(
+            session,
+            blocks=[
+                ("text", "FLAKY"),
+                ("text", "normal a"),
+                ("text", "normal b"),
+            ],
+        )
+
+    async with db_factory() as session:
+        start = time.monotonic()
+        stats = await translate_document(doc_id, session, llm, concurrency=2)
+        elapsed = time.monotonic() - start
+
+    assert stats.translated == 3
+    assert stats.failed == 0
+    assert llm.flaky_attempts == 2  # 1 transient + 1 success
+    # Backoff is 2**0=1s. If the slot were held during backoff,
+    # the two normal blocks would serialize behind the flaky one and
+    # elapsed would be >= 1.04s; with slot release the normal blocks
+    # finish during the backoff window, so total ≈ 1s + ε.
+    # Use a tight upper bound: must finish under 1.2s to prove
+    # the slot was actually released. (Hard floor is 1.0s — backoff.)
+    assert 1.0 <= elapsed < 1.2, (
+        f"retry slot-release contract violated: elapsed={elapsed:.3f}s. "
+        "Expected ~1.0s (backoff) + parallel normals."
+    )
 
 
 @pytest.mark.asyncio

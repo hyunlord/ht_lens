@@ -322,6 +322,108 @@ async def test_explain_includes_related_blocks_when_embedding_available(
 
 
 @pytest.mark.asyncio
+async def test_explain_reuses_stored_vector_no_encode_call(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """Phase 7a-2 / verify-cross R1: ``POST /threads/{id}/explain`` must
+    reuse the stored ``block_embeddings`` vector for the target block
+    (no live ``encode()`` call) when the source_hash is fresh. This
+    locks the user-facing latency target on the actual route, not just
+    on the ``/blocks/{id}/related`` helper.
+    """
+    from ht_lens.embedding.service import MockEmbeddingClient, text_source_hash
+    from ht_lens.embedding.store import upsert_embedding
+
+    class _CountingClient(MockEmbeddingClient):
+        def __init__(self, dim: int = 32) -> None:
+            super().__init__(dim=dim)
+            self.encode_call_count = 0
+
+        def encode(self, texts):  # type: ignore[override]
+            self.encode_call_count += len(texts)
+            return super().encode(texts)
+
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    embed_client = _CountingClient(dim=32)
+
+    # Seed doc1 + doc2, embed every block so RAG search has a corpus AND
+    # the target block's stored vector is fresh.
+    async with factory() as session:
+        seeded = await seed_minimal_document(
+            session,
+            tmp_dir=tmp_path,
+            filename="doc1.pdf",
+            blocks_per_page=3,
+            num_pages=1,
+        )
+        long_text = (
+            "Stored-vector reuse probe paragraph long enough to pass "
+            "the min_chars filter on cross-doc RAG search."
+        )
+        for bid in seeded.block_ids:
+            blk = await session.get(Block, bid)
+            blk.original_text = long_text
+        mirror_seeded = await seed_minimal_document(
+            session,
+            tmp_dir=tmp_path,
+            filename="doc2.pdf",
+            blocks_per_page=1,
+            num_pages=1,
+        )
+        mirror_block = await session.get(Block, mirror_seeded.block_ids[0])
+        mirror_block.original_text = long_text
+        await session.commit()
+
+        for bid in seeded.block_ids:
+            blk = await session.get(Block, bid)
+            vec = embed_client.encode([blk.original_text])[0]
+            await upsert_embedding(
+                session,
+                block_id=blk.id,
+                vector=vec,
+                model=embed_client.model_name,
+                dim=embed_client.dim,
+                source_hash=text_source_hash(blk.original_text),
+            )
+        vec = embed_client.encode([mirror_block.original_text])[0]
+        await upsert_embedding(
+            session,
+            block_id=mirror_block.id,
+            vector=vec,
+            model=embed_client.model_name,
+            dim=embed_client.dim,
+            source_hash=text_source_hash(mirror_block.original_text),
+        )
+        await session.commit()
+        target_block_id = seeded.block_ids[1]
+
+    await engine.dispose()
+
+    # Reset the counter — only the explain call's encode() activity matters.
+    seed_phase_count = embed_client.encode_call_count
+    embed_client.encode_call_count = 0
+
+    with make_test_client(api_db_path, embedding_override=embed_client) as client:
+        thread = client.post("/threads", json={"block_id": target_block_id}).json()
+    with make_test_client(
+        api_db_path,
+        llm_override=RecordingMockLLM(reply="explained"),
+        embedding_override=embed_client,
+    ) as client:
+        resp = client.post(f"/threads/{thread['id']}/explain")
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["related_blocks"], "RAG should still produce hits"
+    assert embed_client.encode_call_count == 0, (
+        f"/threads/explain called encode() {embed_client.encode_call_count} "
+        f"time(s) — expected stored vector reuse (0). Seed phase used "
+        f"{seed_phase_count} encode calls."
+    )
+
+
+@pytest.mark.asyncio
 async def test_explain_related_blocks_empty_when_no_embedding_client(
     api_db_path: Path, tmp_path: Path
 ) -> None:
