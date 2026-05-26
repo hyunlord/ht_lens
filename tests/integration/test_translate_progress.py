@@ -41,6 +41,38 @@ async def test_translate_callback_fires_every_10_and_on_last(
 
 
 @pytest.mark.asyncio
+async def test_translate_callback_under_concurrency_4(api_db_path: Path, tmp_path: Path) -> None:
+    """Phase 7a-2: progress callback contract preserved under parallel
+    execution (asyncio.as_completed counts in completion order)."""
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    async with factory() as session:
+        seeded = await seed_minimal_document(
+            session,
+            tmp_dir=tmp_path,
+            blocks_per_page=23,
+            with_translations=False,
+        )
+
+        calls: list[tuple[int, int]] = []
+
+        async def _on_progress(done: int, total: int) -> None:
+            calls.append((done, total))
+
+        await translate_document(
+            seeded.doc_id,
+            session,
+            MockLLMClient(),
+            on_progress=_on_progress,
+            concurrency=4,
+        )
+
+    await engine.dispose()
+    # Identical contract under concurrency: ticks at 10, 20, 23, monotonic done.
+    assert calls == [(10, 23), (20, 23), (23, 23)]
+
+
+@pytest.mark.asyncio
 async def test_translate_without_callback_is_backward_compat(
     api_db_path: Path, tmp_path: Path
 ) -> None:

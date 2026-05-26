@@ -30,7 +30,16 @@ def _db_path_from_env() -> Path:
 
 def translate_command(
     doc_id: int = typer.Option(..., "--doc-id", help="Document ID to translate."),
-    concurrency: int = typer.Option(5, "--concurrency", min=1, max=50),
+    concurrency: int = typer.Option(
+        7,
+        "--concurrency",
+        min=1,
+        max=50,
+        help=(
+            "Concurrent LLM calls. Default 7 matches sglang's "
+            "effective_max_running_requests_per_dp."
+        ),
+    ),
     max_retries: int = typer.Option(3, "--max-retries", min=0),
     retry_failed: bool = typer.Option(
         False,
