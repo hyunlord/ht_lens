@@ -301,8 +301,11 @@ async def _process_block(
         if not own_future.done():
             own_future.set_exception(exc)
         # Mark the exception as retrieved so asyncio doesn't log
-        # "Future exception was never retrieved" when no other task
-        # awaits this future (e.g., no duplicate-text waiter exists).
+        # "Future exception was never retrieved" via the event loop's
+        # exception handler when no other task awaits this future
+        # (e.g., no duplicate-text waiter exists). The
+        # ``test_translate_no_waiter_failure_does_not_leak_future_exception``
+        # test fails without this line.
         own_future.exception()
         async with db_lock:
             pending_futures.pop(ck, None)

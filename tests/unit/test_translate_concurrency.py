@@ -197,16 +197,19 @@ async def test_translate_partial_failure_does_not_block_others(
 @pytest.mark.asyncio
 async def test_translate_no_waiter_failure_does_not_leak_future_exception(
     db_factory: async_sessionmaker[AsyncSession],
-    recwarn,
 ) -> None:
     """When a unique-text block fails (no duplicate waiter), the pending_futures
-    future's exception must be consumed so asyncio doesn't log the classic
-    "Future exception was never retrieved" warning.
+    future's exception must be consumed so the event loop does NOT invoke its
+    exception handler with the classic "Future exception was never retrieved"
+    message.
 
-    Regression net for Codex verify-cross §4: owner task did set_exception()
-    without ever consuming the future when no duplicate waiter existed.
+    Codex verify-cross R1 raised the bug; the V2 catch_warnings approach was
+    incorrect because asyncio surfaces this via ``loop.call_exception_handler``
+    (not the warnings module). V3 attaches a custom exception handler to the
+    running loop, runs the pipeline, then GC-collects the future and asserts
+    the handler was never invoked with the leaked-future message.
     """
-    import warnings
+    import gc
 
     llm = _FailingLLM(fail_text="UNIQUE BAD")
     async with db_factory() as session:
@@ -219,28 +222,31 @@ async def test_translate_no_waiter_failure_does_not_leak_future_exception(
             ],
         )
 
-    async with db_factory() as session:
-        # Capture asyncio's "Future exception was never retrieved" log line.
-        # In CPython this surfaces via the event loop's exception handler
-        # only when the future is garbage-collected, so we explicitly
-        # collect after the run.
-        import gc
+    loop = asyncio.get_running_loop()
+    captured: list[dict] = []
 
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
+    def _handler(_loop: asyncio.AbstractEventLoop, context: dict) -> None:
+        captured.append(context)
+
+    prev_handler = loop.get_exception_handler()
+    loop.set_exception_handler(_handler)
+    try:
+        async with db_factory() as session:
             stats = await translate_document(doc_id, session, llm, concurrency=3)
-            gc.collect()
+        # Force GC so any unreferenced Future with an unretrieved exception
+        # triggers asyncio's __del__ → call_exception_handler path.
+        gc.collect()
+    finally:
+        loop.set_exception_handler(prev_handler)
 
     assert stats.failed == 1
     assert stats.translated == 2
-    # Filter to messages that indicate an unretrieved future exception.
     leaked = [
-        w
-        for w in caught
-        if "Future exception was never retrieved" in str(w.message)
-        or "Task exception was never retrieved" in str(w.message)
+        c for c in captured if "exception was never retrieved" in str(c.get("message", "")).lower()
     ]
-    assert leaked == [], f"future exception leaked: {[str(w.message) for w in leaked]}"
+    assert leaked == [], (
+        f"future exception leaked to loop.exception_handler: {[c.get('message') for c in leaked]}"
+    )
 
 
 class _CountingLLM(MockLLMClient):

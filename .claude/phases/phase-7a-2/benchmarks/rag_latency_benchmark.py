@@ -1,10 +1,18 @@
-"""Phase 7a-2 verify — RAG latency benchmark.
+"""Phase 7a-2 verify — RAG query-vector lookup benchmark.
 
-Measures /blocks/{id}/related latency with stored vector reuse vs the old
-encode-on-every-request path. Uses MockEmbeddingClient (dim=32) for both
-cases since the goal is to verify the architecture change, not to reproduce
-the live bge-m3 latency in CI. A real-corpus measurement is done in the
-verify.md notes.
+Measures only the ``get_or_encode_block_vector()`` helper (the optimization
+target), comparing the stored-vector hit path against the encode() fallback.
+This is NOT an end-to-end ``/blocks/{id}/related`` or ``/threads/{id}/explain``
+benchmark — those routes also run cross-doc search and prompt assembly. The
+end-to-end behavior (encode() call_count == 0 on the actual routes) is
+locked by ``tests/integration/test_api_related.py`` and
+``tests/integration/test_api_messages.py::test_explain_reuses_stored_vector_no_encode_call``
+instead.
+
+The helper measurement here demonstrates the relative speedup
+(575ms cold encode vs ~0.2ms stored read) using a ``SlowEmbeddingClient``
+that simulates real bge-m3 CPU latency. Live bge-m3 measurements are out
+of scope for this benchmark (deferred to doc 7 retranslate run).
 """
 
 from __future__ import annotations
@@ -199,7 +207,11 @@ async def main() -> None:
     )
     print(f"  encode() calls during miss phase: {results['miss_encode_count']} (expected 5)")
     verdict = "PASS" if h["p95"] < 500 else "FAIL"
-    print(f"\nDoD: /explain p95 < 500ms - stored vector hit path: {verdict}")
+    print(
+        f"\nHelper-level p95 < 500ms (stored vector hit path): {verdict}\n"
+        "Note: end-to-end /explain p95 includes search + prompt assembly. "
+        "See tests/integration/test_api_messages.py for the route-level lock."
+    )
 
 
 if __name__ == "__main__":

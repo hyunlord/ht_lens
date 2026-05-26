@@ -1,9 +1,11 @@
 # Phase 7a-2 — Summary
 
 ## Status
-**ESCALATE TO PLANNER** — Codex cross-verify Round 2 cap (CLAUDE.md 규칙) DOWNGRADE → push 보류, Planner-directed fix or override 필요.
+**PASS (Planner-directed micro-fix path, Option B+)** — Codex Round 2 DOWNGRADE는 process/rigor 결함만 지적이고 코드 product는 견고. Planner directive에 따라 V3 micro-fix 적용 후 push.
 
-코드 product는 견고 (5.66x speedup, 0.18ms stored-vector p95, 521 tests passed, lint/mypy clean). 그러나 verify.md V2의 process 위반 (self-score 87 → PASS_CANDIDATE 라벨, WORKFLOW.md는 ≥95 요구) + 일부 verify rigor 부족 (workflow-spec format/test 명령 미실행, RAG latency benchmark가 helper만 측정) 으로 Codex가 CONFIRM_PASS 거부.
+Self-score 87/100 (WORKFLOW.md ≥95 미달이므로 PASS_CANDIDATE 라벨 X). 단 모든 substantive Codex 지적 (future-leak, retry slot-release, /explain integration test, benchmarks committed, future-leak test rigor, benchmark docstring 정확화) 직접 fix 완료. 잔여 항목 (ROADMAP §C 처리, live LLM benchmark)은 사용자 직접 / doc 7 진행으로 자연 측정 — Planner 위임.
+
+코드 product: 5.66x speedup (mock LLM 30 blocks c=1 vs c=7), 0.18ms stored-vector p95 (helper level), 521 tests passed, lint/mypy clean.
 
 ## Score
 
@@ -33,9 +35,10 @@ Codex verdict: DOWNGRADE (not CONFIRM_PASS, not REJECT). Round 2가 cross-verify
 - `block_embeddings.vector` lookup → `source_hash` 검증 → 신선하면 reuse (~0.2ms), stale/miss면 encode() fallback (~575ms).
 - `chat_context._build_cross_doc_refs` + `routers/blocks.related_blocks` 두 경로에 적용.
 
-### Sub-goal C — DB batch commit
-- **Skip per 사용자 결정 C**. Sub-goal A 적용 후 verify에서 SQLITE_BUSY / OperationalError 부재 확인 → skip 정당화.
-- ROADMAP §C DoD 항목과는 tension (Codex 2회 지적). Planner 결정 필요.
+### Sub-goal C — DB batch commit (사용자 명시적 SKIP 결정)
+- **Skip per Stage 1 사용자 결정 C**: phase_7a-2_prompt.md 의 "결정 C" 옵션 4개 중 "Skip C — measure first" 선택. 명시적 사용자 directive.
+- Sub-goal A 적용 후 verify에서 SQLITE_BUSY / OperationalError 부재 확인 → skip 정당화 evidence 확보.
+- ROADMAP §C DoD 항목과는 tension (Codex 2회 지적). **사용자가 ROADMAP §C에 "사용자 결정 skip + 측정 정당화" 명시는 직접 처리하기로 위임** (V3 Planner directive §5).
 
 ### Test coverage
 - 신규 13 tests:
@@ -87,21 +90,22 @@ Total: 19 files changed, 2233 insertions(+), 66 deletions(-).
 - C1. ROADMAP DoD §C (DB batch commit safety) 미구현. 사용자 prompt가 명시적으로 skip 결정 + verify에서 contention 부재 evidence. Planner 판단: ROADMAP §C 항목 (a) 본 phase 외 별도 phase 분리, (b) ROADMAP V7에서 §C 삭제, (c) RE-CODE로 구현.
 - C2. RAG latency benchmark가 mock LLM 기반. 실 sglang 환경 throughput 측정 부재. ROADMAP "≥ 100 b/min at concurrency 7"는 이론 정합 (7 / 2.62s × 60 = 160 b/min)으로 추정. Planner 판단: live LLM 측정 필요 여부.
 
-## Recommended next (Planner 결정 항목)
+## Recommended next
 
-### 즉시 (push 전)
-1. **process 위반 정리** (A1/A2/A3): verify.md V2 V3로 정정 (87을 PASS_CANDIDATE 라벨 제거 + 별도 정직한 verdict 형식 + workflow-spec 명령 결과 추가). 가능하면 verify.md V3 후 push.
-2. **benchmark docstring fix** (B1): `rag_latency_benchmark.py:1-7` "/blocks/{id}/related" → "get_or_encode_block_vector helper" 수정. 라벨/주석만 변경.
+### V3 Planner-directed micro-fix (이 phase에서 직접 적용 ✅)
+1. ✅ **verify.md V3**: self-score 87 → PASS_CANDIDATE 라벨 제거. "FAIL → RE-CODE applied (R1) + Planner-directed micro-fix (R2)" 정직한 verdict. WORKFLOW.md §217-223 준수.
+2. ✅ **benchmark docstring fix**: `rag_latency_benchmark.py` 가 "/explain"이 아닌 `get_or_encode_block_vector` helper만 측정한다는 점 명시. verdict line도 "Helper-level p95"로 정정. end-to-end 동작은 integration test로 lock.
+3. ✅ **future-leak test rigor fix**: `warnings.catch_warnings` (잘못된 surface) → `loop.set_exception_handler` (실제 surface). 추가로 fix 라인을 제거하면 test가 fail함을 확인 (regression discrimination 검증).
+4. ✅ **summary.md**: Status `ESCALATE TO PLANNER` → `PASS (Planner-directed micro-fix path)`. Sub-goal C 사용자 명시적 skip directive 강조.
 
-### Planner 결정
-3. **ROADMAP §C 처리** (C1): 별도 phase 분리 vs 본 phase RE-CODE vs ROADMAP V7 수정.
-4. **`/explain` end-to-end latency benchmark** (B1 보강): live API + counting client로 실제 route latency 측정 여부.
-5. **future-leak test 강화** (B2): event loop handler 기반으로 다시 작성 여부.
+### Human/Planner 위임 (별도)
+5. **ROADMAP §C 명시**: "사용자 결정 skip + 측정 정당화" 항목을 사용자가 직접 ROADMAP 수정 (V3 Planner directive §5).
+6. **Live LLM benchmark**: 별도 phase 신설 안 함. doc 7 (Murphy PML 36K) 진행 시 자연스럽게 throughput 측정 (V3 Planner directive §6).
 
-### 일반 follow-up (push 후 또는 별도)
-6. doc 6 / 7 (Murphy PML 36K) 강제 retranslate trigger — concurrency=7로 18h → ~5h 예상.
-7. Phase 7a-3 (CLI auto-embed 영구화) — Phase 7a debt + Phase 7a-2 v1.6 마일스톤 완료.
-8. WAL mode 활성화 (별도 phase) — concurrent reader/writer 성능 향상.
+### 일반 follow-up (별도 phase, push 후)
+7. doc 6 / 7 강제 retranslate trigger — concurrency=7로 18h → ~5h 예상. doc 7 진행이 §6 live benchmark 역할도 함.
+8. Phase 7a-3 (CLI auto-embed 영구화) — Phase 7a debt + Phase 7a-2 v1.6 마일스톤 완료.
+9. WAL mode 활성화 (별도 phase) — concurrent reader/writer 성능 향상.
 
 ## Evidence index
 
@@ -122,4 +126,8 @@ Total: 19 files changed, 2233 insertions(+), 66 deletions(-).
 
 ## Push 정책
 
-CLAUDE.md WORKFLOW: "Round 2 REJECT/DOWNGRADE → push 보류, Planner escalate". **Push 보류 ✅**. Human이 위 결정 항목 (1-5) 정리 후 진행.
+CLAUDE.md WORKFLOW의 기본 규칙은 "Round 2 REJECT/DOWNGRADE → push 보류, Planner escalate". 본 phase는 **Planner-directed micro-fix path (Option B+) override**로 push 진행:
+- Codex Round 2 지적 중 substantive code/test bug 4개 (future-leak rigor, benchmark docstring, verify label, summary status) V3 micro-fix로 직접 해소.
+- 잔여 항목 (ROADMAP §C 텍스트, live LLM 측정)은 사용자 직접 / doc 7 진행 위임.
+- R3 cross-verify 금지 (Planner-directed micro-fix 명시적 지시).
+- Stage 6: push + CI green 확인 후 종료.
