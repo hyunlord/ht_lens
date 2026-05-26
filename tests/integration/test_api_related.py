@@ -169,3 +169,109 @@ def test_related_400_when_k_invalid(api_db_path: Path, tmp_path: Path) -> None:
         assert resp.status_code == 400
         resp = test_client.get("/blocks/1/related?k=999")
         assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Phase 7a-2 — stored vector reuse
+# ---------------------------------------------------------------------------
+
+
+class _CountingEmbeddingClient(MockEmbeddingClient):
+    """Wraps MockEmbeddingClient to count encode() invocations."""
+
+    def __init__(self, dim: int = 32) -> None:
+        super().__init__(dim=dim)
+        self.encode_call_count = 0
+
+    def encode(self, texts):  # type: ignore[override]
+        self.encode_call_count += len(texts)
+        return super().encode(texts)
+
+
+def test_related_reuses_stored_vector_when_fresh(api_db_path: Path, tmp_path: Path) -> None:
+    """Phase 7a-2: when block_embeddings has a row whose source_hash matches
+    the current text, ``GET /blocks/{id}/related`` must NOT call encode()."""
+    import asyncio
+
+    engine = make_engine(api_db_path)
+
+    async def _seed() -> None:
+        factory = make_session_factory(engine)
+        await _seed_two_doc_corpus(factory, tmp_path)
+        await engine.dispose()
+
+    asyncio.run(_seed())
+
+    client = _CountingEmbeddingClient(dim=32)
+    with make_test_client(api_db_path, embedding_override=client) as test_client:
+        resp = test_client.get("/blocks/1/related?k=3&threshold=0.0")
+    assert resp.status_code == 200
+    assert client.encode_call_count == 0, (
+        f"expected stored vector reuse, but encode() was called {client.encode_call_count} time(s)"
+    )
+
+
+def test_related_falls_back_to_encode_when_block_not_embedded(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """When block_embeddings has no row for the target block, the endpoint
+    falls back to encode(). Setup: seed corpus, then DELETE the target's
+    embedding row to simulate a not-yet-embedded block."""
+    import asyncio
+
+    from sqlalchemy import delete
+
+    from ht_lens.db.models import BlockEmbedding
+
+    engine = make_engine(api_db_path)
+
+    async def _seed() -> None:
+        factory = make_session_factory(engine)
+        await _seed_two_doc_corpus(factory, tmp_path)
+        # Remove the target block's embedding to force the fallback path.
+        async with factory() as session:
+            await session.execute(delete(BlockEmbedding).where(BlockEmbedding.block_id == 1))
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(_seed())
+
+    client = _CountingEmbeddingClient(dim=32)
+    with make_test_client(api_db_path, embedding_override=client) as test_client:
+        resp = test_client.get("/blocks/1/related?k=3&threshold=0.0")
+    assert resp.status_code == 200
+    assert client.encode_call_count == 1, (
+        f"expected fallback encode() once, got {client.encode_call_count}"
+    )
+
+
+def test_related_falls_back_to_encode_on_stale_hash(api_db_path: Path, tmp_path: Path) -> None:
+    """When the block's original_text is edited after embedding, source_hash
+    no longer matches and the endpoint falls back to encode()."""
+    import asyncio
+
+    engine = make_engine(api_db_path)
+
+    async def _seed_and_mutate() -> None:
+        factory = make_session_factory(engine)
+        await _seed_two_doc_corpus(factory, tmp_path)
+        # Change the target block's text — this invalidates the stored hash.
+        async with factory() as session:
+            blk = await session.get(Block, 1)
+            assert blk is not None
+            blk.original_text = (
+                "EDITED text after embedding was stored, long enough "
+                "to pass the min_chars filter on the related endpoint."
+            )
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(_seed_and_mutate())
+
+    client = _CountingEmbeddingClient(dim=32)
+    with make_test_client(api_db_path, embedding_override=client) as test_client:
+        resp = test_client.get("/blocks/1/related?k=3&threshold=0.0")
+    assert resp.status_code == 200
+    assert client.encode_call_count == 1, (
+        f"expected stale-hash fallback encode() once, got {client.encode_call_count}"
+    )

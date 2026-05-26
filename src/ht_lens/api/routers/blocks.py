@@ -26,6 +26,7 @@ from ht_lens.api.deps import (
 )
 from ht_lens.api.schemas import RelatedBlock, RetranslateResponse, TranslationRead
 from ht_lens.db.models import Block, Document, Translation
+from ht_lens.embedding.lookup import get_or_encode_block_vector
 from ht_lens.embedding.search import fetch_hit_details, search
 from ht_lens.embedding.service import EmbeddingClient
 from ht_lens.llm.client import TranslateLLMClient
@@ -167,7 +168,9 @@ async def related_blocks(
     text = (target.original_text or "").strip()
     if not text:
         return []
-    query_vec = embedding_client.encode([text])[0]
+    # Phase 7a-2: reuse the stored block_embeddings vector when fresh; falls
+    # back to encode() when the row is missing or source_hash is stale.
+    query_vec = await get_or_encode_block_vector(session, embedding_client, target)
     hits = await search(
         session,
         query_vector=query_vec,

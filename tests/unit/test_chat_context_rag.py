@@ -197,3 +197,36 @@ async def test_block_not_found_still_raises(two_doc_factory) -> None:
                 block_id=9999,
                 embedding_client=MockEmbeddingClient(dim=32),
             )
+
+
+class _CountingEmbeddingClient(MockEmbeddingClient):
+    """Wraps MockEmbeddingClient to count encode() invocations."""
+
+    def __init__(self, dim: int = 32) -> None:
+        super().__init__(dim=dim)
+        self.encode_call_count = 0
+
+    def encode(self, texts):  # type: ignore[override]
+        self.encode_call_count += len(texts)
+        return super().encode(texts)
+
+
+@pytest.mark.asyncio
+async def test_cross_doc_reuses_stored_vector_when_fresh(two_doc_factory) -> None:
+    """Phase 7a-2: when target block's embedding row exists and source_hash
+    matches the current text, build_block_context_with_refs must NOT call
+    encode()."""
+    client = _CountingEmbeddingClient(dim=32)
+    async with two_doc_factory() as session:
+        _, refs = await build_block_context_with_refs(
+            session,
+            block_id=1,
+            radius=0,
+            embedding_client=client,
+            cross_doc_top_k=3,
+            cross_doc_threshold=0.0,
+        )
+    assert refs, "cross-doc search should still produce results"
+    assert client.encode_call_count == 0, (
+        f"expected stored vector reuse, got {client.encode_call_count} encode call(s)"
+    )

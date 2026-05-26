@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ht_lens.db.models import Block, Document, Page, Translation
+from ht_lens.embedding.lookup import get_or_encode_block_vector
 from ht_lens.embedding.search import SearchHit, fetch_hit_details, search
 from ht_lens.embedding.service import EmbeddingClient
 
@@ -258,7 +259,9 @@ async def _build_cross_doc_refs(
     text = (target.original_text or "").strip()
     if not text:
         return []
-    query_vec = embedding_client.encode([text])[0]
+    # Phase 7a-2: reuse the stored block_embeddings vector when fresh; falls
+    # back to encode() when the row is missing or source_hash is stale.
+    query_vec = await get_or_encode_block_vector(session, embedding_client, target)
     hits: list[SearchHit] = await search(
         session,
         query_vector=query_vec,
