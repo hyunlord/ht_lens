@@ -22,9 +22,11 @@ PDF ─► [Extractor] ─► page PNG + block JSON
                               │
                               ├──► [Embedding Service] ─► block_embeddings  ✅ Phase 7a
                               │     (bge-m3, 1024d, numpy brute-force)         │
+                              │     factory.from_env() (7a-3)                  │
                               ▼                                                │
                        [Translator] ─► translations                            │
                               │  (Phase 7a-2: concurrency 7, 5.66x)            │
+                              │  (Phase 7a-3: auto-embed chain)                │
                               ▼                              ▼                 │
               ┌──────────[FastAPI]──────────┐         [Cross-doc RAG]  ✅ 7a   │
               ▼                              ▼               │                 │
@@ -80,7 +82,7 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)             ← 
 
 ---
 
-## Phases — Completed
+## Phases — Completed (v0.1 ~ v1.6)
 
 ### Phase 0 — Skeleton & Harness ✅
 - 디렉토리 구조, pyproject(uv), ruff, mypy strict, pytest markers
@@ -147,71 +149,43 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)             ← 
 
 ### Phase 7a-2 — Throughput Optimization ✅ (2026-05-26)
 
-**Deliverable**
-
 **Sub-goal A — Translation concurrency fix**:
-- `translate_document` outer loop: sequential `for ... await` → `asyncio.as_completed` + `Semaphore(7)` + db_lock (AsyncSession 동시사용 회피) + pending_futures (dedup race 해결)
-- Retry sleep outside semaphore (sem hold time 최소화)
-- `--concurrency` parameter 진짜 동작, default 7 (sglang effective_max_running_requests_per_dp)
-- **Mock LLM benchmark: 5.66x speedup** (c=1 vs c=7, 30 blocks)
+- `translate_document` outer loop: sequential → `asyncio.as_completed` + `Semaphore(7)` + db_lock + pending_futures
+- `--concurrency` parameter 진짜 동작, default 7
+- **Mock LLM benchmark: 5.66x speedup** (c=1 vs c=7)
 - Phase 2b부터 존재하던 design bug 해결
 
 **Sub-goal B — RAG latency**:
-- Codex Alt 1 채택: `block_embeddings.vector` 재사용 (DB stored vector hit)
-- 첫 query (cache miss + DB hit): 0.18ms
-- Fallback path (block_embeddings 없을 때): 575ms 그대로
-- Helper-level p95: 0.18ms (end-to-end 아닌 helper만, integration test로 lock)
-- DoD <500ms 충족
+- `block_embeddings.vector` 재사용 (DB stored vector hit)
+- Helper-level p95: 0.18ms (DoD <500ms 충족)
 
-**Sub-goal C — DB batch commit**:
-- 사용자 명시적 skip 결정 ("measure first")
-- Verify에서 SQLITE_BUSY 0건 → contention 없음 입증
-- Over-engineering 회피
-- 미래 contention 발생 시 별도 phase (조건부)
+**Sub-goal C — DB batch commit**: 사용자 명시 skip (SQLITE_BUSY 0건 정당화)
 
-**DoD**
-- Translation throughput 5.66x (mock benchmark) ✅
-- /explain RAG latency p95 < 500ms ✅ (helper-level)
-- 회귀 0 ✅ (508 → 521 tests, +13)
-- ruff / mypy strict / format clean ✅
-
-**완료 노트** (2026-05-26)
-- 13 commits (plan → debate → challenge RE-PLAN → plan v2 → feat A/B → verify → cross R1 → fix R1 → verify v2 → cross R2 → summary → Planner-directed micro-fix)
-- R2 DOWNGRADE → Planner Option B+ micro-fix (process fix + docstring + test rigor + summary)
+**완료 노트**
+- 13 commits, R2 Option B+ Planner-directed micro-fix
+- 508 → 521 tests pass (+13)
 - CI green (run 26456451873)
-- Verify v3 정직한 verdict: "FAIL → RE-CODE applied (R1) + Planner-directed micro-fix (R2)"
 
-**미래 가치 (Live benchmark는 doc 7에서)**
-- doc 7 (Murphy PML, 36K blocks): 18h → **~5h** 예상
-- 모든 미래 PDF 번역에 5.66x 효과
-- v1.6 마일스톤은 Phase 7a-3 완료 후 확정
+### Phase 7a-3 — CLI Auto-embed 영구화 ✅ (v1.6 마일스톤, 2026-05-26)
 
----
+**Sub-goal 1 — CLI translate auto-embed chain**:
+- `--no-embed` / `--embed` flag, default 자동
+- 새 output line `embed: ...` (기존 ok/warning lines 보존)
+- dry_run / RAG_DISABLED / embed failure 모두 graceful skip
 
-## Phases — Pending (v1.6)
+**Sub-goal 2 — Embedding factory wire-up**:
+- `src/ht_lens/embedding/factory.py` 신규 (3 caller 통합)
+- `translate/cli.py`, `cli.py::embed_command`, `api/app.py::_lifespan` 모두 사용
 
-### Phase 7a-3 — CLI Auto-embed 영구화 ⬜
-(Phase 7a worker 발견 + doc 6 nohup chain workaround로 입증)
+**Sub-goal 3 — V1 critical bug fix**:
+- factory call + backfill 모두 outer try/except 안
+- V1 plan의 init-failure abort 버그를 Codex challenge에서 발견 → V2 fix
 
-**Deliverable**
-- `src/ht_lens/translate/cli.py`에 backfill chain 추가 (jobs/pipeline.py 패턴 그대로)
-- `ht-lens translate --doc-id N` 호출 시 자동 embedding 트리거
-- Embedding 실패 시 graceful degradation (translate는 성공)
-- 단위 + 통합 테스트
-
-**DoD**
-- CLI translate 완료 후 자동 embed (shell chain 불필요)
-- Embed 실패가 translate 실패로 전파 안 됨
-- 회귀 0 (521 tests 유지)
-
-**가치**
-- doc 7 진행 시 깔끔한 명령 (`nohup ht-lens translate --doc-id 7 --concurrency 7 & disown`)
-- 미래 모든 CLI translate 작업
-- v1.6 마일스톤 완료
-
-**예상 시간**: 30분~1h 작업 (Phase 7a 패턴 그대로)
-
-**Versioning**: v1.6 일부
+**완료 노트**
+- 12 commits, R2 minor Planner-directed micro-fix
+- 521 → 533 tests pass (+12)
+- doc 7 명령 깔끔: `nohup ht-lens translate --doc-id 7 --concurrency 7 & disown`
+- **v1.6 마일스톤 달성** (Phase 7a-2 + 7a-3)
 
 ---
 
@@ -265,11 +239,11 @@ Versioning: v0.9
 
 ## Phase 7 — Personalization Agent 시리즈
 
-### Phase 7a — Cross-document RAG ✅ (v1.5 마일스톤, 위 참조)
+### Phase 7a — Cross-document RAG ✅ (v1.5 마일스톤)
 
-### Phase 7a-2 — Throughput Optimization ✅ (위 참조)
+### Phase 7a-2 — Throughput Optimization ✅ (v1.6 일부, 위 참조)
 
-### Phase 7a-3 — CLI Auto-embed 영구화 ⬜ (위 참조)
+### Phase 7a-3 — CLI Auto-embed 영구화 ✅ (v1.6 마일스톤 완료, 위 참조)
 
 ### Phase 7b — User Profile + Persona Injection ⬜
 - `user_profile` 테이블 (background, expertise_areas, persona_text)
@@ -335,7 +309,7 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 | v0.9 ⬜  | Phase 6f-3 + 6f-6 + 6f-7 + 6e-3 + 6g | 운영 polish                                  |
 | v1.0 ⬜  | Phase 6h + 6h-1 + 6h-2      | 추출 품질 + UX 완성                                   |
 | **v1.5 ✅** | **Phase 7a 완료**         | **Cross-doc RAG (다른 책 관련 부분 자동 참조)**        |
-| **v1.6 ⬜** | **Phase 7a-2 ✅ + 7a-3 완료** | **Throughput 5.66x + CLI auto-embed 영구화**  |
+| **v1.6 ✅** | **Phase 7a-2 + 7a-3 완료** | **Throughput 5.66x + CLI auto-embed 영구화**         |
 | **v2.0 ⬜** | **Phase 7b/c/d/e 완료**   | **Personalization agent (profile + memory + progress + UI)** |
 
 ---
@@ -368,16 +342,18 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 
 - **~~Translation pipeline sequential bug~~**: ✅ Phase 7a-2에서 fix (5.66x speedup).
 
+- **~~CLI auto-embed 미적용~~**: ✅ Phase 7a-3에서 fix (factory + 3 caller wire-up).
+
 - **sglang effective_max_running_requests_per_dp = 7**:
   설정 48이지만 실제 7. concurrency 7로 fix됨. 더 늘릴 수 있는지 별도 조사 (Phase 7a-2 후속).
 
 - **Phase 7a Retrieval quality**: doc 6 추가로 6 docs / 4,692 vectors 확보. Cross-doc 효과 doc 7 추가 후 재측정.
 
-- **Phase 7a-2 Live LLM benchmark**: Mock 5.66x speedup. Doc 7 (36K) 진행 시 자연 측정.
+- **Phase 7a-2/7a-3 Live LLM benchmark**: Mock 5.66x speedup + factory mock test 검증. **doc 7 (Murphy PML 36K) 진행 시 자연 측정**.
 
 - **Phase 7b Persona 디자인**: 어디까지 사용자 직접 입력 vs 자동 학습? Plan 단계 결정.
 
-- **HF_HOME 영구 fix 완료** (2026-05-26): `~/.claude/settings.json` `/home/user/...` → `/home/hyunlord/...` 정정. 다음 Claude session부터 적용.
+- **HF_HOME 영구 fix 완료** (2026-05-26): `~/.claude/settings.json` `/home/user/...` → `/home/hyunlord/...` 정정.
 
 ---
 
@@ -388,7 +364,7 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 - Phase 종료 시: ROADMAP 해당 Phase ⬜ → ✅, README 갱신
   - **주의**: Worker는 ROADMAP 수정 금지 (CLAUDE.md 규정). 사용자가 직접.
 - Cross-verify는 phase당 max 2회 (WORKFLOW.md Stage 5-B)
-  - R2 후 Planner-directed micro-fix는 허용 (Phase 6e / 6e-2 / 6f-5 / 7a / 7a-2 선례)
+  - R2 후 Planner-directed micro-fix는 허용 (Phase 6e / 6e-2 / 6f-5 / 7a / 7a-2 / 7a-3 선례)
 - Evaluation Track은 ht_lens 도메인 코드 변경 0.
 - **평가 protocol 의무 (Phase 6f-1 → 6f-5 학습)**:
   새 모델 평가 시 chrF + LLM-judge + **본문 KR (pure_text 카테고리)** 모두 측정.
@@ -403,6 +379,7 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
   - **sglang effective_max_running_requests_per_dp = 7** (설정 48 무시)
 - **prompt**: v2_ko Korean-instruction (en→ko 분기)
 - **translation concurrency**: 7 (Phase 7a-2 fix, 5.66x baseline 대비)
+- **auto-embed**: CLI translate 자동 chain (Phase 7a-3 factory + 3 caller wire-up)
 - **embedding 모델**: bge-m3 (BAAI, 1024d, CPU, ~2GB)
 - **vector search**: numpy brute-force + Phase 7a-2 stored vector reuse (helper p95 0.18ms)
 - **rollback 자산**: Gemma 4 26B-A4B-IT weights 49GB → re-swap ~3분
@@ -413,8 +390,9 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
   - Translations: qwen3.6-27b (Phase 6f-5 이후, doc 6은 v2_ko 적용)
 - **doc 6 (Aggarwal RecSys textbook)** 완료 (2026-05-26 22:03 KST):
   - 8,900 translate (text/header 100%), failed 0
-  - 4,207 embed (auto-embed chain via shell &&)
+  - 4,207 embed (auto-embed chain via shell &&, doc 7부터는 자동)
 - **HF_HOME**: `~/.claude/settings.json` fix 완료 (2026-05-26)
+- **doc 7 (Murphy PML, 1370p, 36K block)**: 대기, Phase 7a-2 5.66x + 7a-3 auto-embed live 검증 대상
 - **평가 sandbox**: `~/llm_eval/`
   - eval_v1.jsonl, eval_v2.jsonl (739 sample)
   - block_classification.json (15 카테고리)
