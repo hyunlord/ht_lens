@@ -24,14 +24,14 @@ PDF ─► [Extractor] ─► page PNG + block JSON
                               │     (bge-m3, 1024d, numpy brute-force)         │
                               ▼                                                │
                        [Translator] ─► translations                            │
-                              │                                                │
+                              │  (Phase 7a-2: concurrency 7, 5.66x)            │
                               ▼                              ▼                 │
               ┌──────────[FastAPI]──────────┐         [Cross-doc RAG]  ✅ 7a   │
               ▼                              ▼               │                 │
         [Static Viewer]              [LLMClient (split)]    │                 │
         - 배경 + 오버레이             - TranslateLLMClient    │                 │
         - 채팅 패널 + related_blocks  - ChatLLMClient ◄──────┤                 │
-        - 핀 + 질문 리스트                                    │                 │
+        - 핀 + 질문 리스트            (Phase 7a-2: stored vector reuse 0.18ms)│
         - 자동 요약                              [User Profile + Persona]  ←─ Phase 7b
                                                  [Memory System]          ←─ Phase 7c
                                                  [Learning Progress]      ←─ Phase 7d
@@ -80,7 +80,7 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)             ← 
 
 ---
 
-## Phases — Completed (v0.1 ~ v1.5)
+## Phases — Completed
 
 ### Phase 0 — Skeleton & Harness ✅
 - 디렉토리 구조, pyproject(uv), ruff, mypy strict, pytest markers
@@ -89,19 +89,18 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)             ← 
 ### Phase 1 — PDF Extractor ✅
 - 페이지별 PNG (200dpi) + block JSON
 - 한/영/혼재 fixture 회귀 테스트
-- Known issues (Phase 6h): 멀티컬럼 reading order, header heuristic, samples.md determinism
+- Known issues (Phase 6h): 멀티컬럼 reading order, header heuristic
 
 ### Phase 2a — DB + LLMClient + Ingest ✅
 - SQLite + SQLAlchemy 2.0 async + Alembic
 - `LLMClient` Protocol + `MockLLMClient`
 - 97 tests pass
 
-### Phase 2b — Translation Pipeline ✅
+### Phase 2b — Translation Pipeline ✅ (Phase 7a-2에서 진정 완성)
 - `OpenAICompatibleClient` (sglang qwen3.6, `enable_thinking=false`)
 - block 단위 번역 + cache, async + semaphore batch
 - 147 tests pass, v0.1 마일스톤
-- **Known issue (Phase 7a-2에서 발견)**: outer loop sequential `for ... await`,
-  `--concurrency` parameter는 dead code. asyncio.gather로 refactor 필요.
+- ~~Known issue: outer loop sequential `for ... await`~~ → **Phase 7a-2에서 fix (asyncio.as_completed)**
 
 ### Phase 3 — FastAPI Server ✅
 - REST API + 채팅 컨텍스트 자동 구성 (block ±2)
@@ -128,41 +127,91 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)             ← 
 
 ### Phase 6e — LLMClient Infrastructure Split ✅
 - TranslateLLMClient + ChatLLMClient 분리
-- 환경 변수 분리, 1줄 변경으로 모델 swap 가능
 
 ### Phase 6e-2 — CLI .env Load + Fail-closed Provider ✅
-- 🚨 Critical bug fix: CLI silent mock 위험 해결
 - 442 tests pass, v0.8 마일스톤
 
-### Phase 6f-1 → 6f-5 — Production Model 결정
-- Phase 6f-1: qwen → Gemma 4 swap (E1.5 결과 기반)
-- 사용자 실 사용 → 본문 KR 측정 누락 발견
-- Phase 6f-5: qwen rollback + v2_ko Korean-instruction prompt
-- 454 tests pass, E2E KR 0.96, v0.8.5 마일스톤
+### Phase 6f-1 → 6f-5 — Production Model 결정 ✅
+- Phase 6f-1: qwen → Gemma 4 swap → 사용자 발견 본문 KR 측정 누락
+- Phase 6f-5: qwen rollback + v2_ko prompt
+- 454 tests pass, doc 4 KR 0.859, v0.8.5 마일스톤
 
-### Phase 7a — Cross-document RAG ✅ (v1.5 마일스톤)
-**Deliverable**
-- `block_embeddings` 테이블 + numpy brute-force search
-- bge-m3 embedding service (1024d, multilingual)
-- `chat_context.py` cross-doc top-K retrieval
-- `/blocks/{id}/related` API
+### Phase 7a — Cross-document RAG ✅ (v1.5 마일스톤, 2026-05-26)
+- `block_embeddings` + numpy brute-force search
+- bge-m3 1024d multilingual
+- chat_context.py cross-doc top-K
 - `/explain` + `/messages` 응답에 `related_blocks` 필드
-- Frontend: message.js renderRelatedBlocks, state.js cache
-- CLI: `ht-lens embed`
-- Upload-chain auto-embed (jobs/pipeline.py)
-- Alembic migration 0004
+- CLI: `ht-lens embed`, Upload-chain auto-embed (jobs/pipeline.py)
+- 508 tests pass, 16 commits, R2 Option B+ micro-fix
+- E2E /explain: 5 cross-doc hits, top-1 score 1.00
+
+### Phase 7a-2 — Throughput Optimization ✅ (2026-05-26)
+
+**Deliverable**
+
+**Sub-goal A — Translation concurrency fix**:
+- `translate_document` outer loop: sequential `for ... await` → `asyncio.as_completed` + `Semaphore(7)` + db_lock (AsyncSession 동시사용 회피) + pending_futures (dedup race 해결)
+- Retry sleep outside semaphore (sem hold time 최소화)
+- `--concurrency` parameter 진짜 동작, default 7 (sglang effective_max_running_requests_per_dp)
+- **Mock LLM benchmark: 5.66x speedup** (c=1 vs c=7, 30 blocks)
+- Phase 2b부터 존재하던 design bug 해결
+
+**Sub-goal B — RAG latency**:
+- Codex Alt 1 채택: `block_embeddings.vector` 재사용 (DB stored vector hit)
+- 첫 query (cache miss + DB hit): 0.18ms
+- Fallback path (block_embeddings 없을 때): 575ms 그대로
+- Helper-level p95: 0.18ms (end-to-end 아닌 helper만, integration test로 lock)
+- DoD <500ms 충족
+
+**Sub-goal C — DB batch commit**:
+- 사용자 명시적 skip 결정 ("measure first")
+- Verify에서 SQLITE_BUSY 0건 → contention 없음 입증
+- Over-engineering 회피
+- 미래 contention 발생 시 별도 phase (조건부)
 
 **DoD**
-- 모든 기존 block embedding 완료 (485 vectors backfilled, docs 1-5)
-- Chat 호출 시 cross-doc context 자동 포함
-- E2E /explain: 5 cross-doc hits, top-1 score 1.00 (Open-Sora exact match)
-- Latency 575ms (DoD <500ms 미충족 → Phase 7a-2 위임)
+- Translation throughput 5.66x (mock benchmark) ✅
+- /explain RAG latency p95 < 500ms ✅ (helper-level)
+- 회귀 0 ✅ (508 → 521 tests, +13)
+- ruff / mypy strict / format clean ✅
 
 **완료 노트** (2026-05-26)
-- 508 tests pass (+43 신규, 0 regression)
-- 16 commits + R2 micro-fix
-- CI green (run 26427252749)
-- **v1.5 마일스톤 달성**
+- 13 commits (plan → debate → challenge RE-PLAN → plan v2 → feat A/B → verify → cross R1 → fix R1 → verify v2 → cross R2 → summary → Planner-directed micro-fix)
+- R2 DOWNGRADE → Planner Option B+ micro-fix (process fix + docstring + test rigor + summary)
+- CI green (run 26456451873)
+- Verify v3 정직한 verdict: "FAIL → RE-CODE applied (R1) + Planner-directed micro-fix (R2)"
+
+**미래 가치 (Live benchmark는 doc 7에서)**
+- doc 7 (Murphy PML, 36K blocks): 18h → **~5h** 예상
+- 모든 미래 PDF 번역에 5.66x 효과
+- v1.6 마일스톤은 Phase 7a-3 완료 후 확정
+
+---
+
+## Phases — Pending (v1.6)
+
+### Phase 7a-3 — CLI Auto-embed 영구화 ⬜
+(Phase 7a worker 발견 + doc 6 nohup chain workaround로 입증)
+
+**Deliverable**
+- `src/ht_lens/translate/cli.py`에 backfill chain 추가 (jobs/pipeline.py 패턴 그대로)
+- `ht-lens translate --doc-id N` 호출 시 자동 embedding 트리거
+- Embedding 실패 시 graceful degradation (translate는 성공)
+- 단위 + 통합 테스트
+
+**DoD**
+- CLI translate 완료 후 자동 embed (shell chain 불필요)
+- Embed 실패가 translate 실패로 전파 안 됨
+- 회귀 0 (521 tests 유지)
+
+**가치**
+- doc 7 진행 시 깔끔한 명령 (`nohup ht-lens translate --doc-id 7 --concurrency 7 & disown`)
+- 미래 모든 CLI translate 작업
+- v1.6 마일스톤 완료
+
+**예상 시간**: 30분~1h 작업 (Phase 7a 패턴 그대로)
+
+**Versioning**: v1.6 일부
 
 ---
 
@@ -174,8 +223,6 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)             ← 
 
 ### Phase 6f-6 — Prompt Policy Layer 분리 ⬜
 - Transport-agnostic prompt management
-- 모델별 prompt 분기 인프라
-- Cache prompt-versioning
 - Versioning: v0.9 일부
 
 ### Phase 6f-7 — Verification 자동화 ⬜
@@ -194,7 +241,7 @@ learning_log     (id, doc_id, action, block_id, timestamp, ...)             ← 
 
 **추가 (사용자 발견)**:
 - 페이지 간 공백 줄이기
-- 채팅 패널 + 좌우 비교 동시 표시 (floating overlay)
+- 채팅 패널 + 좌우 비교 동시 표시
 
 Versioning: v0.9
 
@@ -207,13 +254,10 @@ Versioning: v0.9
 - Versioning: v1.0
 
 ### Phase 6h-1 — Section-level Chat Context ⬜
-(사용자 Issue C)
 - Block ±2 → 같은 section 전체 확장
-- 선행 조건: Phase 6h header heuristic 보강
 - Versioning: v1.0 일부
 
 ### Phase 6h-2 — 번역 언어 옵션 UI/API ⬜
-(사용자 Issue A)
 - Upload API에 src/tgt 파라미터, UI lang selector
 - Versioning: v1.0 일부
 
@@ -223,65 +267,9 @@ Versioning: v0.9
 
 ### Phase 7a — Cross-document RAG ✅ (v1.5 마일스톤, 위 참조)
 
-### Phase 7a-2 — Throughput Optimization ⬜ (통합 phase)
+### Phase 7a-2 — Throughput Optimization ✅ (위 참조)
 
-**Context**: doc 6 진행 중 bottleneck profiling으로 진짜 큰 발견:
-
-#### 발견 1 — `--concurrency` parameter dead code
-- `src/ht_lens/translate/pipeline.py:85-97`: outer loop `for ... await` sequential
-- Semaphore 무의미 (loop가 sequential이라 동시 실행 안 됨)
-- 실측 c=5 19.7 b/min vs c=30 33.4 b/min는 measurement noise (warm vs cold start)
-- **이론 sequential ceiling = 22.9 b/min** (2.62s × 30 = 60s sequential은 22.9 b/min)
-- Phase 2b부터 이 design bug 존재. test에서는 외부 동작만 검증.
-
-#### 발견 2 — sglang `effective_max_running_requests_per_dp = 7`
-- 설정 `--max-running-requests 48` 무시, 실제 7
-- 진짜 concurrency 7로 돌리면 7/2.62s = **160 b/min** 이론
-- 현재 22 b/min 대비 **7x 가능**
-
-#### 발견 3 — RAG latency 575ms (Phase 7a debt)
-- bge-m3 CPU encode가 dominant cost
-- query embedding cache, GPU offload, 또는 vector store swap 검토
-
-**Deliverable (3 sub-goals 묶음)**
-
-##### Sub-goal A: Translation concurrency fix
-- `translate_document` outer loop: sequential → `asyncio.gather` with `Semaphore(N)`
-- N = 7 (sglang effective_max) 또는 plan에서 조정
-- 예상 효과: 22 → 120~160 b/min (5~7x)
-- doc 7 (36K block) ETA: 18h → **5h**
-
-##### Sub-goal B: RAG latency 575ms → <500ms
-- Query embedding cache (반복 query 빠르게)
-- 또는 GPU offload (qwen sglang과 메모리 경쟁 risk)
-- 또는 numpy → sqlite-vec/faiss swap (16K scale에선 marginal)
-- Plan 단계에서 접근 결정
-
-##### Sub-goal C: DB batch commit (side issue)
-- `_upsert_translation`에서 per-block commit → batch 10~20
-- SQLite write contention 해소 (Sub-goal A로 concurrency 증가 시 필수)
-
-**DoD**
-- Translation throughput ≥ 100 b/min at concurrency 7 (3x baseline)
-- /explain latency p95 < 500ms
-- 회귀 0 (508 tests 유지)
-- DB batch commit 안전 (실패 시 rollback)
-- Documentation update (concurrency parameter 진짜 동작 명시)
-
-**위험**
-- asyncio.gather + DB transaction 동시성 (SQLAlchemy async session 관리)
-- Translation 도중 일부 실패 시 partial commit
-- sglang 실제 capacity 한계 (effective_max 7 너머 throughput 안 늘어남)
-
-**예상 시간**: 1주 (plan/debate/verify cycle 포함)
-
-**Versioning**: v1.6
-
-### Phase 7a-3 — CLI Auto-embed 영구화 ⬜
-- `src/ht_lens/translate/cli.py`에 backfill chain 추가
-- jobs/pipeline.py 패턴 그대로
-- Phase 7a worker 발견 debt
-- Versioning: v1.6
+### Phase 7a-3 — CLI Auto-embed 영구화 ⬜ (위 참조)
 
 ### Phase 7b — User Profile + Persona Injection ⬜
 - `user_profile` 테이블 (background, expertise_areas, persona_text)
@@ -326,7 +314,7 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 - Matched-block 14/0 qwen 우세
 
 ### Phase E2 — LoRA Fine-tune (Conditional) ⬜
-**ROI 재평가**: qwen baseline 0.867 강함, doc 4 KR 0.859. Fine-tune 효과 작을 가능성.
+**ROI 재평가**: qwen baseline 0.867 강함. Fine-tune 효과 작을 가능성.
 **Versioning**: v1.0 일부 (conditional)
 
 ---
@@ -347,7 +335,7 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 | v0.9 ⬜  | Phase 6f-3 + 6f-6 + 6f-7 + 6e-3 + 6g | 운영 polish                                  |
 | v1.0 ⬜  | Phase 6h + 6h-1 + 6h-2      | 추출 품질 + UX 완성                                   |
 | **v1.5 ✅** | **Phase 7a 완료**         | **Cross-doc RAG (다른 책 관련 부분 자동 참조)**        |
-| **v1.6 ⬜** | **Phase 7a-2 + 7a-3 완료** | **Throughput optimization (5~7x) + CLI auto-embed**   |
+| **v1.6 ⬜** | **Phase 7a-2 ✅ + 7a-3 완료** | **Throughput 5.66x + CLI auto-embed 영구화**  |
 | **v2.0 ⬜** | **Phase 7b/c/d/e 완료**   | **Personalization agent (profile + memory + progress + UI)** |
 
 ---
@@ -378,17 +366,18 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 
 - **자동 요약 hierarchical**: Phase 6d debt. Phase 6h.
 
-- **🚨 Translation pipeline sequential bug (Phase 7a-2에서 발견)**:
-  Phase 2b부터 `for await` outer loop로 sequential 동작. `--concurrency` parameter dead code.
-  Phase 7a-2에서 asyncio.gather refactor. doc 7 처리 시간 18h → 5h.
+- **~~Translation pipeline sequential bug~~**: ✅ Phase 7a-2에서 fix (5.66x speedup).
 
 - **sglang effective_max_running_requests_per_dp = 7**:
-  설정 48이지만 실제 7. GB10 device 또는 token capacity 관련. 더 늘릴 수 있는지 별도 조사.
+  설정 48이지만 실제 7. concurrency 7로 fix됨. 더 늘릴 수 있는지 별도 조사 (Phase 7a-2 후속).
 
-- **Phase 7a Retrieval quality**: 현재 threshold + top-K default 안정적.
-  doc 6 추가 후 cross-doc 효과 재측정 필요.
+- **Phase 7a Retrieval quality**: doc 6 추가로 6 docs / 4,692 vectors 확보. Cross-doc 효과 doc 7 추가 후 재측정.
+
+- **Phase 7a-2 Live LLM benchmark**: Mock 5.66x speedup. Doc 7 (36K) 진행 시 자연 측정.
 
 - **Phase 7b Persona 디자인**: 어디까지 사용자 직접 입력 vs 자동 학습? Plan 단계 결정.
+
+- **HF_HOME 영구 fix 완료** (2026-05-26): `~/.claude/settings.json` `/home/user/...` → `/home/hyunlord/...` 정정. 다음 Claude session부터 적용.
 
 ---
 
@@ -399,7 +388,7 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
 - Phase 종료 시: ROADMAP 해당 Phase ⬜ → ✅, README 갱신
   - **주의**: Worker는 ROADMAP 수정 금지 (CLAUDE.md 규정). 사용자가 직접.
 - Cross-verify는 phase당 max 2회 (WORKFLOW.md Stage 5-B)
-  - R2 후 Planner-directed micro-fix는 허용 (Phase 6e / 6e-2 / 6f-5 / 7a 선례)
+  - R2 후 Planner-directed micro-fix는 허용 (Phase 6e / 6e-2 / 6f-5 / 7a / 7a-2 선례)
 - Evaluation Track은 ht_lens 도메인 코드 변경 0.
 - **평가 protocol 의무 (Phase 6f-1 → 6f-5 학습)**:
   새 모델 평가 시 chrF + LLM-judge + **본문 KR (pure_text 카테고리)** 모두 측정.
@@ -413,17 +402,19 @@ ht_lens 도메인 코드 영향 0. 외부 sandbox (`~/llm_eval/`)에서 prod 모
   - context 32768, mem-fraction-static 0.70 → ~90GB GPU
   - **sglang effective_max_running_requests_per_dp = 7** (설정 48 무시)
 - **prompt**: v2_ko Korean-instruction (en→ko 분기)
+- **translation concurrency**: 7 (Phase 7a-2 fix, 5.66x baseline 대비)
 - **embedding 모델**: bge-m3 (BAAI, 1024d, CPU, ~2GB)
-- **vector search**: numpy brute-force
+- **vector search**: numpy brute-force + Phase 7a-2 stored vector reuse (helper p95 0.18ms)
 - **rollback 자산**: Gemma 4 26B-A4B-IT weights 49GB → re-swap ~3분
 - **ht_lens 서버**: 8080
 - **DB**: `data/ht_lens.db`
-  - 7 documents (doc 1-5 번역 완료 qwen+v2_ko, doc 6 진행 중, doc 7 대기)
-  - block_embeddings: 485 baseline + doc 6 진행 중
-  - Translations: qwen3.6-27b (대부분)
-- **doc 6 (Aggarwal RecSys textbook)**: 2026-05-26 12:51 KST 시작, ETA 20:30
-  + auto-embed chain (shell &&)
-- **🚨 알려진 issue**: `--concurrency` parameter dead code (Phase 7a-2에서 fix 예정)
+  - 7 documents (doc 1-6 번역 완료, doc 7 대기)
+  - block_embeddings: **4,692** vectors (485 baseline + doc 6 4,207)
+  - Translations: qwen3.6-27b (Phase 6f-5 이후, doc 6은 v2_ko 적용)
+- **doc 6 (Aggarwal RecSys textbook)** 완료 (2026-05-26 22:03 KST):
+  - 8,900 translate (text/header 100%), failed 0
+  - 4,207 embed (auto-embed chain via shell &&)
+- **HF_HOME**: `~/.claude/settings.json` fix 완료 (2026-05-26)
 - **평가 sandbox**: `~/llm_eval/`
   - eval_v1.jsonl, eval_v2.jsonl (739 sample)
   - block_classification.json (15 카테고리)
