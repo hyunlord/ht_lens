@@ -51,11 +51,30 @@ def translate_command(
         "--dry-run/--no-dry-run",
         help="Estimate cache stats without calling LLM.",
     ),
+    no_embed: bool = typer.Option(
+        False,
+        "--no-embed/--embed",
+        help=(
+            "Skip the post-translate auto-embed step (Phase 7a-3). "
+            "Default is to auto-embed translated blocks into "
+            "block_embeddings; the first run may download ~2 GB for "
+            "bge-m3. Pass --no-embed to skip (e.g., when running on a "
+            "machine without HF cache access or in CI)."
+        ),
+    ),
     db: Path | None = typer.Option(  # noqa: B008
         None, "--db", resolve_path=True, help="SQLite DB path."
     ),
 ) -> None:
-    """Translate all text/header blocks for a document."""
+    """Translate all text/header blocks for a document.
+
+    Phase 7a-3: after translation succeeds, the command auto-embeds the
+    translated blocks into ``block_embeddings`` (mirrors the upload
+    pipeline's Phase 7a Fix c chain). Embedding failures are non-fatal —
+    they log to stderr and the command still exits per the translation
+    result. Use ``--no-embed`` to opt out (e.g., dry runs, CI without
+    HF cache, or explicit two-step workflows).
+    """
     # Phase 6e-2: pull repo-root .env into os.environ BEFORE building the
     # LLM. Without this, missing shell exports silently fall through to
     # MockLLMClient and the run pollutes the DB with ``[KO] <english>``
@@ -66,6 +85,8 @@ def translate_command(
     load_repo_dotenv()
 
     from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.embedding.backfill import backfill
+    from ht_lens.embedding.factory import from_env_embedding
     from ht_lens.llm.errors import LLMConfigurationError
     from ht_lens.llm.factory import from_env_translate
     from ht_lens.translate.pipeline import translate_document
@@ -96,11 +117,42 @@ def translate_command(
                     retry_failed=retry_failed,
                     dry_run=dry_run,
                 )
+
+            # Phase 7a-3: post-translate auto-embed. Skipped in dry_run
+            # (no Translation rows exist) and behind --no-embed. Both the
+            # factory call AND the backfill run live inside the same
+            # try/except so a BgeM3Client init failure (offline, bad HF
+            # cache, missing torch, etc.) is treated as non-fatal — the
+            # translate result is the source of truth for the exit code.
+            embed_summary: str | None = None
+            if dry_run:
+                embed_summary = None
+            elif no_embed:
+                embed_summary = "embed: skipped (--no-embed)"
+            else:
+                try:
+                    embedding_client = from_env_embedding()
+                    if embedding_client is None:
+                        embed_summary = "embed: skipped (RAG_DISABLED)"
+                    else:
+                        async with factory() as session:
+                            ek = await backfill(session, embedding_client, doc_id=doc_id)
+                        embed_summary = f"embed: embedded={ek['embedded']} skipped={ek['skipped']}"
+                except Exception as exc:
+                    typer.echo(
+                        f"warning: auto-embed failed: {exc}. "
+                        f"Run 'ht-lens embed --doc-id {doc_id}' manually.",
+                        err=True,
+                    )
+                    embed_summary = "embed: failed (see stderr)"
+
             if not dry_run and stats.failed > 0:
                 typer.echo(
                     f"warning: {stats.failed} block(s) failed translation",
                     err=True,
                 )
+                if embed_summary is not None:
+                    typer.echo(embed_summary)
                 raise typer.Exit(code=1)
             if dry_run:
                 total = stats.translated + stats.cached
@@ -115,6 +167,8 @@ def translate_command(
                     f"translated={stats.translated} cached={stats.cached} "
                     f"skipped={stats.skipped} failed={stats.failed}"
                 )
+                if embed_summary is not None:
+                    typer.echo(embed_summary)
         finally:
             await engine.dispose()
 

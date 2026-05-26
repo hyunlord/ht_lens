@@ -209,12 +209,19 @@ def embed_command(
 
     from ht_lens.db.session import make_engine, make_session_factory
     from ht_lens.embedding.backfill import backfill
-    from ht_lens.embedding.service import BgeM3Client
+    from ht_lens.embedding.factory import from_env_embedding
 
     db_path = db if db is not None else _db_path_from_env()
 
     async def _run() -> None:
-        client = BgeM3Client()
+        client = from_env_embedding()
+        if client is None:
+            typer.echo(
+                "error: RAG_DISABLED is set — embedding subsystem disabled. "
+                "Unset RAG_DISABLED or use EMBEDDING_PROVIDER=mock for dev.",
+                err=True,
+            )
+            raise typer.Exit(code=5)
         engine = make_engine(db_path)
         factory = make_session_factory(engine)
         try:

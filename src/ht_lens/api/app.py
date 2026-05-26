@@ -109,20 +109,25 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # internet, missing 2GB model download), the API still starts. Chat
     # falls back to same-doc-only context, and ``/blocks/{id}/related``
     # returns 503. Test overrides set this directly to a MockEmbedding-
-    # Client. ``RAG_DISABLED=1`` skips init entirely (no torch import).
+    # Client. Phase 7a-3: provider selection (``RAG_DISABLED``,
+    # ``EMBEDDING_PROVIDER=mock``, default ``BgeM3Client``) is centralized
+    # in ``embedding/factory.from_env_embedding`` so the CLI auto-embed
+    # chain and this lifespan share one decision tree.
     app.state.embedding_client = None
-    if os.environ.get("RAG_DISABLED", "").lower() not in ("1", "true", "yes"):
-        try:
-            from ht_lens.embedding.service import BgeM3Client
+    try:
+        from ht_lens.embedding.factory import from_env_embedding
 
-            app.state.embedding_client = BgeM3Client()
+        app.state.embedding_client = from_env_embedding()
+        if app.state.embedding_client is not None:
             _log.info(
                 "embedding client ready: %s (dim=%d)",
                 app.state.embedding_client.model_name,
                 app.state.embedding_client.dim,
             )
-        except Exception as exc:
-            _log.warning("embedding client init failed; cross-doc RAG disabled: %s", exc)
+        else:
+            _log.info("embedding disabled (RAG_DISABLED)")
+    except Exception as exc:
+        _log.warning("embedding client init failed; cross-doc RAG disabled: %s", exc)
 
     # Phase 6d: uploads directory + background-task pool + restart recovery.
     uploads_dir = _DEFAULT_UPLOADS_DIR
