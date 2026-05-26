@@ -128,3 +128,66 @@ def test_startup_rejects_schema_mismatch(tmp_path: Path, monkeypatch: pytest.Mon
     app = create_app()
     with pytest.raises(SchemaVersionMismatch), TestClient(app):
         pass
+
+
+# ---------------------------------------------------------------------------
+# Phase 7a-3 R1 verify-cross gap: API lifespan uses the embedding factory
+# ---------------------------------------------------------------------------
+
+
+def test_lifespan_uses_embedding_factory_with_mock_provider(
+    env_with_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``api/app.py::_lifespan`` must wire to ``from_env_embedding`` so the
+    same provider knobs that drive the CLI also drive the long-running
+    API. Verified with ``EMBEDDING_PROVIDER=mock``: the lifespan should
+    end up with a ``MockEmbeddingClient`` (dim=32) on ``app.state``.
+    """
+    monkeypatch.setenv("HT_LENS_SKIP_LLM_CHECK", "1")
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "mock")
+    monkeypatch.delenv("RAG_DISABLED", raising=False)
+    from ht_lens.api.app import create_app
+    from ht_lens.embedding.service import MockEmbeddingClient
+
+    app = create_app()
+    with TestClient(app):
+        client = getattr(app.state, "embedding_client", None)
+        assert isinstance(client, MockEmbeddingClient), (
+            f"expected MockEmbeddingClient on app.state, got {type(client).__name__}"
+        )
+        assert client.dim == 32
+
+
+def test_lifespan_handles_embedding_factory_raise(
+    env_with_db: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If ``from_env_embedding`` raises during startup (BgeM3Client init
+    failure on a fresh machine, etc.), the lifespan must still come up
+    with ``app.state.embedding_client = None`` rather than aborting.
+
+    Phase 7a-3 verify-cross R1 §4: the lifespan's new factory path was
+    not directly locked against init failure.
+    """
+    monkeypatch.setenv("HT_LENS_SKIP_LLM_CHECK", "1")
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    monkeypatch.delenv("RAG_DISABLED", raising=False)
+    from ht_lens.api import app as app_module
+
+    def _boom() -> object:
+        raise RuntimeError("simulated factory failure during lifespan")
+
+    monkeypatch.setattr(app_module, "from_env_embedding", _boom, raising=False)
+    # The factory is imported lazily inside _lifespan. Also patch the
+    # source module so the local import inside the function picks it up.
+    from ht_lens.embedding import factory as factory_module
+
+    monkeypatch.setattr(factory_module, "from_env_embedding", _boom)
+
+    app = app_module.create_app()
+    with TestClient(app) as client:
+        # API should still come up (fail-soft).
+        resp = client.get("/documents")
+        assert resp.status_code == 200
+        # Embedding client left as None.
+        assert getattr(app.state, "embedding_client", "missing") is None

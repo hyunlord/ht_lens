@@ -290,3 +290,66 @@ def test_embed_command_refuses_when_rag_disabled(tmp_path: Path) -> None:
     )
     assert proc.returncode == 5, (proc.stdout, proc.stderr)
     assert "RAG_DISABLED" in proc.stderr, proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# Phase 7a-3 R1 verify-cross gap fixes
+# ---------------------------------------------------------------------------
+
+
+def test_translate_cli_dry_run_does_not_emit_embed_line(tmp_path: Path) -> None:
+    """``--dry-run`` must short-circuit before any embed-related output.
+
+    Codex verify-cross R1 §2: ``src/ht_lens/translate/cli.py`` skips the
+    embed branch when ``dry_run=True``, but no test asserted the silence.
+    """
+    db_path, doc_id = _setup_db_with_long_blocks(tmp_path)
+    proc = _run_translate_subprocess(
+        "--doc-id",
+        str(doc_id),
+        "--dry-run",
+        db_path=db_path,
+        extra_env={"LLM_PROVIDER": "mock", "EMBEDDING_PROVIDER": "mock"},
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "dry_run:" in proc.stdout
+    assert "embed:" not in proc.stdout, (
+        f"dry_run path must not emit an embed line, got: {proc.stdout!r}"
+    )
+    # No embeddings were written even though EMBEDDING_PROVIDER=mock was set.
+    assert asyncio.run(_count_embeddings(db_path)) == 0
+
+
+def test_embed_command_with_mock_provider_normal_path(tmp_path: Path) -> None:
+    """``ht-lens embed`` happy path uses the factory and ``EMBEDDING_PROVIDER=mock``.
+
+    Codex verify-cross R1 §2: prior to this test only the ``RAG_DISABLED``
+    refusal branch of ``cli.py::embed_command`` was covered after the
+    factory refactor; the normal (factory-returns-mock-client) path was
+    not.
+    """
+    if shutil.which("ht-lens") is None:
+        pytest.skip("ht-lens console script not on PATH")
+    # Seed doc and pre-translate it so backfill has candidate blocks.
+    db_path, doc_id = _setup_db_with_long_blocks(tmp_path)
+    pre = _run_translate_subprocess(
+        "--doc-id",
+        str(doc_id),
+        "--no-embed",  # only translate; we want embed_command itself to populate
+        db_path=db_path,
+        extra_env={"LLM_PROVIDER": "mock"},
+    )
+    assert pre.returncode == 0, (pre.stdout, pre.stderr)
+    assert asyncio.run(_count_embeddings(db_path)) == 0
+
+    proc = subprocess.run(
+        ["ht-lens", "embed", "--doc-id", str(doc_id)],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        env=_build_env(db_path, {"EMBEDDING_PROVIDER": "mock"}),
+    )
+    assert proc.returncode == 0, (proc.stdout, proc.stderr)
+    assert "ok:" in proc.stdout
+    assert "embedded=3" in proc.stdout, proc.stdout
+    assert asyncio.run(_count_embeddings(db_path)) == 3
