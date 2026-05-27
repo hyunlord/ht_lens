@@ -1,6 +1,8 @@
-# Phase 6h-1 — Verify (self)
+# Phase 6h-1 — Verify (V2, post R1 RE-CODE)
 
-Pre-flight: `git status` clean for tracked production+test files ✅. HEAD = `53a3357 feat(phase-6h-1): Y-overlap inline join + visual-line header count`. `ROADMAP.md`는 사용자 WIP (touch 안 함).
+> **V1 → V2 changelog**: V1 (88/100 PASS_LOW) → Codex R1 REJECT ~68/100 with 3 concrete gaps (backfill page-set hole, untested abort paths, no successful-apply test). V2: RE-CODE adds DB-only page validation in `backfill_doc` + 3 new atomicity tests (PDF-missing-pages, bbox-drift, successful-apply). Score honestly lowered to reflect the embedding-search scope hole that R1 surfaced.
+
+Pre-flight: `git status` clean for tracked files ✅. HEAD = `5e96024 fix(phase-6h-1): R1 verify-cross issues`. `ROADMAP.md`는 사용자 WIP (touch 안 함).
 
 ## 5-A. Automated checks
 
@@ -9,7 +11,7 @@ Pre-flight: `git status` clean for tracked production+test files ✅. HEAD = `53
 | Lint     | `uv run ruff check src/ tests/ scripts/` | `All checks passed!` (0 errors) |
 | Format   | `uv run ruff format --check src/ tests/ scripts/` | 156 files OK (after auto-format) |
 | Type     | `uv run mypy --config-file pyproject.toml src/` | `Success: no issues found in 68 source files` |
-| Test     | `uv run pytest -m "not llm and not slow" -q --no-cov` | **546 passed, 1 skipped, 7 deselected, 9 warnings in 242.20s** (baseline 533 → 546, +13 new/updated) |
+| Test     | `uv run pytest -m "not llm and not slow" -q --no-cov` | **549 passed, 1 skipped, 7 deselected, 9 warnings in 244.00s** (baseline 533 → 549, +16 new/updated incl. 3 R1 RE-CODE tests) |
 | Snapshot | `__snapshots__/test_extract_snapshot.ambr` | 3 sample_*.pdf snapshots updated (`"1\nIntroduction"` → `"1 Introduction"` 등) |
 | Coverage | (정책상 측정 안 함) | n/a |
 | CI       | post-push verification (Stage 6) | pending |
@@ -36,8 +38,11 @@ Pre-flight: `git status` clean for tracked production+test files ✅. HEAD = `53
 **Smoke** (`tests/integration/test_extract_inline_join_smoke.py`, 1 test):
 12. `test_inline_join_smoke_pdf` — in-memory PDF로 두 text piece at same y → group_page 결과 space-join. PyMuPDF가 fragments를 별도 block으로 분리하는 경우 skip-with-diagnostic.
 
-**Backfill atomicity** (`tests/integration/test_backfill_atomicity.py`, 1 test):
+**Backfill atomicity** (`tests/integration/test_backfill_atomicity.py`, 4 tests — V2 추가):
 13. `test_backfill_aborts_doc_on_block_count_mismatch` — DB(2 blocks/page) vs PDF(1 block/page) → dry-run + apply 모두 abort, DB 변동 0.
+14. **(R1 fix)** `test_backfill_aborts_when_pdf_missing_pages_db_has` — PDF가 DB보다 짧을 때 (page 2-3 누락) abort, DB 변동 0. Codex R1 §4 #1 page-set hole 직접 lock.
+15. **(R1 fix)** `test_backfill_aborts_on_bbox_drift` — block bbox 위치 mismatch → abort, DB 변동 0. R1 §4 untested abort branch.
+16. **(R1 fix)** `test_backfill_apply_succeeds_when_pdf_matches_db` — DB와 PDF가 일치 → apply 성공, block_id 보존, `STALE\nTEXT` → 실제 텍스트로 update. R1 §2 successful apply path 직접 lock.
 
 ### Codex debate 5 critical items 검증
 
@@ -86,20 +91,20 @@ push 후 측정 (Stage 6). 별도 보고.
 
 ## 5-C. Scoring (100, self-assessment, honest per WORKFLOW.md)
 
-| Item       | Score / Max | Evidence |
-| ---------- | ----------- | -------- |
-| 독창성     | 13 / 15     | Y-overlap heuristic + height-similarity + direction은 결합이지만 standard PDF extraction tooling. visual line count for header는 작은 invention. -2. |
-| 완결성     | 30 / 35     | Codex 5 critical 모두 fix + 11 tests + snapshot update + backfill script. -5: backfill ops 자동 실행 안 함 (사용자 결정), ROADMAP "Alembic 0005" 항목 미충족 (스키마 변동 0이지만 ROADMAP wording은 그대로), Hot-fix A1 제거 분리. |
-| 안정성     | 27 / 30     | 회귀 0 (533→546), rotation regression locked, header heuristic 보존 locked, backfill atomicity locked. -3: doc 7 dry-run에서 page coverage drift 발견 (별도 ops issue), live PDF backfill smoke 부재 (mock + in-memory만). |
-| 확장성     | 18 / 20     | helper들은 paragraph 내부 결합 일반 logic. 향후 span/word level 재설계 시 helper 재사용 가능. -2: span-level y-clustering으로 더 깊은 fix는 향후 phase (Codex §4.1 REJECT). |
-| **Total**  | **88 / 100** | WORKFLOW.md §217-223 ≥95 미달. Phase 7a-2 V3에서 학습한 정직 라벨링 — PASS_CANDIDATE 라벨 X. |
+| Item       | Score / Max (V1 → V2) | Evidence + R1 adjustment |
+| ---------- | --------------------- | ------------------------ |
+| 독창성     | 13 → **12 / 15** | Codex R1 §3: pragmatic heuristic, not novel design. Y-overlap + height + direction 결합은 standard. -3. |
+| 완결성     | 30 → **25 / 35** | Codex R1 §3: ROADMAP "Alembic 0005" 미충족 (스키마 변동 0이지만 ROADMAP wording 그대로), live backfill 성공 case 없음 (doc 7 dry-run page-coverage abort), embedding refresh manual reminder only. R1 RE-CODE에서 일부 회복 (page-set abort lock + apply-mode test). -10. |
+| 안정성     | 27 → **24 / 30** | Codex R1 §3: V1에서 1 abort path만 test → R1에서 4 abort/apply path test로 확장. 단 runtime search stale-candidate hole (embedding/search.py)는 별도 phase. -6. |
+| 확장성     | 18 → **16 / 20** | Codex R1 §3: helper extraction 재사용 가능하지만 phase의 manual-refresh dependency가 runtime search와의 hidden coupling. span-level 재설계는 별도 phase. -4. |
+| **Total**  | **88 → 77 / 100** | WORKFLOW.md ≥95 미달. R1 audit 68 보다는 RE-CODE로 +9 회복했지만 honest score 77. Phase 7a-2 V3 정직 라벨링 적용. |
 
-V2 plan + Codex 5 critical fix 모두 적용. 본문 작업 견고. 단 점수 인플레이션 회피.
+V2: V1의 critical 5개 + R1의 3개 추가 gap 모두 fix. 단 runtime stale-candidate hole (embedding/search.py freshness check)는 본 phase scope 밖 — 별도 phase / 후속 작업.
 
 ## 5-D. Self verdict
 
-- [ ] PASS_CANDIDATE (≥95) — **불가**. self-score 88 < 95.
-- [x] **PASS_LOW** — DoD 항목 거의 충족 + Codex critical 5개 모두 fix. Cross-verify Round 1 후 판단.
+- [ ] PASS_CANDIDATE (≥95) — **불가**. self-score 77 < 95.
+- [x] **PASS_LOW** — V1 critical 5 (Codex debate) + R1 concrete 3 (cross-verify) 모두 fix. 549 tests pass. Stage 5-B Round 2 cross-verify 실행 → CONFIRM_PASS / minor DOWNGRADE / 추가 RE-CODE 결정.
 - [ ] FAIL → RE-PLAN
 
-5-B Round 1 cross-verify (`bash scripts/run_verify_cross.sh 6h-1`) 실행.
+5-B Round 2 cross-verify (CLAUDE.md 상한) 실행.
