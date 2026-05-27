@@ -245,6 +245,16 @@
   text-underline-offset: 2px;
 }
 
+/* Phase 6h hot-fix: visual cue for bbox-overflow blocks (translation overlay
+ * is structurally too short for the wrapped text — PDF peeks through). Real
+ * fix lives in the extraction pipeline (Phase 6h-1). Dashed yellow outline +
+ * native ``title`` tooltip on hover. Only shown in translation mode because
+ * original-mode bboxes match the PDF exactly. */
+.overlay[data-mode='translation'] .block--overflow-warning {
+  outline: 1px dashed rgba(255, 200, 0, 0.6);
+  outline-offset: -1px;
+}
+
 .rotation-banner {
   position: absolute;
   top: 8px;

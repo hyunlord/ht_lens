@@ -50,6 +50,18 @@ export function renderBlock(
       const size = fitFontSize(text, w, h, weight);
       el.style.fontSize = `${size}px`;
       el.textContent = text;
+      // Phase 6h hot-fix: flag blocks whose bbox is too small to display
+      // the wrapped translation. The viewer's overlay clips text via
+      // ``overflow: hidden`` and covers the bbox region with the dark
+      // background; if the bbox is much shorter than the required text
+      // area, the surrounding PDF original peeks through and looks like
+      // a missing translation. Real fix is at extraction (Phase 6h-1),
+      // but the warning sets the right mental model in the meantime.
+      if (overlayMode === "translation" && hasBboxOverflow(text, w, h)) {
+        el.classList.add("block--overflow-warning");
+        el.title =
+          "번역 영역이 짧음 — PDF 원문이 일부 노출될 수 있음 (Phase 6h fix 예정)";
+      }
     }
   }
 
@@ -117,6 +129,24 @@ function pickText(blockData, mode) {
   }
   if (!text) return null;
   return text;
+}
+
+/** Phase 6h hot-fix: decide whether the bbox is too short for the rendered
+ *  text. Uses the explicit newline count (lines authored in the source) and
+ *  a ~16px-per-line baseline. Triggers when required height exceeds the
+ *  bbox by more than 50% — the 1.5x threshold keeps false positives low
+ *  while still catching the dominant Pattern A leaks documented in the
+ *  Phase 6h diagnostic (multi-line section headers / table rows
+ *  collapsed into single-line bboxes). */
+function hasBboxOverflow(text, bboxW, bboxH) {
+  if (!text || bboxH <= 0) return false;
+  const explicitLines = (text.match(/\n/g) || []).length + 1;
+  // Per-line baseline: 16px = comfortable Korean reading size (14) * 1.15
+  // line-height. This deliberately under-estimates wrap-induced lines so
+  // we only warn on bboxes that are structurally too short, not just
+  // close to the fit limit.
+  const requiredH = explicitLines * 16;
+  return requiredH > bboxH * 1.5;
 }
 
 /** Phase 6b hover sync: toggle a ``block--hover-sync`` class on every block
