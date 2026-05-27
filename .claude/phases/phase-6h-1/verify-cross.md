@@ -1,4 +1,27 @@
-<!--
-이 파일은 `bash scripts/run_verify_cross.sh N`이 자동 생성합니다.
-Worker(Claude Code)가 직접 작성하지 마세요.
--->
+## 1. Verification of automated checks
+- `verify.md` does not look stale. Current `HEAD` is `3e8a7c1`, and `git diff --stat 53a3357..3e8a7c1` shows only `.claude/phases/phase-6h-1/verify.md` changed after the code commit. So the report appears to describe the current code, even though `verify.md:3` names the pre-verify code commit rather than literal current `HEAD`.
+- Lint evidence is credible. I reran the equivalent of `ruff check` via `.venv/bin/ruff check src/ tests/ scripts/` and it passed.
+- Format, type, and pytest results were not independently reproducible in this sandbox. `uv` is unavailable here, the venv Python launcher is broken for direct execution, and fallback runs hit sandbox/runtime issues. I therefore cannot confirm `verify.md:10-12` on this machine.
+- Coverage and CI were not actually run. `verify.md:14-15` marks coverage `n/a` and CI `pending`, but the workflow expects both. This is a real gap in the 5-A table, not just missing polish.
+- Minor process issue: `verify.md:3` says pre-flight was clean except `ROADMAP.md`, but the workflow’s “clean worktree” rule was not literally met. I do not treat that as a stale-verify issue because no code changed after verification.
+
+## 2. Verification of functional checks
+- Their 5-B checks do not exercise the actual Phase 6h-1 DoD in `ROADMAP.md:192-197`. The roadmap requires measured leak reduction and preservation of existing translations/embeddings; `verify.md:61-65` shows the only live backfill run aborted before any rewrite, so none of those outcomes were demonstrated on real data.
+- The KPI test is explicitly synthetic only. `tests/integration/test_phase_6h1_kpi.py:3-8` states it cannot re-measure the real audit numbers, so it is logic evidence, not DoD evidence.
+- The PyMuPDF smoke test is weak as functional proof because it can skip the path entirely when MuPDF emits separate raw blocks; see `tests/integration/test_extract_inline_join_smoke.py:44-58`. That means the only end-to-end extraction check may contribute no verification at all.
+- There is no successful CLI repair scenario. The new deliverable is `scripts/backfill_block_text.py`, but 5-B verifies only an abort path, not a successful `--dry-run` plus apply-mode run on a realistic document.
+
+## 3. Score audit
+- 독창성: `13/15` is slightly high but broadly defensible. The extraction change in `src/ht_lens/extract/blocks.py:58-112` is a pragmatic heuristic, not a novel design. I would score `12/15`.
+- 완결성: `30/35` is too generous. `ROADMAP.md:184-190` calls for `Alembic 0005` and a backfill that preserves existing data; no migration exists, live backfill did not succeed (`verify.md:61-65`), and embeddings are only left stale with a manual reminder. I would deduct to `21/35`.
+- 안정성: `27/30` is too high. The new script has uncovered branches and one real contract hole: `scripts/backfill_block_text.py:119-188` is claimed as per-document atomic, but only one abort path is tested (`tests/integration/test_backfill_atomicity.py:104-138`), the smoke test is skippable, and live verification already found page-coverage drift. I would score `19/30`.
+- 확장성: `18/20` is too high. The helper split in `src/ht_lens/extract/blocks.py` is reusable, but the phase now depends on manual embedding refresh while runtime search still consumes stale candidate vectors via `src/ht_lens/embedding/search.py:61-108`. That is hidden coupling, not clean extensibility. I would score `16/20`.
+- Suggested fair total: `68/100`.
+
+## 4. Issues missed (new this round)
+- `scripts/backfill_block_text.py` is not actually “per-document atomic” for page-set mismatches in the DB-only direction. `backfill_doc()` validates only pages present in the supplied PDF (`scripts/backfill_block_text.py:123-169`) and never checks for pages that exist in DB but not in `new_pages`. If a truncated/mismatched PDF omits trailing pages, the function can still commit updates for earlier pages (`178-188`) and leave the rest untouched.
+- The phase still violates the roadmap’s embedding-preservation intent in runtime behavior. Backfill rewrites `Block.original_text` (`scripts/backfill_block_text.py:181-186`), but vector search ranks all stored embeddings from `load_all()` with no `source_hash` freshness check (`src/ht_lens/embedding/search.py:61-108`). Only the query block is freshness-checked in `src/ht_lens/embedding/lookup.py:38-42`. Both `/blocks/{id}/related` and chat cross-doc refs use that stale-candidate search path (`src/ht_lens/api/routers/blocks.py:171-181`, `src/ht_lens/api/chat_context.py:262-272`).
+- The new backfill script has materially untested paths. The only script test covers block-count mismatch on page 1 (`tests/integration/test_backfill_atomicity.py:113-130`). There is no test for the live-observed `DB has no row for page N` abort (`scripts/backfill_block_text.py:124-131`), no test for the `bbox center drift` abort (`145-158`), and no successful apply-mode/exit-code test for `_async_main()` (`207-229`).
+
+## 5. Verdict
+- **REJECT** — the self-report is not stale, but it overstates phase readiness. The extraction helper change itself looks reasonable, yet the required repair path is not proven on a real document, the new backfill script has a concrete page-set validation hole, and the roadmap’s embedding-preservation DoD is not satisfied by current runtime behavior. This needs RE-CODE or explicit re-scoping before Phase 6h-1 can be treated as verified.
