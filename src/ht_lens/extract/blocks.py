@@ -46,6 +46,73 @@ def _is_horizontal(line: RawLine) -> bool:
     return abs(dx) >= abs(dy)
 
 
+# Phase 6h-1: thresholds for detecting that two PyMuPDF "lines" actually
+# render on the same visual line (e.g., "22.4.3" + "Other applications"
+# separated by a horizontal gap). 60% y-overlap + height-similar + both
+# horizontal — tuned so superscript/subscript fragments and rotated
+# pages do NOT trigger inline join.
+_INLINE_JOIN_Y_OVERLAP = 0.6
+_INLINE_JOIN_HEIGHT_RATIO = 0.7
+
+
+def _should_concat_inline(prev: RawLine, cur: RawLine) -> bool:
+    """Return True iff two consecutive raw lines render on the same visual line.
+
+    PyMuPDF emits separate ``lines`` when there is a horizontal gap (tab,
+    multi-column spacing). The y-ranges are then identical and our
+    paragraph grouper keeps them in the same paragraph, so the naive
+    ``"\\n".join(...)`` produces multi-line stored text from what is
+    visually one line. This helper guards space-vs-newline by requiring
+    all three of:
+
+    1. Both lines are horizontal (avoids touching rotated/vertical text
+       that the rest of the pipeline already handles separately).
+    2. Their bbox heights are similar (rejects superscript/subscript
+       fragments whose bbox is much smaller).
+    3. Their y-ranges overlap by >= ``_INLINE_JOIN_Y_OVERLAP`` of the
+       smaller line height.
+    """
+    if not _is_horizontal(prev) or not _is_horizontal(cur):
+        return False
+    py0, py1 = prev.bbox[1], prev.bbox[3]
+    cy0, cy1 = cur.bbox[1], cur.bbox[3]
+    prev_h = max(py1 - py0, 1e-6)
+    cur_h = max(cy1 - cy0, 1e-6)
+    if min(prev_h, cur_h) / max(prev_h, cur_h) < _INLINE_JOIN_HEIGHT_RATIO:
+        return False
+    overlap = max(0.0, min(py1, cy1) - max(py0, cy0))
+    return overlap >= _INLINE_JOIN_Y_OVERLAP * min(prev_h, cur_h)
+
+
+def _join_lines(lines: list[RawLine]) -> str:
+    """Phase 6h-1: join paragraph lines with space when same-visual-line,
+    ``\\n`` otherwise. See :func:`_should_concat_inline`."""
+    if not lines:
+        return ""
+    parts: list[str] = [_line_text(lines[0]).rstrip()]
+    for prev, cur in pairwise(lines):
+        sep = " " if _should_concat_inline(prev, cur) else "\n"
+        parts.append(sep + _line_text(cur).rstrip())
+    return "".join(parts).strip()
+
+
+def _count_visual_lines(lines: list[RawLine]) -> int:
+    """Phase 6h-1: count semantic visual lines.
+
+    Consecutive raw lines that share a visual line (per
+    :func:`_should_concat_inline`) count as one. Used by the header
+    heuristic so a title split into 3 horizontal fragments still passes
+    ``len(visual_lines) <= _HEADER_MAX_LINES``.
+    """
+    if not lines:
+        return 0
+    n = 1
+    for prev, cur in pairwise(lines):
+        if not _should_concat_inline(prev, cur):
+            n += 1
+    return n
+
+
 def _union(boxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float]:
     x0 = min(b[0] for b in boxes)
     y0 = min(b[1] for b in boxes)
@@ -105,18 +172,23 @@ def group_page(page: RawPage) -> list[GroupedBlock]:
 
         paragraphs = _group_lines_into_paragraphs(list(blk.lines))
         for para_lines in paragraphs:
-            text = "\n".join(_line_text(ln).rstrip() for ln in para_lines).strip()
+            # Phase 6h-1: join with space when consecutive raw lines share
+            # the same visual line (PyMuPDF often emits separate ``lines``
+            # for one-line text with a horizontal gap); ``\\n`` otherwise.
+            text = _join_lines(para_lines)
             if not text:
                 continue
             bbox = _union([ln.bbox for ln in para_lines])
             sizes = [_line_size(ln) for ln in para_lines if _line_size(ln) > 0]
             avg_size = median(sizes) if sizes else median_size
             all_horizontal = all(_is_horizontal(ln) for ln in para_lines)
+            # Phase 6h-1: count visual lines, not raw lines, so a header
+            # split into multiple horizontal fragments still qualifies.
             is_header = (
                 all_horizontal
                 and avg_size >= _HEADER_SIZE_RATIO * median_size
                 and avg_size >= _HEADER_MIN_SIZE_PT
-                and len(para_lines) <= _HEADER_MAX_LINES
+                and _count_visual_lines(para_lines) <= _HEADER_MAX_LINES
                 and len(text.replace("\n", "").strip()) >= _HEADER_MIN_CHARS
             )
             grouped.append(

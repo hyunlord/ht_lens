@@ -111,10 +111,7 @@
             ]),
             'id': 'p1_b007',
             'order': 7,
-            'text': '''
-              1
-              Introduction
-            ''',
+            'text': '1 Introduction',
             'type': 'text',
           }),
           dict({
@@ -154,10 +151,7 @@
             ]),
             'id': 'p1_b010',
             'order': 10,
-            'text': '''
-              60.9
-              39.1
-            ''',
+            'text': '60.9 39.1',
             'type': 'text',
           }),
           dict({
@@ -184,10 +178,7 @@
             ]),
             'id': 'p1_b012',
             'order': 12,
-            'text': '''
-              77.7
-              22.3
-            ''',
+            'text': '77.7 22.3',
             'type': 'text',
           }),
           dict({
@@ -199,10 +190,7 @@
             ]),
             'id': 'p1_b013',
             'order': 13,
-            'text': '''
-              64.2
-              35.8
-            ''',
+            'text': '64.2 35.8',
             'type': 'text',
           }),
           dict({
@@ -214,10 +202,7 @@
             ]),
             'id': 'p1_b014',
             'order': 14,
-            'text': '''
-              57.5
-              42.5
-            ''',
+            'text': '57.5 42.5',
             'type': 'text',
           }),
           dict({
@@ -241,10 +226,7 @@
             ]),
             'id': 'p1_b016',
             'order': 16,
-            'text': '''
-              69.5
-              30.5
-            ''',
+            'text': '69.5 30.5',
             'type': 'text',
           }),
           dict({
@@ -256,10 +238,7 @@
             ]),
             'id': 'p1_b017',
             'order': 17,
-            'text': '''
-              55.8
-              44.2
-            ''',
+            'text': '55.8 44.2',
             'type': 'text',
           }),
           dict({
@@ -271,10 +250,7 @@
             ]),
             'id': 'p1_b018',
             'order': 18,
-            'text': '''
-              69.5
-              30.5
-            ''',
+            'text': '69.5 30.5',
             'type': 'text',
           }),
           dict({
@@ -310,10 +286,7 @@
             ]),
             'id': 'p1_b021',
             'order': 21,
-            'text': '''
-              45.6
-              54.4
-            ''',
+            'text': '45.6 54.4',
             'type': 'text',
           }),
           dict({
@@ -325,10 +298,7 @@
             ]),
             'id': 'p1_b022',
             'order': 22,
-            'text': '''
-              55.3
-              44.7
-            ''',
+            'text': '55.3 44.7',
             'type': 'text',
           }),
           dict({
@@ -340,10 +310,7 @@
             ]),
             'id': 'p1_b023',
             'order': 23,
-            'text': '''
-              61.0
-              39.0
-            ''',
+            'text': '61.0 39.0',
             'type': 'text',
           }),
           dict({
@@ -370,10 +337,7 @@
             ]),
             'id': 'p1_b025',
             'order': 25,
-            'text': '''
-              44.5
-              55.5
-            ''',
+            'text': '44.5 55.5',
             'type': 'text',
           }),
           dict({
@@ -385,10 +349,7 @@
             ]),
             'id': 'p1_b026',
             'order': 26,
-            'text': '''
-              55.6
-              44.4
-            ''',
+            'text': '55.6 44.4',
             'type': 'text',
           }),
           dict({
@@ -400,10 +361,7 @@
             ]),
             'id': 'p1_b027',
             'order': 27,
-            'text': '''
-              59.1
-              40.9
-            ''',
+            'text': '59.1 40.9',
             'type': 'text',
           }),
           dict({
@@ -427,10 +385,7 @@
             ]),
             'id': 'p1_b029',
             'order': 29,
-            'text': '''
-              72.3
-              27.7
-            ''',
+            'text': '72.3 27.7',
             'type': 'text',
           }),
           dict({
@@ -442,10 +397,7 @@
             ]),
             'id': 'p1_b030',
             'order': 30,
-            'text': '''
-              54.8
-              45.2
-            ''',
+            'text': '54.8 45.2',
             'type': 'text',
           }),
           dict({
@@ -457,10 +409,7 @@
             ]),
             'id': 'p1_b031',
             'order': 31,
-            'text': '''
-              44.8
-              55.2
-            ''',
+            'text': '44.8 55.2',
             'type': 'text',
           }),
           dict({
@@ -484,10 +433,7 @@
             ]),
             'id': 'p1_b033',
             'order': 33,
-            'text': '''
-              53.0
-              47.0
-            ''',
+            'text': '53.0 47.0',
             'type': 'text',
           }),
           dict({
@@ -499,10 +445,7 @@
             ]),
             'id': 'p1_b034',
             'order': 34,
-            'text': '''
-              55.3
-              44.7
-            ''',
+            'text': '55.3 44.7',
             'type': 'text',
           }),
           dict({
@@ -652,10 +595,7 @@
             ]),
             'id': 'p2_b005',
             'order': 5,
-            'text': '''
-              2
-              Data
-            ''',
+            'text': '2 Data',
             'type': 'text',
           }),
           dict({
@@ -700,10 +640,7 @@
             ]),
             'id': 'p2_b008',
             'order': 8,
-            'text': '''
-              2.1
-              Data Filtering
-            ''',
+            'text': '2.1 Data Filtering',
             'type': 'text',
           }),
           dict({
@@ -731,10 +668,7 @@
             ]),
             'id': 'p2_b010',
             'order': 10,
-            'text': '''
-              2.1.1
-              Preprocessing
-            ''',
+            'text': '2.1.1 Preprocessing',
             'type': 'text',
           }),
           dict({
@@ -997,10 +931,7 @@
             ]),
             'id': 'p3_b016',
             'order': 16,
-            'text': '''
-              2.1.2
-              Score Filtering
-            ''',
+            'text': '2.1.2 Score Filtering',
             'type': 'text',
           }),
           dict({
@@ -1031,8 +962,7 @@
             'id': 'p3_b018',
             'order': 18,
             'text': '''
-              Aesthetic Score.
-              We assess the aesthetic quality of a sample using the CLIP+MLP aesthetic score
+              Aesthetic Score. We assess the aesthetic quality of a sample using the CLIP+MLP aesthetic score
               predictor [36]. For a video sample, we extract the first, middle, and last frame, compute their
               individual scores, and take the average as the final aesthetic score.
             ''',
@@ -1048,8 +978,7 @@
             'id': 'p3_b019',
             'order': 19,
             'text': '''
-              Motion Score.
-              The motion intensity of a video is measured using the VMAF motion score from
+              Motion Score. The motion intensity of a video is measured using the VMAF motion score from
               FFmpeg’s libavfilter library [12]. Videos with extremely low or excessively high motion scores are
               filtered out to maintain a balanced motion range.
             ''',
@@ -1065,8 +994,7 @@
             'id': 'p3_b020',
             'order': 20,
             'text': '''
-              Blur Detection.
-              To evaluate image clarity, we apply the Laplacian operator from OpenCV [3].
+              Blur Detection. To evaluate image clarity, we apply the Laplacian operator from OpenCV [3].
               A sample is considered blurry if the variance of the Laplacian image falls below a configurable
               threshold. For video samples, we extract five uniformly spaced frames and adopt a majority voting
               approach to determine blurriness.
@@ -1083,8 +1011,7 @@
             'id': 'p3_b021',
             'order': 21,
             'text': '''
-              OCR.
-              We detect text bounding boxes using PaddleOCR [2] and compute the total area of bounding
+              OCR. We detect text bounding boxes using PaddleOCR [2] and compute the total area of bounding
               boxes with a confidence score above 0.7. Images or videos containing excessive text are discarded to
               avoid unwanted overlays.
             ''',
@@ -1100,8 +1027,7 @@
             'id': 'p3_b022',
             'order': 22,
             'text': '''
-              Camera Jitter Detection.
-              We detect camera jitter using Shot Boundary Detection from the
+              Camera Jitter Detection. We detect camera jitter using Shot Boundary Detection from the
               PySceneDetect library [6]. A video is identified as having camera jitter if the average frame-to-frame
               change exceeds a predefined threshold.
             ''',
@@ -1143,10 +1069,7 @@
             ]),
             'id': 'p4_b001',
             'order': 1,
-            'text': '''
-              2.2
-              Data Annotation
-            ''',
+            'text': '2.2 Data Annotation',
             'type': 'text',
           }),
           dict({
@@ -1193,10 +1116,7 @@
             ]),
             'id': 'p4_b004',
             'order': 4,
-            'text': '''
-              2.3
-              Data Statistics
-            ''',
+            'text': '2.3 Data Statistics',
             'type': 'text',
           }),
           dict({
@@ -1500,11 +1420,7 @@
             'id': 'p5_b016',
             'order': 16,
             'text': '''
-              Input
-              Encoder
-              Latent
-              Decoder
-              Output
+              Input Encoder Latent Decoder Output
               Space
             ''',
             'type': 'text',
@@ -1569,10 +1485,7 @@
             ]),
             'id': 'p5_b021',
             'order': 21,
-            'text': '''
-              (a)
-              (b)
-            ''',
+            'text': '(a) (b)',
             'type': 'text',
           }),
           dict({
@@ -1619,10 +1532,7 @@
             ]),
             'id': 'p5_b024',
             'order': 24,
-            'text': '''
-              3
-              Model Architecture
-            ''',
+            'text': '3 Model Architecture',
             'type': 'text',
           }),
           dict({
@@ -1651,10 +1561,7 @@
             ]),
             'id': 'p5_b026',
             'order': 26,
-            'text': '''
-              3.1
-              3D Autoencoder
-            ''',
+            'text': '3.1 3D Autoencoder',
             'type': 'text',
           }),
           dict({
@@ -1717,16 +1624,7 @@
             ]),
             'id': 'p5_b030',
             'order': 30,
-            'text': '''
-              LPIPS↓
-              PSNR↑
-              SSIM↑
-              Model
-              Down. (TxHxW)
-              Info. Down.
-              Channel
-              Causal
-            ''',
+            'text': 'LPIPS↓ PSNR↑ SSIM↑ Model Down. (TxHxW) Info. Down. Channel Causal',
             'type': 'text',
           }),
           dict({
@@ -1741,28 +1639,13 @@
             'text': '''
               ✓
               4 × 8 × 8
-              Open Sora 1.2 [44]
-              192
-              4
-              0.161
-              27.504
-              0.756
+              Open Sora 1.2 [44] 192 4 0.161 27.504 0.756
               ✓
               8 × 16 × 16
-              StepVideo VAE [27]
-              96
-              64
-              0.082
-              28.719
-              0.818
+              StepVideo VAE [27] 96 64 0.082 28.719 0.818
               ✓
               4 × 8 × 8
-              0.046
-              HunyuanVideo VAE [19]
-              48
-              16
-              30.240
-              0.856
+              0.046 HunyuanVideo VAE [19] 48 16 30.240 0.856
             ''',
             'type': 'text',
           }),
@@ -1776,22 +1659,10 @@
             'id': 'p5_b032',
             'order': 32,
             'text': '''
-              4 × 32 × 32
-              ×
-              Video DC-AE
-              96
-              128
-              0.051
-              30.538
-              0.863
-              4 × 32 × 32
-              ×
-              30.777
-              0.872
-              Video DC-AE
-              48
-              256
-              0.049
+              4 × 32 × 32 ×
+              Video DC-AE 96 128 0.051 30.538 0.863
+              4 × 32 × 32 ×
+              30.777 0.872 Video DC-AE 48 256 0.049
             ''',
             'type': 'text',
           }),
@@ -1980,10 +1851,7 @@
             ]),
             'id': 'p6_b009',
             'order': 9,
-            'text': '''
-              3.2
-              DiT Architecture
-            ''',
+            'text': '3.2 DiT Architecture',
             'type': 'text',
           }),
           dict({
@@ -2129,14 +1997,7 @@
             ]),
             'id': 'p7_b003',
             'order': 3,
-            'text': '''
-              Double-Stream Layers
-              Single-Stream Layers
-              Model Dimension
-              FFN Dimension
-              Attention Heads
-              Patch Size
-            ''',
+            'text': 'Double-Stream Layers Single-Stream Layers Model Dimension FFN Dimension Attention Heads Patch Size',
             'type': 'text',
           }),
           dict({
@@ -2148,14 +2009,7 @@
             ]),
             'id': 'p7_b004',
             'order': 4,
-            'text': '''
-              19
-              38
-              3072
-              12288
-              24
-              2
-            ''',
+            'text': '19 38 3072 12288 24 2',
             'type': 'text',
           }),
           dict({
@@ -2179,10 +2033,7 @@
             ]),
             'id': 'p7_b006',
             'order': 6,
-            'text': '''
-              4
-              Model Training
-            ''',
+            'text': '4 Model Training',
             'type': 'text',
           }),
           dict({
@@ -2213,15 +2064,7 @@
             ]),
             'id': 'p7_b008',
             'order': 8,
-            'text': '''
-              Training Stage
-              Dataset
-              CP
-              #iters
-              #GPUs
-              #GPU day
-              USD
-            ''',
+            'text': 'Training Stage Dataset CP #iters #GPUs #GPU day USD',
             'type': 'text',
           }),
           dict({
@@ -2234,27 +2077,9 @@
             'id': 'p7_b009',
             'order': 9,
             'text': '''
-              256px T2V
-              70M
-              1
-              85k
-              224
-              2240
-              $107.5k
-              256px T/I2V
-              10M
-              1
-              13k
-              192
-              384
-              $18.4k
-              768px T/I2V
-              5M
-              4
-              13k
-              192
-              1536
-              $73.7k
+              256px T2V 70M 1 85k 224 2240 $107.5k
+              256px T/I2V 10M 1 13k 192 384 $18.4k
+              768px T/I2V 5M 4 13k 192 1536 $73.7k
             ''',
             'type': 'text',
           }),
@@ -2267,11 +2092,7 @@
             ]),
             'id': 'p7_b010',
             'order': 10,
-            'text': '''
-              Total
-              4160
-              $199.6k
-            ''',
+            'text': 'Total 4160 $199.6k',
             'type': 'text',
           }),
           dict({
@@ -2299,10 +2120,7 @@
             ]),
             'id': 'p7_b012',
             'order': 12,
-            'text': '''
-              4.1
-              Efficient Training Strategy
-            ''',
+            'text': '4.1 Efficient Training Strategy',
             'type': 'text',
           }),
           dict({
@@ -2330,8 +2148,7 @@
             'id': 'p7_b014',
             'order': 14,
             'text': '''
-              Leveraging Open-Source Image Models
-              Prior research [16, 29, 44] has demonstrated that pre-
+              Leveraging Open-Source Image Models Prior research [16, 29, 44] has demonstrated that pre-
               training on image datasets can significantly accelerate video model training. To avoid the high cost
               of training an image model from scratch, we leverage an open-source solution. Specifically, we
               adopt Flux [20], a state-of-the-art text-to-image model with 11 billion parameters, which provides
@@ -2351,8 +2168,7 @@
             'id': 'p7_b015',
             'order': 15,
             'text': '''
-              High-Quality Training Data
-              Inspired by the efficient image training strategies from PixArt [8], we
+              High-Quality Training Data Inspired by the efficient image training strategies from PixArt [8], we
               hypothesize that high-quality video data can substantially enhance training efficiency. Consequently,
               we curate a high-quality subset from a large-scale dataset for low-resolution training. For high-
               resolution fine-tuning, we impose stricter selection criteria to ensure superior video quality.
@@ -2369,8 +2185,7 @@
             'id': 'p7_b016',
             'order': 16,
             'text': '''
-              Learning Motion in Low-Resolution
-              Training a commercial video generation model is compu-
+              Learning Motion in Low-Resolution Training a commercial video generation model is compu-
               tationally expensive, particularly at high resolutions. To mitigate this cost, we first train on 256px
               resolution videos, allowing the model to learn diverse motion patterns efficiently. However, we
               observe that while the model captures motion effectively, low-resolution outputs tend to be blurry.
@@ -2689,8 +2504,7 @@
             'id': 'p8_b023',
             'order': 23,
             'text': '''
-              Image-to-Video Models Facilitate Resolution Adaptation
-              We find that adapting a model from
+              Image-to-Video Models Facilitate Resolution Adaptation We find that adapting a model from
               256px to 768px resolution is significantly more efficient using an image-to-video approach compared
               to text-to-video. We hypothesize that conditioning the model on a static image allows it to focus
               more on motion generation, a capability that is well-learned during low-resolution training.
@@ -2742,10 +2556,7 @@
             ]),
             'id': 'p8_b026',
             'order': 26,
-            'text': '''
-              4.2
-              Training Setting
-            ''',
+            'text': '4.2 Training Setting',
             'type': 'text',
           }),
           dict({
@@ -2776,8 +2587,7 @@
             'id': 'p8_b028',
             'order': 28,
             'text': '''
-              Training Objective
-              Our flow matching approach is similar to that used in Stable Diffusion 3 [11].
+              Training Objective Our flow matching approach is similar to that used in Stable Diffusion 3 [11].
               We denote the video latent as X0, and Gaussian noise X1 ∼N(0, 1). The model fθ takes as input an
               interpolated latent Xt = (1 −t)X0 + tX1 and is trained to predict the velocity component X0 −X1.
               The corresponding loss function is formulated as:
@@ -2942,10 +2752,7 @@
             ]),
             'id': 'p1_b009',
             'order': 9,
-            'text': '''
-              0:00
-              0:00
-            ''',
+            'text': '0:00 0:00',
             'type': 'text',
           }),
           dict({
@@ -2957,10 +2764,7 @@
             ]),
             'id': 'p1_b010',
             'order': 10,
-            'text': '''
-              / 0:00
-              / 0:00
-            ''',
+            'text': '/ 0:00 / 0:00',
             'type': 'text',
           }),
           dict({
@@ -6073,8 +5877,7 @@
             'order': 1,
             'text': '''
               주민등록인구
-              지도
-              이름
+              지도 이름
             ''',
             'type': 'text',
           }),
@@ -6470,10 +6273,7 @@
             ]),
             'id': 'p18_b031',
             'order': 31,
-            'text': '''
-              13,675,873
-              경기도
-            ''',
+            'text': '13,675,873 경기도',
             'type': 'text',
           }),
           dict({
@@ -6485,10 +6285,7 @@
             ]),
             'id': 'p18_b032',
             'order': 32,
-            'text': '''
-              대전
-              경북
-            ''',
+            'text': '대전 경북',
             'type': 'text',
           }),
           dict({
@@ -6528,10 +6325,7 @@
             ]),
             'id': 'p18_b035',
             'order': 35,
-            'text': '''
-              전북
-              대구
-            ''',
+            'text': '전북 대구',
             'type': 'text',
           }),
           dict({
@@ -6573,8 +6367,7 @@
             'order': 38,
             'text': '''
               경남
-              광주
-              부산
+              광주 부산
             ''',
             'type': 'text',
           }),
@@ -6882,10 +6675,7 @@
             ]),
             'id': 'p19_b010',
             'order': 10,
-            'text': '''
-              황해도
-              —
-            ''',
+            'text': '황해도 —',
             'type': 'text',
           }),
           dict({
@@ -9622,10 +9412,7 @@
             ]),
             'id': 'p32_b011',
             'order': 11,
-            'text': '''
-              56.1%
-              무종교
-            ''',
+            'text': '56.1% 무종교',
             'type': 'text',
           }),
           dict({
@@ -9637,10 +9424,7 @@
             ]),
             'id': 'p32_b012',
             'order': 12,
-            'text': '''
-              19.7%
-              개신교
-            ''',
+            'text': '19.7% 개신교',
             'type': 'text',
           }),
           dict({
@@ -9652,10 +9436,7 @@
             ]),
             'id': 'p32_b013',
             'order': 13,
-            'text': '''
-              15.5%
-              불교
-            ''',
+            'text': '15.5% 불교',
             'type': 'text',
           }),
           dict({
@@ -9667,10 +9448,7 @@
             ]),
             'id': 'p32_b014',
             'order': 14,
-            'text': '''
-              7.9%
-              천주교
-            ''',
+            'text': '7.9% 천주교',
             'type': 'text',
           }),
           dict({
@@ -9682,10 +9460,7 @@
             ]),
             'id': 'p32_b015',
             'order': 15,
-            'text': '''
-              0.8%
-              기타
-            ''',
+            'text': '0.8% 기타',
             'type': 'text',
           }),
           dict({
@@ -11269,9 +11044,7 @@
             'order': 1,
             'text': '''
               조사 시
-              평가기관
-              항목
-              순위
+              평가기관 항목 순위
             ''',
             'type': 'text',
           }),
@@ -11298,8 +11071,7 @@
             'order': 3,
             'text': '''
               191개국 중 12
-              2023년
-              위[137]
+              2023년 위[137]
             ''',
             'type': 'text',
           }),
@@ -11346,8 +11118,7 @@
             'order': 6,
             'text': '''
               주요국가 20개 중 3
-              2023년
-              위[138]
+              2023년 위[138]
             ''',
             'type': 'text',
           }),
@@ -11362,8 +11133,7 @@
             'order': 7,
             'text': '''
               184개국 중 28
-              2021년
-              위[139]
+              2021년 위[139]
             ''',
             'type': 'text',
           }),
@@ -11392,12 +11162,7 @@
             ]),
             'id': 'p40_b009',
             'order': 9,
-            'text': '''
-              64개국 중 23위[140]
-              스위스 국제경영개발원 (IMD)
-              국가 경쟁력
-              2021년
-            ''',
+            'text': '64개국 중 23위[140] 스위스 국제경영개발원 (IMD) 국가 경쟁력 2021년',
             'type': 'text',
           }),
           dict({
@@ -11409,12 +11174,7 @@
             ]),
             'id': 'p40_b010',
             'order': 10,
-            'text': '''
-              30개국 중 1위[141]
-              결핵 발생률
-              OECD
-              2021년
-            ''',
+            'text': '30개국 중 1위[141] 결핵 발생률 OECD 2021년',
             'type': 'text',
           }),
           dict({
@@ -11426,12 +11186,7 @@
             ]),
             'id': 'p40_b011',
             'order': 11,
-            'text': '''
-              30개국 중 3위[142]
-              결핵 사망률
-              OECD
-              2021년
-            ''',
+            'text': '30개국 중 3위[142] 결핵 사망률 OECD 2021년',
             'type': 'text',
           }),
           dict({
@@ -11443,12 +11198,7 @@
             ]),
             'id': 'p40_b012',
             'order': 12,
-            'text': '''
-              국경 없는 기자회 (RSF)
-              인터넷 통제
-              180개국 중 41위
-              2019년
-            ''',
+            'text': '국경 없는 기자회 (RSF) 인터넷 통제 180개국 중 41위 2019년',
             'type': 'text',
           }),
           dict({
@@ -11460,12 +11210,7 @@
             ]),
             'id': 'p40_b013',
             'order': 13,
-            'text': '''
-              30개국 중 1위[143]
-              통계청 (Statistics Korea)
-              선박 건조량
-              2013년
-            ''',
+            'text': '30개국 중 1위[143] 통계청 (Statistics Korea) 선박 건조량 2013년',
             'type': 'text',
           }),
           dict({
@@ -11477,12 +11222,7 @@
             ]),
             'id': 'p40_b014',
             'order': 14,
-            'text': '''
-              61개국 중 1위[144]
-              세계은행 (IMF)
-              관세행정
-              2012년
-            ''',
+            'text': '61개국 중 1위[144] 세계은행 (IMF) 관세행정 2012년',
             'type': 'text',
           }),
           dict({
@@ -11496,9 +11236,7 @@
             'order': 15,
             'text': '''
               Clarkson PLC. (https://web.archive.org/web/2008082007
-              15개국 중 1위[145]
-              조선산업 경쟁력
-              2012년
+              15개국 중 1위[145] 조선산업 경쟁력 2012년
               2125/http://www.clarksons.co.uk/)
             ''',
             'type': 'text',
@@ -11514,9 +11252,7 @@
             'order': 16,
             'text': '''
               인터넷 평균 속
-              226개국 중 1위[146]
-              아카마이 테크놀로지스 (AKAM)
-              2012년
+              226개국 중 1위[146] 아카마이 테크놀로지스 (AKAM) 2012년
               도
             ''',
             'type': 'text',
@@ -11532,8 +11268,7 @@
             'order': 17,
             'text': '''
               초고속 인터넷
-              66개국 중 1위[147]
-              2012년
+              66개국 중 1위[147] 2012년
               품질
             ''',
             'type': 'text',
@@ -11562,12 +11297,7 @@
             ]),
             'id': 'p40_b019',
             'order': 19,
-            'text': '''
-              138개국 중 1위[148]
-              세계 경제 포럼 (WEF)
-              정보통신 활용도
-              2012년
-            ''',
+            'text': '138개국 중 1위[148] 세계 경제 포럼 (WEF) 정보통신 활용도 2012년',
             'type': 'text',
           }),
           dict({
@@ -11579,12 +11309,7 @@
             ]),
             'id': 'p40_b020',
             'order': 20,
-            'text': '''
-              31개국 중 2위[149]
-              경제협력개발기구 (OECD)
-              교통사고 사망률
-              2014년
-            ''',
+            'text': '31개국 중 2위[149] 경제협력개발기구 (OECD) 교통사고 사망률 2014년',
             'type': 'text',
           }),
           dict({
@@ -11596,12 +11321,7 @@
             ]),
             'id': 'p40_b021',
             'order': 21,
-            'text': '''
-              청소년 자살률
-              OECD 회원국 중 1위
-              OECD
-              2013년
-            ''',
+            'text': '청소년 자살률 OECD 회원국 중 1위 OECD 2013년',
             'type': 'text',
           }),
           dict({
@@ -11615,9 +11335,7 @@
             'order': 22,
             'text': '''
               OECD 회원국 중 34
-              청소년 행복지수
-              OECD
-              2013년
+              청소년 행복지수 OECD 2013년
               위
             ''',
             'type': 'text',
@@ -11649,8 +11367,7 @@
             'order': 24,
             'text': '''
               부분적 자유(Partly
-              2012년
-              Free)[150]
+              2012년 Free)[150]
             ''',
             'type': 'text',
           }),
@@ -11665,9 +11382,7 @@
             'order': 25,
             'text': '''
               10만 명당 자살
-              WHO (World Health Organization)
-              전 세계 1위
-              2011년
+              WHO (World Health Organization) 전 세계 1위 2011년
               률
             ''',
             'type': 'text',
@@ -11681,12 +11396,7 @@
             ]),
             'id': 'p40_b026',
             'order': 26,
-            'text': '''
-              1위[151]
-              OECD
-              제왕절개분만률
-              2005년
-            ''',
+            'text': '1위[151] OECD 제왕절개분만률 2005년',
             'type': 'text',
           }),
           dict({
@@ -16241,10 +15951,7 @@
             ]),
             'id': 'p1_b007',
             'order': 7,
-            'text': '''
-              1
-              Introduction
-            ''',
+            'text': '1 Introduction',
             'type': 'text',
           }),
           dict({
@@ -16284,10 +15991,7 @@
             ]),
             'id': 'p1_b010',
             'order': 10,
-            'text': '''
-              60.9
-              39.1
-            ''',
+            'text': '60.9 39.1',
             'type': 'text',
           }),
           dict({
@@ -16314,10 +16018,7 @@
             ]),
             'id': 'p1_b012',
             'order': 12,
-            'text': '''
-              77.7
-              22.3
-            ''',
+            'text': '77.7 22.3',
             'type': 'text',
           }),
           dict({
@@ -16329,10 +16030,7 @@
             ]),
             'id': 'p1_b013',
             'order': 13,
-            'text': '''
-              64.2
-              35.8
-            ''',
+            'text': '64.2 35.8',
             'type': 'text',
           }),
           dict({
@@ -16344,10 +16042,7 @@
             ]),
             'id': 'p1_b014',
             'order': 14,
-            'text': '''
-              57.5
-              42.5
-            ''',
+            'text': '57.5 42.5',
             'type': 'text',
           }),
           dict({
@@ -16371,10 +16066,7 @@
             ]),
             'id': 'p1_b016',
             'order': 16,
-            'text': '''
-              69.5
-              30.5
-            ''',
+            'text': '69.5 30.5',
             'type': 'text',
           }),
           dict({
@@ -16386,10 +16078,7 @@
             ]),
             'id': 'p1_b017',
             'order': 17,
-            'text': '''
-              55.8
-              44.2
-            ''',
+            'text': '55.8 44.2',
             'type': 'text',
           }),
           dict({
@@ -16401,10 +16090,7 @@
             ]),
             'id': 'p1_b018',
             'order': 18,
-            'text': '''
-              69.5
-              30.5
-            ''',
+            'text': '69.5 30.5',
             'type': 'text',
           }),
           dict({
@@ -16440,10 +16126,7 @@
             ]),
             'id': 'p1_b021',
             'order': 21,
-            'text': '''
-              45.6
-              54.4
-            ''',
+            'text': '45.6 54.4',
             'type': 'text',
           }),
           dict({
@@ -16455,10 +16138,7 @@
             ]),
             'id': 'p1_b022',
             'order': 22,
-            'text': '''
-              55.3
-              44.7
-            ''',
+            'text': '55.3 44.7',
             'type': 'text',
           }),
           dict({
@@ -16470,10 +16150,7 @@
             ]),
             'id': 'p1_b023',
             'order': 23,
-            'text': '''
-              61.0
-              39.0
-            ''',
+            'text': '61.0 39.0',
             'type': 'text',
           }),
           dict({
@@ -16500,10 +16177,7 @@
             ]),
             'id': 'p1_b025',
             'order': 25,
-            'text': '''
-              44.5
-              55.5
-            ''',
+            'text': '44.5 55.5',
             'type': 'text',
           }),
           dict({
@@ -16515,10 +16189,7 @@
             ]),
             'id': 'p1_b026',
             'order': 26,
-            'text': '''
-              55.6
-              44.4
-            ''',
+            'text': '55.6 44.4',
             'type': 'text',
           }),
           dict({
@@ -16530,10 +16201,7 @@
             ]),
             'id': 'p1_b027',
             'order': 27,
-            'text': '''
-              59.1
-              40.9
-            ''',
+            'text': '59.1 40.9',
             'type': 'text',
           }),
           dict({
@@ -16557,10 +16225,7 @@
             ]),
             'id': 'p1_b029',
             'order': 29,
-            'text': '''
-              72.3
-              27.7
-            ''',
+            'text': '72.3 27.7',
             'type': 'text',
           }),
           dict({
@@ -16572,10 +16237,7 @@
             ]),
             'id': 'p1_b030',
             'order': 30,
-            'text': '''
-              54.8
-              45.2
-            ''',
+            'text': '54.8 45.2',
             'type': 'text',
           }),
           dict({
@@ -16587,10 +16249,7 @@
             ]),
             'id': 'p1_b031',
             'order': 31,
-            'text': '''
-              44.8
-              55.2
-            ''',
+            'text': '44.8 55.2',
             'type': 'text',
           }),
           dict({
@@ -16614,10 +16273,7 @@
             ]),
             'id': 'p1_b033',
             'order': 33,
-            'text': '''
-              53.0
-              47.0
-            ''',
+            'text': '53.0 47.0',
             'type': 'text',
           }),
           dict({
@@ -16629,10 +16285,7 @@
             ]),
             'id': 'p1_b034',
             'order': 34,
-            'text': '''
-              55.3
-              44.7
-            ''',
+            'text': '55.3 44.7',
             'type': 'text',
           }),
           dict({
@@ -16782,10 +16435,7 @@
             ]),
             'id': 'p2_b005',
             'order': 5,
-            'text': '''
-              2
-              Data
-            ''',
+            'text': '2 Data',
             'type': 'text',
           }),
           dict({
@@ -16830,10 +16480,7 @@
             ]),
             'id': 'p2_b008',
             'order': 8,
-            'text': '''
-              2.1
-              Data Filtering
-            ''',
+            'text': '2.1 Data Filtering',
             'type': 'text',
           }),
           dict({
@@ -16861,10 +16508,7 @@
             ]),
             'id': 'p2_b010',
             'order': 10,
-            'text': '''
-              2.1.1
-              Preprocessing
-            ''',
+            'text': '2.1.1 Preprocessing',
             'type': 'text',
           }),
           dict({
@@ -17127,10 +16771,7 @@
             ]),
             'id': 'p3_b016',
             'order': 16,
-            'text': '''
-              2.1.2
-              Score Filtering
-            ''',
+            'text': '2.1.2 Score Filtering',
             'type': 'text',
           }),
           dict({
@@ -17161,8 +16802,7 @@
             'id': 'p3_b018',
             'order': 18,
             'text': '''
-              Aesthetic Score.
-              We assess the aesthetic quality of a sample using the CLIP+MLP aesthetic score
+              Aesthetic Score. We assess the aesthetic quality of a sample using the CLIP+MLP aesthetic score
               predictor [36]. For a video sample, we extract the first, middle, and last frame, compute their
               individual scores, and take the average as the final aesthetic score.
             ''',
@@ -17178,8 +16818,7 @@
             'id': 'p3_b019',
             'order': 19,
             'text': '''
-              Motion Score.
-              The motion intensity of a video is measured using the VMAF motion score from
+              Motion Score. The motion intensity of a video is measured using the VMAF motion score from
               FFmpeg’s libavfilter library [12]. Videos with extremely low or excessively high motion scores are
               filtered out to maintain a balanced motion range.
             ''',
@@ -17195,8 +16834,7 @@
             'id': 'p3_b020',
             'order': 20,
             'text': '''
-              Blur Detection.
-              To evaluate image clarity, we apply the Laplacian operator from OpenCV [3].
+              Blur Detection. To evaluate image clarity, we apply the Laplacian operator from OpenCV [3].
               A sample is considered blurry if the variance of the Laplacian image falls below a configurable
               threshold. For video samples, we extract five uniformly spaced frames and adopt a majority voting
               approach to determine blurriness.
@@ -17213,8 +16851,7 @@
             'id': 'p3_b021',
             'order': 21,
             'text': '''
-              OCR.
-              We detect text bounding boxes using PaddleOCR [2] and compute the total area of bounding
+              OCR. We detect text bounding boxes using PaddleOCR [2] and compute the total area of bounding
               boxes with a confidence score above 0.7. Images or videos containing excessive text are discarded to
               avoid unwanted overlays.
             ''',
@@ -17230,8 +16867,7 @@
             'id': 'p3_b022',
             'order': 22,
             'text': '''
-              Camera Jitter Detection.
-              We detect camera jitter using Shot Boundary Detection from the
+              Camera Jitter Detection. We detect camera jitter using Shot Boundary Detection from the
               PySceneDetect library [6]. A video is identified as having camera jitter if the average frame-to-frame
               change exceeds a predefined threshold.
             ''',
@@ -17369,10 +17005,7 @@
             ]),
             'id': 'p4_b009',
             'order': 9,
-            'text': '''
-              0:00
-              0:00
-            ''',
+            'text': '0:00 0:00',
             'type': 'text',
           }),
           dict({
@@ -17384,10 +17017,7 @@
             ]),
             'id': 'p4_b010',
             'order': 10,
-            'text': '''
-              / 0:00
-              / 0:00
-            ''',
+            'text': '/ 0:00 / 0:00',
             'type': 'text',
           }),
           dict({
