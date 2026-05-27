@@ -119,6 +119,24 @@ async def backfill_doc(
     db_pages = await _load_doc_pages(factory, doc_id)
     new_pages = _extract_grouped_pages(pdf_path)
 
+    # Phase 6h-1 R1 fix (Codex §4 #1): per-doc atomic means BOTH directions.
+    # Reject when the PDF is missing pages that the DB has — a truncated or
+    # mismatched PDF cannot validate, so no per-page updates are committed
+    # for the pages it does cover.
+    new_page_nums = {pn for pn, _ in new_pages}
+    db_page_nums = set(db_pages.keys())
+    db_only = sorted(db_page_nums - new_page_nums)
+    if db_only:
+        return BackfillResult(
+            status="abort",
+            reason=(
+                f"PDF is missing {len(db_only)} page(s) that the DB has: "
+                f"{db_only[:10]}{'...' if len(db_only) > 10 else ''}"
+            ),
+            proposed=(),
+            pages_checked=0,
+        )
+
     proposed: list[ProposedUpdate] = []
     for page_num, new_blocks in new_pages:
         old_blocks = db_pages.get(page_num)

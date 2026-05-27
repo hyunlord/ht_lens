@@ -136,3 +136,204 @@ async def test_backfill_aborts_doc_on_block_count_mismatch(
     assert after == before_texts, (
         f"DB must be untouched after abort; before={before_texts} after={after}"
     )
+
+
+@pytest.mark.asyncio
+async def test_backfill_aborts_when_pdf_missing_pages_db_has(
+    factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """Codex R1 §4 #1: a PDF shorter than the DB must abort, not partial-commit.
+
+    DB has pages 1-3 worth of blocks; PDF has only page 1. The R1 fix in
+    ``backfill_doc`` rejects when the PDF is missing pages that the DB has.
+    """
+    from scripts.backfill_block_text import backfill_doc
+
+    # PDF: 1 page
+    pdf = tmp_path / "single_page.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((80, 100), "Hello world.", fontsize=12, fontname="helv")
+    doc.save(str(pdf))
+    doc.close()
+
+    # DB: 3 pages, 1 block each (matching PDF block count per page).
+    doc_id = await _seed_doc_with_n_blocks_per_page(factory, blocks_per_page=[1, 1, 1])
+
+    async with factory() as session:
+        before = [
+            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+        ]
+
+    dry = await backfill_doc(factory, doc_id=doc_id, pdf_path=pdf, dry_run=True)
+    assert dry.status == "abort", dry
+    assert "missing" in (dry.reason or "").lower(), dry
+
+    applied = await backfill_doc(factory, doc_id=doc_id, pdf_path=pdf, dry_run=False)
+    assert applied.status == "abort", applied
+
+    async with factory() as session:
+        after = [
+            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+        ]
+    assert after == before, "no DB row should change after a missing-page abort"
+
+
+@pytest.mark.asyncio
+async def test_backfill_aborts_on_bbox_drift(
+    factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """Codex R1 §4 #3: bbox center drift > 20pt aborts without writes.
+
+    Same page + block counts, but DB block bbox is placed far from the
+    PDF rendering position. ``backfill_doc`` rejects per the proximity
+    check.
+    """
+    from scripts.backfill_block_text import backfill_doc
+
+    pdf = tmp_path / "drift.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_text((80, 100), "Hello world.", fontsize=12, fontname="helv")
+    doc.save(str(pdf))
+    doc.close()
+
+    # Manually seed: 1 page, 1 block at intentionally wrong bbox (center far from PDF).
+    async with factory() as session:
+        d = Document(
+            filename="drift.pdf",
+            src_lang="en",
+            tgt_lang="ko",
+            status="ready_for_translation",
+            created_at=datetime.now(UTC),
+            src_pdf_sha256="b" * 64,
+        )
+        session.add(d)
+        await session.flush()
+        page_row = Page(
+            doc_id=d.id,
+            page_num=1,
+            width=612.0,
+            height=792.0,
+            bg_image_path="/tmp/x.png",
+            rotation=0,
+            render_dpi=200,
+            pixel_width=1700,
+            pixel_height=2200,
+        )
+        session.add(page_row)
+        await session.flush()
+        # Block placed at bottom-right of page (PDF text is at top-left).
+        session.add(
+            Block(
+                page_id=page_row.id,
+                block_local_id="p1_b000",
+                type="text",
+                bbox_json=json.dumps([500.0, 700.0, 600.0, 720.0]),
+                order_idx=0,
+                original_text="Hello world.",
+            )
+        )
+        await session.commit()
+        doc_id = int(d.id)
+
+    async with factory() as session:
+        before = [
+            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+        ]
+
+    result = await backfill_doc(factory, doc_id=doc_id, pdf_path=pdf, dry_run=False)
+    assert result.status == "abort", result
+    assert "drift" in (result.reason or "").lower(), result
+
+    async with factory() as session:
+        after = [
+            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+        ]
+    assert after == before
+
+
+@pytest.mark.asyncio
+async def test_backfill_apply_succeeds_when_pdf_matches_db(
+    factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> None:
+    """Codex R1 §2: prove the successful apply path. PDF + DB align on
+    block counts and bbox positions; backfill applies and original_text
+    + bbox_json are updated in place (block_id preserved)."""
+    from scripts.backfill_block_text import backfill_doc
+
+    pdf = tmp_path / "match.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    # Two same-y fragments — this is the Pattern A signature, so after fix
+    # the joined text should be space-separated.
+    page.insert_text((80, 100), "22.4.3", fontsize=12, fontname="helv")
+    page.insert_text((150, 100), "Other applications", fontsize=12, fontname="helv")
+    doc.save(str(pdf))
+    doc.close()
+
+    # Sanity-check what the extractor will return so the DB seed can match
+    # its bboxes within the 20pt tolerance.
+    from ht_lens.extract._fitz import iter_pages, open_pdf
+    from ht_lens.extract.blocks import group_page
+    from ht_lens.extract.reading_order import order_blocks
+
+    with open_pdf(pdf) as fdoc:
+        raw = next(iter(iter_pages(fdoc)))
+    extracted = order_blocks(group_page(raw))
+    if not extracted:
+        pytest.skip("PyMuPDF could not extract text from the synthetic PDF")
+
+    async with factory() as session:
+        d = Document(
+            filename="match.pdf",
+            src_lang="en",
+            tgt_lang="ko",
+            status="ready_for_translation",
+            created_at=datetime.now(UTC),
+            src_pdf_sha256="c" * 64,
+        )
+        session.add(d)
+        await session.flush()
+        page_row = Page(
+            doc_id=d.id,
+            page_num=1,
+            width=612.0,
+            height=792.0,
+            bg_image_path="/tmp/x.png",
+            rotation=0,
+            render_dpi=200,
+            pixel_width=1700,
+            pixel_height=2200,
+        )
+        session.add(page_row)
+        await session.flush()
+        # Seed DB blocks with bboxes that match the extractor and an
+        # intentionally stale text format (\n) so the update is observable.
+        for i, eb in enumerate(extracted):
+            session.add(
+                Block(
+                    page_id=page_row.id,
+                    block_local_id=f"p1_b{i:03d}",
+                    type=eb.type,
+                    bbox_json=json.dumps(list(eb.bbox)),
+                    order_idx=i,
+                    original_text="STALE\nTEXT",
+                )
+            )
+        await session.commit()
+        doc_id = int(d.id)
+        seeded_block_ids = [b.id for b in (await session.execute(select(Block))).scalars().all()]
+
+    result = await backfill_doc(factory, doc_id=doc_id, pdf_path=pdf, dry_run=False)
+    assert result.status == "ok", result
+    assert len(result.proposed) >= 1
+
+    async with factory() as session:
+        rows = (await session.execute(select(Block))).scalars().all()
+        new_ids = [b.id for b in rows]
+        # block_id preserved (Phase 6h-1 contract: translations / embeddings
+        # remain attached to the same row).
+        assert sorted(new_ids) == sorted(seeded_block_ids)
+        # Stale STALE\nTEXT is replaced with extractor output.
+        assert all(b.original_text != "STALE\nTEXT" for b in rows)
