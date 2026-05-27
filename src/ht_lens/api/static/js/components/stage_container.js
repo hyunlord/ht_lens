@@ -36,7 +36,11 @@ export function buildPlaceholderRows(stageEl, pageSummaries, zoom, viewMode) {
  */
 function estimateRowHeight(summary, zoom, _viewMode) {
   const px = summary?.render?.pixel_h || 1000;
-  return Math.round(px * zoom + 24); // +24 for row gap/padding
+  // Phase 6g hot-fix: matches reduced ``.page-row`` margin-bottom (8px) +
+  // padding-bottom (8px) + border (1px) = 17px below each page image. Prior
+  // value (+24) plus a 24px margin made the inter-page gap feel large on
+  // long natural-scroll docs (per user feedback on Phase 6b/6c).
+  return Math.round(px * zoom + 17);
 }
 
 /** A small map of page_num -> AbortController so an in-flight fetch can be

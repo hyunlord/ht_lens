@@ -135,8 +135,20 @@
   align-items: flex-start;
   justify-content: center;
   gap: 16px;
-  margin-bottom: 24px;
+  /* Phase 6g hot-fix: 48px black gap (24 margin + 24 placeholder excess) was
+   * too visually heavy on long docs. Tighten to ~16-17px (8 margin + 1 border
+   * + 8 placeholder excess) and add a thin border so the page boundary
+   * remains visible against the dark --bg. */
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
   min-height: 200px; /* JS overwrites with the real placeholder height */
+}
+
+/* Drop the divider after the last page so the trailing scroll padding
+ * doesn't show a stray line. */
+.page-row:last-child {
+  border-bottom: none;
 }
 
 .pane {
