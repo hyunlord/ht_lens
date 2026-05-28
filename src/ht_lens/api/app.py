@@ -16,6 +16,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Receive, Scope, Send
 
 from ht_lens.api.deps import get_chat_concurrency
 from ht_lens.api.routers import (
@@ -45,6 +46,32 @@ _DEFAULT_UPLOADS_DIR = Path("data/uploads")
 _STATIC_DIR = Path(__file__).parent / "static"
 
 _log = logging.getLogger("ht_lens.api")
+
+
+class _RevalidatingStatic(StaticFiles):
+    """StaticFiles subclass that emits ``Cache-Control: no-cache`` so
+    browsers must revalidate every JS/CSS module via ETag. Without this
+    header, browser heuristic caching (RFC 7234) lets stale modules mix
+    with freshly-fetched ones after a deploy, breaking module-graph
+    consistency (Phase 6i regression: viewer crashed with a phantom
+    "applyMath not exported" SyntaxError because the browser combined
+    the new block.js with a cached pre-Phase-6i render_markdown.js).
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        from collections.abc import MutableMapping
+        from typing import Any
+
+        async def _send(msg: MutableMapping[str, Any]) -> None:
+            if msg.get("type") == "http.response.start":
+                headers = [
+                    (k, v) for (k, v) in (msg.get("headers") or []) if k.lower() != b"cache-control"
+                ]
+                headers.append((b"cache-control", b"no-cache"))
+                msg = {**msg, "headers": headers}
+            await send(msg)
+
+        await super().__call__(scope, receive, _send)
 
 
 def _db_path_from_env() -> Path:
@@ -180,7 +207,7 @@ def create_app() -> FastAPI:
     )
 
     _STATIC_DIR.mkdir(parents=True, exist_ok=True)
-    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    app.mount("/static", _RevalidatingStatic(directory=str(_STATIC_DIR)), name="static")
 
     app.include_router(documents.router)
     app.include_router(pages.router)

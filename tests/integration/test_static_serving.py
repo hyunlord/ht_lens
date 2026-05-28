@@ -63,6 +63,30 @@ async def test_static_unknown_path_returns_404(api_db_path: Path) -> None:
     assert resp.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_static_response_forces_revalidation(api_db_path: Path) -> None:
+    """Static assets must carry ``Cache-Control: no-cache`` so browsers
+    revalidate every JS/CSS module via ETag. Phase 6i regression: without
+    this header, heuristic caching let a stale pre-6i ``render_markdown.js``
+    mix with the new ``block.js`` and the import graph crashed at
+    runtime with a phantom "applyMath not exported" SyntaxError.
+    """
+    with make_test_client(api_db_path) as client:
+        for path in (
+            "/static/viewer.html",
+            "/static/js/viewer.js",
+            "/static/js/utils/render_markdown.js",
+            "/static/js/components/block.js",
+            "/static/vendor/katex/katex.mjs",
+            "/static/vendor/katex/katex.min.css",
+        ):
+            resp = client.get(path)
+            assert resp.status_code == 200, path
+            cc = resp.headers.get("cache-control", "")
+            assert "no-cache" in cc.lower(), f"{path} must have Cache-Control: no-cache, got {cc!r}"
+            assert resp.headers.get("etag"), f"{path} must still emit an ETag"
+
+
 # --- referenced-asset integrity: <script src> + <link href> must resolve ---
 
 _HREF_RE = re.compile(r'<(?:link|script)[^>]+(?:href|src)\s*=\s*"([^"]+)"', re.IGNORECASE)
