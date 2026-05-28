@@ -1,6 +1,6 @@
 "use strict";
 
-import { renderMarkdown } from "../utils/render_markdown.js";
+import { applyMath, renderMarkdown } from "../utils/render_markdown.js";
 import { getRelatedBlocksForMessage } from "../state.js";
 
 /** Render a single message into ``container``. ``role === 'assistant'`` goes
@@ -29,6 +29,10 @@ export function renderMessage(container, msg) {
   body.className = "message-body";
   if (msg.role === "assistant") {
     body.innerHTML = renderMarkdown(msg.content || "");
+    // Phase 6i: render LaTeX math only for assistant content. User /
+    // system messages stay plain text so that ``$5.00`` typed by the
+    // user is never misinterpreted as a math delimiter pair.
+    applyMath(body);
   } else {
     // user / system content: plain text so user input cannot inject HTML.
     body.textContent = msg.content || "";

@@ -89,3 +89,13 @@ button {
 .status-banner.empty {
   text-align: center;
 }
+
+/* Phase 6i: KaTeX overrides. Block overlay inherits the fit font-size
+ * so math glyphs scale with the surrounding translated text; display
+ * math in chat gets a small vertical margin and horizontal scroll for
+ * wide expressions; broken LaTeX (throwOnError:false) is shown in the
+ * warning color so users can spot it.
+ */
+.block .katex { font-size: inherit; line-height: inherit; }
+.message .katex-display { margin: 0.5em 0; overflow-x: auto; }
+.katex-error { color: var(--warn, #cc0000); }

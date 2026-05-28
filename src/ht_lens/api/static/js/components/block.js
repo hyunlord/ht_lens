@@ -1,6 +1,19 @@
 "use strict";
 
 import { fitFontSize } from "../utils/font_fit.js";
+import { applyMath } from "../utils/render_markdown.js";
+
+// Phase 6i: paired-delimiter gate. Only trigger KaTeX when the text
+// actually has a ``$...$`` or ``$$...$$`` pair so currency like ``$5.00``
+// or single unmatched dollars never invoke the renderer. The newline
+// guard on the inline pattern keeps multi-paragraph translations from
+// matching across line breaks.
+const INLINE_MATH_RE = /\$[^$\n]+\$/;
+const DISPLAY_MATH_RE = /\$\$[\s\S]+?\$\$/;
+
+function _hasPairedMath(text) {
+  return DISPLAY_MATH_RE.test(text) || INLINE_MATH_RE.test(text);
+}
 
 /** Render a single block as an absolute-positioned div inside ``overlay``.
  *  Returns the created element (or null when the bbox is invalid).
@@ -50,6 +63,14 @@ export function renderBlock(
       const size = fitFontSize(text, w, h, weight);
       el.style.fontSize = `${size}px`;
       el.textContent = text;
+      // Phase 6i: render LaTeX math in-place after text content is set.
+      // ``fitFontSize`` already sized the box using raw character widths;
+      // KaTeX inherits the chosen font-size via CSS (.block .katex
+      // { font-size: inherit }). Only call when paired delimiters are
+      // present so unrelated ``$`` (currency, OCR noise) is skipped.
+      if (overlayMode === "translation" && _hasPairedMath(text)) {
+        applyMath(el);
+      }
       // Phase 6h hot-fix: flag blocks whose bbox is too small to display
       // the wrapped translation. The viewer's overlay clips text via
       // ``overflow: hidden`` and covers the bbox region with the dark

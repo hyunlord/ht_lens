@@ -1298,3 +1298,35 @@ async def test_chat_panel_css_does_not_clobber_sidebar_closed(
         "— it overrides ``.viewer-shell--sidebar-closed`` by cascade order. "
         "Use doubled-class selectors instead."
     )
+
+
+# --- Phase 6i: KaTeX vendor + scope ---
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/vendor/katex/katex.mjs",
+        "/static/vendor/katex/katex.min.css",
+        "/static/vendor/katex/auto-render.mjs",
+        "/static/vendor/katex/LICENSE",
+        "/static/vendor/katex/SOURCE.md",
+        "/static/vendor/katex/fonts/KaTeX_Main-Regular.woff2",
+    ],
+)
+@pytest.mark.asyncio
+async def test_phase6i_katex_assets_served(api_db_path: Path, path: str) -> None:
+    with make_test_client(api_db_path) as client:
+        resp = client.get(path)
+    assert resp.status_code == 200, path
+
+
+@pytest.mark.asyncio
+async def test_phase6i_only_viewer_html_links_katex(api_db_path: Path, assets_root: Path) -> None:
+    """KaTeX CSS is for the block overlay + chat panel only; index.html
+    (document list) must not pull KaTeX so the listing page stays light.
+    Codex debate §1.2 scope-creep guard."""
+    index_src = (assets_root / "index.html").read_text(encoding="utf-8")
+    viewer_src = (assets_root / "viewer.html").read_text(encoding="utf-8")
+    assert "katex" not in index_src.lower(), "index.html should not link KaTeX"
+    assert "katex.min.css" in viewer_src, "viewer.html must link KaTeX CSS"
