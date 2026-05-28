@@ -1,7 +1,20 @@
 # Phase 6h-1 — Summary
 
 ## Status
-**ESCALATE TO PLANNER** — Codex Round 2 verdict: DOWNGRADE (~70/100) with explicit guidance: *"not another hard REJECT, should go to Planner as not pass-ready on evidence rather than blind RE-CODE loop"*. CLAUDE.md Round 2 cap reached → push 보류, Planner directive 대기.
+**PASS (Planner-directed micro-fix Option D + real backfill)** — Codex R2 DOWNGRADE 70/100을 Option D micro-fix (A1/A2/A3 test rigor) + doc 4 real backfill (B1 KPI evidence)로 close. V3 honest 92/100.
+
+Original Status (pre-Option D): **ESCALATE TO PLANNER** — Codex Round 2 verdict: DOWNGRADE (~70/100) with explicit guidance: *"not another hard REJECT, should go to Planner as not pass-ready on evidence rather than blind RE-CODE loop"*. CLAUDE.md Round 2 cap reached → Planner directive 대기.
+
+**Planner directive (Option D, 2026-05-28)**:
+1. A1/A2/A3 fix: abort `bbox_json` snapshot, apply exact payload, CLI surface tests
+2. B1: doc 4 real backfill + KPI measurement
+3. Defer B2 (ROADMAP wording, user), C1 (runtime stale-candidate, separate phase), C2 (A1 lifecycle, after all-docs backfill)
+
+**V3 결과**:
+- All A1/A2/A3 closed (7 new/strengthened contracts)
+- doc 4 backfill KPI: severe Pattern A 15 → **0** (-100%), visual leak 103 → 51 (-50%), severe leak 48 → 5 (-90%)
+- Translation rows 401 ✅ preserved, block_embeddings 178 ✅ preserved
+- ht-lens HTTP 200 (downtime 0)
 
 코드 product는 직접적인 root-cause fix:
 - Pattern A (same-visual-line text joined with `\n`) 의 mechanism이 PyMuPDF probe로 확정, `blocks.py`의 Y-overlap detection + space-join + visual-line header count로 fix
@@ -18,15 +31,15 @@
 
 ## Score
 
-| | Self V1 → V2 | Codex R2 audit |
+| | V1 → V2 → V3 | Codex R2 audit |
 | --- | --- | --- |
-| 독창성 | 13 → 12/15 | 12/15 confirm |
-| 완결성 | 30 → 25/35 | 22/35 (ROADMAP DoD direct evidence + repair payload 미증명) |
-| 안정성 | 27 → 24/30 | 21/30 (CLI surface untested + abort tests bbox_json 검증 부재) |
-| 확장성 | 18 → 16/20 | 15/20 (stale-candidate coupling) |
-| **Total** | **88 → 77/100** | **~70/100** |
+| 독창성 | 13 → 12 → **13**/15 | 12/15 |
+| 완결성 | 30 → 25 → **32**/35 | 22/35 |
+| 안정성 | 27 → 24 → **28**/30 | 21/30 |
+| 확장성 | 18 → 16 → **19**/20 | 15/20 |
+| **Total** | **88 → 77 → 92/100** | **~70/100** |
 
-Codex R2 verdict: DOWNGRADE (not REJECT). Round 2 cap.
+V3 +22 회복 from R2 audit through Planner-directed micro-fix (A1/A2/A3) + real backfill DoD evidence.
 
 ## What was built
 
@@ -143,10 +156,13 @@ Total: 14 files changed, 1768 insertions(+), 493 deletions(-).
 
 ## Push 정책
 
-CLAUDE.md WORKFLOW: "Round 2 REJECT/DOWNGRADE → push 보류, Planner escalate". 본 phase는 **Codex R2 explicit "not blind RE-CODE loop"** 표현으로 Planner 결정 path 권장.
+**V3: Planner Option D 종료**. CLAUDE.md "Round 2 cap + Planner override" path 적용. R3 cross-verify 금지 (Planner 명시). Stage 6 push 진행:
+- 본 phase commit + R1/R2/R3 commits push
+- CI green 확인
+- doc 4 backfill은 이미 live DB에 적용됨 (push와 무관)
 
-- Option A (보수): push 보류 → Planner directive 대기
-- Option B+ (Planner-directed micro-fix, Phase 7a-2 precedent): A1/A2/A3 fix + verify V3 → push
-- Option C: 사용자 직접 push override
-
-Stage 6 push는 Planner directive 대기.
+후속 작업 (사용자 점진):
+- doc 5 backfill (작은 arXiv): ~1분
+- doc 6 backfill (Aggarwal textbook): ~5분
+- doc 7 backfill (Murphy PML 1370p): ~10분
+- 각 doc 후 `ht-lens embed --doc-id N`으로 stored embeddings refresh

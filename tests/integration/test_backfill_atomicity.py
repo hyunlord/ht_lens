@@ -118,7 +118,7 @@ async def test_backfill_aborts_doc_on_block_count_mismatch(
     # Snapshot DB block count for later comparison.
     async with factory() as session:
         before_count = (await session.execute(select(Block))).scalars().all()
-        before_texts = [(b.id, b.original_text) for b in before_count]
+        before_texts = [(b.id, b.original_text, b.bbox_json) for b in before_count]
 
     # 1. dry-run reports abort.
     dry = await backfill_doc(factory, doc_id=doc_id, pdf_path=pdf, dry_run=True)
@@ -131,10 +131,13 @@ async def test_backfill_aborts_doc_on_block_count_mismatch(
 
     async with factory() as session:
         after = [
-            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+            (b.id, b.original_text, b.bbox_json)
+            for b in (await session.execute(select(Block))).scalars().all()
         ]
+    # Codex R2 §4 #2: assert BOTH original_text AND bbox_json untouched
+    # — a regression that writes geometry only would otherwise slip past.
     assert after == before_texts, (
-        f"DB must be untouched after abort; before={before_texts} after={after}"
+        f"DB must be untouched after abort (text+bbox); before={before_texts} after={after}"
     )
 
 
@@ -162,7 +165,8 @@ async def test_backfill_aborts_when_pdf_missing_pages_db_has(
 
     async with factory() as session:
         before = [
-            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+            (b.id, b.original_text, b.bbox_json)
+            for b in (await session.execute(select(Block))).scalars().all()
         ]
 
     dry = await backfill_doc(factory, doc_id=doc_id, pdf_path=pdf, dry_run=True)
@@ -174,9 +178,11 @@ async def test_backfill_aborts_when_pdf_missing_pages_db_has(
 
     async with factory() as session:
         after = [
-            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+            (b.id, b.original_text, b.bbox_json)
+            for b in (await session.execute(select(Block))).scalars().all()
         ]
-    assert after == before, "no DB row should change after a missing-page abort"
+    # Codex R2 §4 #2: lock both text and geometry.
+    assert after == before, "no DB row (text+bbox) should change after a missing-page abort"
 
 
 @pytest.mark.asyncio
@@ -239,7 +245,8 @@ async def test_backfill_aborts_on_bbox_drift(
 
     async with factory() as session:
         before = [
-            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+            (b.id, b.original_text, b.bbox_json)
+            for b in (await session.execute(select(Block))).scalars().all()
         ]
 
     result = await backfill_doc(factory, doc_id=doc_id, pdf_path=pdf, dry_run=False)
@@ -248,9 +255,11 @@ async def test_backfill_aborts_on_bbox_drift(
 
     async with factory() as session:
         after = [
-            (b.id, b.original_text) for b in (await session.execute(select(Block))).scalars().all()
+            (b.id, b.original_text, b.bbox_json)
+            for b in (await session.execute(select(Block))).scalars().all()
         ]
-    assert after == before
+    # Codex R2 §4 #2: lock both text and geometry.
+    assert after == before, "no DB row (text+bbox) should change after a bbox-drift abort"
 
 
 @pytest.mark.asyncio
@@ -328,6 +337,10 @@ async def test_backfill_apply_succeeds_when_pdf_matches_db(
     result = await backfill_doc(factory, doc_id=doc_id, pdf_path=pdf, dry_run=False)
     assert result.status == "ok", result
     assert len(result.proposed) >= 1
+    # Codex R2 §4 #3: lock the EXACT proposed payload (text + bbox) per
+    # block so a regression that produced wrong text/bbox would fail.
+    expected_by_id = {upd.block_id: (upd.new_text, list(upd.new_bbox)) for upd in result.proposed}
+    extracted_by_pos = {tuple(eb.bbox): eb.text for eb in extracted}
 
     async with factory() as session:
         rows = (await session.execute(select(Block))).scalars().all()
@@ -337,3 +350,28 @@ async def test_backfill_apply_succeeds_when_pdf_matches_db(
         assert sorted(new_ids) == sorted(seeded_block_ids)
         # Stale STALE\nTEXT is replaced with extractor output.
         assert all(b.original_text != "STALE\nTEXT" for b in rows)
+        # Exact payload check: every updated block's persisted text/bbox
+        # matches the extractor's output and never contains a stray \n
+        # for Pattern A inputs (since the synthetic PDF places fragments
+        # on the same baseline).
+        for b in rows:
+            if b.id not in expected_by_id:
+                continue
+            exp_text, exp_bbox = expected_by_id[b.id]
+            assert b.original_text == exp_text, (
+                f"block {b.id} text mismatch: got {b.original_text!r}, expected {exp_text!r}"
+            )
+            persisted_bbox = json.loads(b.bbox_json)
+            assert persisted_bbox == exp_bbox, (
+                f"block {b.id} bbox mismatch: got {persisted_bbox}, expected {exp_bbox}"
+            )
+            # Pattern A property: the synthetic PDF's same-baseline
+            # fragments must collapse, so no surviving newline.
+            assert "\n" not in b.original_text, (
+                f"block {b.id} should be Pattern-A collapsed: {b.original_text!r}"
+            )
+        # Sanity: the extractor saw exactly what we just persisted.
+        for b in rows:
+            persisted_bbox_t = tuple(json.loads(b.bbox_json))
+            if persisted_bbox_t in extracted_by_pos:
+                assert b.original_text == extracted_by_pos[persisted_bbox_t]
