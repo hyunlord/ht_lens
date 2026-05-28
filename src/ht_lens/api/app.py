@@ -25,6 +25,7 @@ from ht_lens.api.routers import (
     jobs,
     messages,
     pages,
+    prototype,
     search,
     threads,
     uploads,
@@ -217,6 +218,7 @@ def create_app() -> FastAPI:
     app.include_router(blocks.router)
     app.include_router(uploads.router)
     app.include_router(jobs.router)
+    app.include_router(prototype.router)
 
     return app
 
