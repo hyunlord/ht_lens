@@ -11,7 +11,8 @@ import { applyMath } from "../utils/render_markdown.js";
 const INLINE_MATH_RE = /\$[^$\n]+\$/;
 const DISPLAY_MATH_RE = /\$\$[\s\S]+?\$\$/;
 
-function _hasPairedMath(text) {
+export function hasPairedMath(text) {
+  if (!text) return false;
   return DISPLAY_MATH_RE.test(text) || INLINE_MATH_RE.test(text);
 }
 
@@ -68,7 +69,7 @@ export function renderBlock(
       // KaTeX inherits the chosen font-size via CSS (.block .katex
       // { font-size: inherit }). Only call when paired delimiters are
       // present so unrelated ``$`` (currency, OCR noise) is skipped.
-      if (overlayMode === "translation" && _hasPairedMath(text)) {
+      if (overlayMode === "translation" && hasPairedMath(text)) {
         applyMath(el);
       }
       // Phase 6h hot-fix: flag blocks whose bbox is too small to display

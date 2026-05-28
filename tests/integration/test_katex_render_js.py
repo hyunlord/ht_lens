@@ -17,6 +17,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 RENDER_MD = REPO / "src" / "ht_lens" / "api" / "static" / "js" / "utils" / "render_markdown.js"
+BLOCK_JS = REPO / "src" / "ht_lens" / "api" / "static" / "js" / "components" / "block.js"
+MESSAGE_JS = REPO / "src" / "ht_lens" / "api" / "static" / "js" / "components" / "message.js"
 
 
 def _find_jsdom() -> str | None:
@@ -231,12 +233,8 @@ def test_user_message_with_dollar_stays_plain(jsdom_url: str) -> None:
 
 
 def test_paired_delimiter_gate_ignores_unmatched_dollar(jsdom_url: str) -> None:
-    """The viewer-side gate (mirrored here) refuses single-dollar inputs.
-
-    The regex lives in ``block.js`` but it is a pure function; we test the
-    same expression to lock the contract regardless of where the gate
-    moves later.
-    """
+    """``block.js`` exports ``hasPairedMath``; tests import the real
+    implementation rather than redefining the regex (verify-cross R1)."""
     cases = {
         "$5.00 only": False,  # unmatched
         "no math here": False,
@@ -248,23 +246,21 @@ def test_paired_delimiter_gate_ignores_unmatched_dollar(jsdom_url: str) -> None:
         # but the gate itself does fire. Documenting the known
         # over-trigger here so it is intentional.
         "$$display$$": True,
+        "": False,
     }
     inputs = json.dumps(cases)
     script = f"""
-    const INLINE = /\\$[^$\\n]+\\$/;
-    const DISPLAY = /\\$\\$[\\s\\S]+?\\$\\$/;
+    const {{ hasPairedMath }} = await import("{BLOCK_JS.as_uri()}");
     const cases = {inputs};
     const results = {{}};
-    for (const [text, _] of Object.entries(cases)) {{
-      results[text] = DISPLAY.test(text) || INLINE.test(text);
+    for (const text of Object.keys(cases)) {{
+      results[text] = hasPairedMath(text);
     }}
     console.log(JSON.stringify(results));
     """
     out = _run_with_jsdom(script, jsdom_url)
     for text, expected in cases.items():
-        assert out[text] == expected, (
-            f"gate result for {text!r}: got {out[text]} expected {expected}"
-        )
+        assert out[text] == expected, f"hasPairedMath({text!r}) = {out[text]}, expected {expected}"
 
 
 def test_markdown_code_block_math_not_rendered(jsdom_url: str) -> None:
@@ -310,3 +306,142 @@ def test_block_translation_math_preserves_listeners_contract(jsdom_url: str) -> 
     assert out["clicks"] == 1, "click listener on host element must survive applyMath"
     assert out["menus"] == 1, "contextmenu listener on host element must survive applyMath"
     assert out["hasKatex"] is True, "math should still render"
+
+
+# ---------------------------------------------------------------------------
+# V3 additions (verify-cross R1 RE-CODE) — drive real ``renderBlock`` /
+# ``renderMessage`` through jsdom so the new branches are locked, not just
+# the underlying utility.
+# ---------------------------------------------------------------------------
+
+
+def _block_data(text: str) -> dict:
+    """Block payload shaped like the API contract — bbox + translated_text."""
+    return {
+        "id": 1,
+        "type": "text",
+        "bbox": [10, 10, 400, 80],
+        "original_text": "original placeholder",
+        "translated_text": text,
+    }
+
+
+def test_render_block_translation_mode_renders_math(jsdom_url: str) -> None:
+    """``renderBlock(..., 'translation')`` invokes KaTeX when the
+    translated_text contains paired math delimiters."""
+    block_data = _block_data("잠재 변수 $p(z) = \\\\alpha$ 사용")
+    script = f"""
+    const {{ renderBlock }} = await import("{BLOCK_JS.as_uri()}");
+    const overlay = document.createElement("div");
+    const scale = {{ x: 1, y: 1, pageW: 1000, pageH: 1000 }};
+    const el = renderBlock(overlay, {json.dumps(block_data)}, scale, "translation");
+    console.log(JSON.stringify({{
+      html: el.innerHTML,
+      hasKatex: !!el.querySelector(".katex"),
+    }}));
+    """
+    out = _run_with_jsdom(script, jsdom_url)
+    assert out["hasKatex"] is True, f"renderBlock translation+math: {out['html']}"
+
+
+def test_render_block_original_mode_does_not_render_math(jsdom_url: str) -> None:
+    """``renderBlock(..., 'original')`` must NEVER call KaTeX even when the
+    original_text contains paired ``$...$`` — original content stays
+    literal so PDF source is shown verbatim (verify-cross R1 gap)."""
+    data = {
+        "id": 2,
+        "type": "text",
+        "bbox": [10, 10, 400, 80],
+        "original_text": "Original $E=mc^2$ formula",
+        "translated_text": "번역 $E=mc^2$ 수식",
+    }
+    script = f"""
+    const {{ renderBlock }} = await import("{BLOCK_JS.as_uri()}");
+    const overlay = document.createElement("div");
+    const scale = {{ x: 1, y: 1, pageW: 1000, pageH: 1000 }};
+    const el = renderBlock(overlay, {json.dumps(data)}, scale, "original");
+    console.log(JSON.stringify({{
+      html: el.innerHTML,
+      text: el.textContent,
+      hasKatex: !!el.querySelector(".katex"),
+    }}));
+    """
+    out = _run_with_jsdom(script, jsdom_url)
+    assert out["hasKatex"] is False, (
+        f"renderBlock original mode must NOT invoke KaTeX, got: {out['html']}"
+    )
+    assert "$E=mc^2$" in out["text"], "original_text should be shown verbatim"
+
+
+def test_render_block_unmatched_dollar_skips_katex(jsdom_url: str) -> None:
+    """Single ``$5.00`` (currency) must NOT trigger KaTeX even in
+    translation mode — locks the paired-delimiter gate at the call site."""
+    block_data = _block_data("It costs $5.00 today.")
+    script = f"""
+    const {{ renderBlock }} = await import("{BLOCK_JS.as_uri()}");
+    const overlay = document.createElement("div");
+    const scale = {{ x: 1, y: 1, pageW: 1000, pageH: 1000 }};
+    const el = renderBlock(overlay, {json.dumps(block_data)}, scale, "translation");
+    console.log(JSON.stringify({{
+      html: el.innerHTML,
+      text: el.textContent,
+      hasKatex: !!el.querySelector(".katex"),
+    }}));
+    """
+    out = _run_with_jsdom(script, jsdom_url)
+    assert out["hasKatex"] is False, f"unmatched $ should skip KaTeX, got: {out['html']}"
+    assert out["text"] == "It costs $5.00 today."
+
+
+def test_render_message_assistant_renders_math(jsdom_url: str) -> None:
+    """Directly call ``renderMessage`` (message.js) with an assistant
+    role + math content and confirm KaTeX rendered."""
+    msg = {
+        "id": 42,
+        "role": "assistant",
+        "content": "Pythagoras: $a^2 + b^2 = c^2$",
+        "model": "test",
+    }
+    script = f"""
+    const {{ renderMessage }} = await import("{MESSAGE_JS.as_uri()}");
+    const container = document.createElement("div");
+    renderMessage(container, {json.dumps(msg)});
+    const body = container.querySelector(".message-body");
+    console.log(JSON.stringify({{
+      html: body.innerHTML,
+      hasKatex: !!body.querySelector(".katex"),
+    }}));
+    """
+    out = _run_with_jsdom(script, jsdom_url)
+    assert out["hasKatex"] is True, f"assistant message must render math: {out['html']}"
+    assert "Pythagoras" in out["html"]
+
+
+def test_render_message_user_role_stays_plain_text(jsdom_url: str) -> None:
+    """User-role message must use ``textContent`` path — ``$5.00`` typed
+    in the chat box should never trigger KaTeX (verify-cross R1 gap:
+    bypassing message.js was the prior coverage hole)."""
+    msg = {
+        "id": 43,
+        "role": "user",
+        "content": "It costs $5.00 and $10.00 — math? $x^2$",
+        "model": None,
+    }
+    script = f"""
+    const {{ renderMessage }} = await import("{MESSAGE_JS.as_uri()}");
+    const container = document.createElement("div");
+    renderMessage(container, {json.dumps(msg)});
+    const body = container.querySelector(".message-body");
+    console.log(JSON.stringify({{
+      html: body.innerHTML,
+      text: body.textContent,
+      hasKatex: !!body.querySelector(".katex"),
+    }}));
+    """
+    out = _run_with_jsdom(script, jsdom_url)
+    assert out["hasKatex"] is False, f"user message must NOT invoke KaTeX, got: {out['html']}"
+    assert out["text"] == "It costs $5.00 and $10.00 — math? $x^2$"
+    # innerHTML should NOT contain raw HTML tags — user content stays text.
+    assert "<" not in out["html"] or "&lt;" in out["html"], (
+        "user content must not be parsed as HTML"
+    )
