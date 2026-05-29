@@ -1,40 +1,45 @@
 ## 1. Verification of automated checks
-Lint/format/type/test evidence is mostly credible for current HEAD: `git rev-parse --short HEAD` is `8a355bd`, the verify commit, and the last Phase 8a code/test commits are `f823259` and `bf241e6`. No later code commit makes `verify.md` stale. Current untracked files are phase workflow artifacts only.
 
-Coverage evidence is not credible as stated. `pyproject.toml:69-72` configures pytest with `--cov=ht_lens`, but verify used `--no-cov` and then marked coverage n/a. That may be a policy choice, but it is not the Stage 5 automated check in `WORKFLOW.md:143-145`, where coverage is included in pytest.
+`verify.md` is not stale. Current HEAD is `61bd5ec`, which only updates `.claude/phases/phase-8a/verify.md`; the last code/test commit is `e7720f5`, matching `verify.md:3`. `git status --short` shows only untracked `.claude/phases/phase-8a/summary.md`, so no code changed after verification.
 
-CI is not verified. `verify.md` says pending push, so it should not be treated as evidence.
+Lint/format/type/test evidence is plausible but I could not independently rerun even targeted pytest because this invocation is read-only and `uv` failed creating a cache temp file under `/home/hyunlord/.cache/uv`. I therefore audited the committed tests and code instead.
 
-They also should have run or reported targeted CLI/runner tests for the two new Typer commands and subprocess wrapper. The self-report acknowledges this gap, but the 5-D table overstates `resolve_mineru_bin` / runner as “locked” by one smoke run.
+Coverage remains unchanged since Round 1: `verify.md:15` marks it n/a, but `WORKFLOW.md:140-145` includes coverage in the automated checks and `pyproject.toml:69-72` enables `--cov=ht_lens` by default. Treat this as a policy deviation, not fresh evidence of failure.
+
+CI is still not evidence. `verify.md:16` says “pending push”; it cannot support the self-verification score.
 
 ## 2. Verification of functional checks
-The parser and ingest functional checks cover much of the DoD: structure preservation is tested in `tests/integration/test_mineru_ingest.py:77-105`, image copy in `tests/integration/test_mineru_ingest.py:110-138`, rollback on missing image in `tests/integration/test_mineru_ingest.py:143-168`, and no invalid `Page` rows in `tests/integration/test_mineru_ingest.py:173-192`.
 
-The doc 7 E2E evidence is plausible but not independently reproducible from committed artifacts. `verify.md` reports `doc_id=1 chunks=103 images=30`, but there is no command transcript, fixture, or checked-in output for the real 990-1000 content list.
+The R1 critical functional gaps are materially addressed. Same-filename 1.x/MinerU coexistence is now enforced by `Document.filename == filename` plus `Document.extractor == "mineru"` in `src/ht_lens/ingest_mineru/pipeline.py:89-96`, and tested with overwrite in `tests/integration/test_mineru_ingest.py:228-293`. The malformed `text_level` path now raises `ContentListError` at `src/ht_lens/ingest_mineru/content_list.py:129-135`, with a direct test at `tests/unit/test_content_list_parser.py:125-129`.
 
-The main functional gap is “1.x DB 무손상 (병행)” under filename collision. `ingest_mineru_output` looks up existing documents by `Document.filename` only, then blocks or deletes them on overwrite (`src/ht_lens/ingest_mineru/pipeline.py:83-95`). The preservation test uses `legacy.pdf` and `mineru.pdf` as different filenames (`tests/integration/test_mineru_ingest.py:232-294`), so it does not exercise the realistic parallel case where the MinerU re-ingest uses the same PDF filename as an existing 1.x document.
+Runner discovery and most subprocess branches now have tests: env/PATH/missing binary, glob discovery, nonzero exit, success-without-output, CPU env, and missing PDF are covered in `tests/integration/test_mineru_runner.py:27-150`. The self-report is honest that `TimeoutExpired` remains untested.
 
-CLI behavior is also not functionally verified. The new commands are in `src/ht_lens/cli.py:248-369`, but `rg` finds no `extract-mineru` / `ingest-mineru` tests under `tests/`.
+The remaining functional gap is unchanged since Round 1 for the extraction CLI half: `extract-mineru` is implemented in `src/ht_lens/cli.py:248-284`, but `rg` finds no `extract-mineru` tests under `tests/`. `tests/integration/test_cli_mineru.py:1-76` only drives `ingest-mineru`. The lower-level `run_mineru` tests reduce risk, but they do not verify Typer argument wiring, output text, or CLI exit-code mapping for extraction.
+
+The doc7 live E2E remains external evidence only: `doc_id=1 chunks=103 images=30` is plausible, but not reproducible from committed fixtures. The fixture-based parser/ingest tests are the reproducible DoD evidence.
 
 ## 3. Score audit
-독창성 / 15: `12/15` is broadly justified. The implementation kept MinerU external, added a typed parser boundary, and deferred chunk translation/embedding tables after debate. No major deduction beyond maybe 1 point for filename-based coupling in the “parallel” design.
 
-완결성 / 35: `31/35` is too generous. The happy-path DoD is substantially covered, but CLI commands are untested, the real doc7 E2E evidence is external to the repo, and same-filename parallel ingest is untested and currently unsafe. Suggested score: `27/35`.
+독창성 / 15: `12/15` is justified. The subprocess boundary, parser normalization, and extractor-scoped coexistence are appropriate rather than novel. No deduction.
 
-안정성 / 30: `27/30` is too high. Runner subprocess failure branches are untested despite being a debate item; CLI error mapping is untested; `parse_content_list` can still raise raw `ValueError` on invalid `text_level` at `src/ht_lens/ingest_mineru/content_list.py:128-132`; and overwrite can target legacy documents by filename. Suggested score: `23/30`.
+완결성 / 35: `33/35` is slightly high. DoD coverage is now strong, including same-filename coexistence, image copy, chunk preservation, additive migration, and ingest CLI. Deduct for unreproducible doc7 E2E and missing `extract-mineru` CLI test. Suggested: `31/35`.
 
-확장성 / 20: `18/20` is too high. `chunks.page_idx` without `Page` FK is a good 8a choice, but filename uniqueness across extractor generations blocks clean Phase 8e coexistence, and absolute managed `img_path` values (`src/ht_lens/ingest_mineru/pipeline.py:109-158`) may make future DB portability harder. Suggested score: `15/20`.
+안정성 / 30: `28/30` is also a little high. R1 safety issues were fixed, but coverage/CI are not verified, `TimeoutExpired` is explicitly untested, and extraction CLI error mapping is untested. Suggested: `26/30`.
 
-Fair total: about `77-80/100`, not `88`.
+확장성 / 20: `17/20` is fair. `extractor` scoping makes coexistence viable, and deferring pages is consistent with current non-null model constraints. Absolute `img_path` and basename-only image copy in `src/ht_lens/ingest_mineru/pipeline.py:154-170` remain future portability/collision risks, but they are known and not Phase 8a blockers. Confirm `17/20`.
+
+Fair total: `86/100`.
 
 ## 4. Issues missed (new this round)
-The biggest missed issue is same-filename collision with 1.x documents. `ingest_mineru_output` selects by filename only (`src/ht_lens/ingest_mineru/pipeline.py:83-85`). With `overwrite=False`, a MinerU v2 ingest of an already-ingested PDF is blocked even though `Document.extractor` was added to allow parallel pipelines. With `overwrite=True`, it attempts to bulk-delete the existing `Document` (`src/ht_lens/ingest_mineru/pipeline.py:90-95`), which can either fail on legacy `pages` FKs or risk deleting non-MinerU rows. This directly weakens the “1.x DB 무손상 (병행)” DoD.
 
-The preservation test does not cover that scenario. `test_1x_data_untouched_by_mineru_ingest` deliberately avoids collision by seeding `legacy.pdf` and ingesting `mineru.pdf` (`tests/integration/test_mineru_ingest.py:232-294`). Add a test where an existing `extractor='pymupdf'` document has the same filename as the MinerU ingest, and define the expected behavior explicitly.
+No major new regression from RE-CODE is visible. The main R1 rejection issue was fixed rather than reframed: the lookup is now extractor-scoped, and `test_same_filename_1x_and_mineru_coexist` explicitly covers both coexistence and overwrite.
 
-The accepted debate requirement “runner 경로 discovery(가짜 출력 트리)” from `.claude/phases/phase-8a/challenge.md` was not implemented as a test. `src/ht_lens/extract_mineru/runner.py:42-133` has real logic for env/PATH resolution, timeout, nonzero exit, and glob discovery, but no tests reference `run_mineru`, `resolve_mineru_bin`, or `_discover_outputs`.
+Newly visible from the RE-CODE tests: the new `test_cli_mineru.py` locks only `ingest-mineru`; it does not cover `extract-mineru` despite `extract_mineru_command` being a new CLI handler at `src/ht_lens/cli.py:248-284`. This is a partial unresolved R1 CLI gap, not a reason to reject by itself because `run_mineru` has lower-level coverage.
 
-Invalid `text_level` is not normalized into the parser’s domain error. `page_idx` has explicit `ContentListError` handling (`src/ht_lens/ingest_mineru/content_list.py:80-87`), but heading level uses `int(level)` directly (`src/ht_lens/ingest_mineru/content_list.py:128-132`). A malformed MinerU item can escape as raw `ValueError`, bypassing the `ContentListError` wrapping in `src/ht_lens/ingest_mineru/pipeline.py:74-77`.
+The overwrite test does not assert filesystem cleanup for the replaced MinerU document. `ingest_mineru_output` deletes old `Chunk` and `Document` rows at `src/ht_lens/ingest_mineru/pipeline.py:101-107`, then writes a new managed image directory under the new document id at `pipeline.py:121-126`. Old managed image directories can be orphaned. This does not violate the Phase 8a DB-preservation DoD, but it should be noted before repeated re-ingests become common.
+
+The timeout path is surfaced by self-verify, so I am not counting it as missed. It remains an explicit residual risk in `src/ht_lens/extract_mineru/runner.py:124-125`.
 
 ## 5. Verdict
-**REJECT** — The implementation is close on the core happy path, and the self-verifier was honest about several gaps, but the same-filename overwrite/collision behavior is a concrete threat to the Phase 8a parallel-DB/1.x-preservation DoD. Before this phase passes, RE-CODE should lock the intended coexistence policy by `extractor` and add targeted tests for same-filename legacy documents plus runner discovery/failure branches.
+
+**DOWNGRADE** — R1’s concrete blockers are fixed and tested well enough that I do not recommend another RE-CODE. The self-score is still optimistic because coverage and CI are not verified, the real doc7 evidence is external, and `extract-mineru` CLI wiring remains untested. A fair score is about `86/100`; pass should depend on Planner tolerance for those residual Phase 8a risks rather than another automated repair loop.
