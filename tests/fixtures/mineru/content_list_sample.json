@@ -1,0 +1,166 @@
+[
+  {
+    "type": "header",
+    "text": "Chapter 28. Latent factor models",
+    "bbox": [
+      619,
+      43,
+      887,
+      61
+    ],
+    "page_idx": 0
+  },
+  {
+    "type": "page_number",
+    "text": "956",
+    "bbox": [
+      128,
+      43,
+      161,
+      60
+    ],
+    "page_idx": 0
+  },
+  {
+    "type": "text",
+    "text": "28.4.2 Multinomial PCA",
+    "text_level": 2,
+    "bbox": [
+      126,
+      80,
+      420,
+      99
+    ],
+    "page_idx": 0
+  },
+  {
+    "type": "text",
+    "text": "Suppose we use a Dirichlet prior for the latents.",
+    "bbox": [
+      126,
+      110,
+      800,
+      140
+    ],
+    "page_idx": 0
+  },
+  {
+    "type": "equation",
+    "img_path": "images/eq1.jpg",
+    "text": "$$p(z) = \\mathrm{Dir}(z|\\alpha)$$",
+    "text_format": "latex",
+    "bbox": [
+      149,
+      150,
+      520,
+      200
+    ],
+    "page_idx": 0
+  },
+  {
+    "type": "image",
+    "img_path": "images/fig1.jpg",
+    "image_caption": [
+      "Figure 28.20: Simplex FA model as a DPGM."
+    ],
+    "image_footnote": [],
+    "bbox": [
+      420,
+      210,
+      595,
+      400
+    ],
+    "page_idx": 0
+  },
+  {
+    "type": "chart",
+    "img_path": "images/chart1.jpg",
+    "content": "bar chart: A=3 B=5",
+    "chart_caption": [
+      "Figure 28.X: results"
+    ],
+    "chart_footnote": [],
+    "bbox": [
+      100,
+      420,
+      500,
+      600
+    ],
+    "page_idx": 1
+  },
+  {
+    "type": "page_footnote",
+    "text": "Online version. December 10, 2025",
+    "bbox": [
+      126,
+      945,
+      800,
+      966
+    ],
+    "page_idx": 1
+  },
+  {
+    "type": "text",
+    "text": "We fit the mPCA model using variational EM.",
+    "bbox": [
+      126,
+      110,
+      800,
+      140
+    ],
+    "page_idx": 1
+  },
+  {
+    "type": "footer",
+    "text": "Probabilistic Machine Learning",
+    "bbox": [
+      126,
+      945,
+      800,
+      966
+    ],
+    "page_idx": 1
+  },
+  {
+    "type": "text",
+    "text": "Body with no bbox",
+    "page_idx": 1
+  },
+  {
+    "type": "image",
+    "img_path": "images/fig2.jpg",
+    "image_caption": [
+      "Cap A",
+      "Cap B"
+    ],
+    "bbox": [
+      10,
+      10,
+      50,
+      50
+    ],
+    "page_idx": 1
+  },
+  {
+    "type": "table",
+    "text": "| a | b |\n|---|---|",
+    "bbox": [
+      60,
+      60,
+      400,
+      200
+    ],
+    "page_idx": 2
+  },
+  {
+    "type": "weird_future_type",
+    "text": "unknown content",
+    "bbox": [
+      0,
+      0,
+      10,
+      10
+    ],
+    "page_idx": 2
+  }
+]
