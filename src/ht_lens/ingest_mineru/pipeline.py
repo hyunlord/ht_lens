@@ -80,16 +80,28 @@ async def ingest_mineru_output(
 
     dest_dir: Path | None = None
     try:
+        # Scope the collision lookup to MinerU-produced documents only
+        # (verify-cross R1 §4): a 1.x ``pymupdf`` document with the same
+        # filename must coexist untouched — the ``extractor`` column is
+        # exactly what makes the parallel-DB decision safe. ``overwrite``
+        # therefore can only ever replace a prior *mineru* ingest, never a
+        # 1.x row, so "1.x DB 무손상" holds even on filename collision.
         existing = (
-            await session.execute(select(Document).where(Document.filename == filename))
+            await session.execute(
+                select(Document).where(
+                    Document.filename == filename,
+                    Document.extractor == "mineru",
+                )
+            )
         ).scalar_one_or_none()
         if existing is not None and not overwrite:
             raise DocumentAlreadyIngested(
-                f"document already ingested: {filename!r}. Use --overwrite to replace."
+                f"MinerU document already ingested: {filename!r}. Use --overwrite to replace."
             )
         if existing is not None:
             # chunks cascade via delete-orphan when the Document is removed;
-            # use explicit bulk delete bottom-up to match the 1.x pattern.
+            # use explicit bulk delete to match the 1.x pattern. Scoped to
+            # this mineru document id only — never a 1.x row.
             await session.execute(delete(Chunk).where(Chunk.doc_id == existing.id))
             await session.execute(delete(Document).where(Document.id == existing.id))
             await session.flush()

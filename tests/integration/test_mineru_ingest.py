@@ -221,6 +221,81 @@ async def test_ingest_marks_extractor_mineru(
 
 
 @pytest.mark.asyncio
+async def test_same_filename_1x_and_mineru_coexist(
+    api_db_path: Path, mineru_out: Path, tmp_path: Path
+) -> None:
+    """verify-cross R1 §4: a 1.x pymupdf document and a MinerU document with
+    the SAME filename must coexist; MinerU ingest (even overwrite) must never
+    touch the 1.x row. This is the realistic parallel-DB collision case."""
+    engine, factory = await _session(api_db_path)
+    try:
+        # Seed a 1.x pymupdf document named book2.pdf (no chunks).
+        async with factory() as session:
+            legacy = Document(
+                filename="book2.pdf",
+                src_lang="en",
+                tgt_lang="ko",
+                status="translated",
+                created_at=datetime.now(UTC),
+                # extractor defaults to 'pymupdf'
+            )
+            session.add(legacy)
+            await session.commit()
+            legacy_id = legacy.id
+
+        # Ingest a MinerU document with the SAME filename.
+        async with factory() as session:
+            await ingest_mineru_output(
+                mineru_out,
+                session,
+                filename="book2.pdf",
+                images_dir=mineru_out.parent / "images",
+                dest_root=tmp_path / "ev2",
+            )
+            await session.commit()
+
+        from sqlalchemy import select
+
+        async with factory() as session:
+            docs = list(
+                (
+                    await session.execute(select(Document).where(Document.filename == "book2.pdf"))
+                ).scalars()
+            )
+        # Both coexist, distinguished by extractor.
+        assert {d.extractor for d in docs} == {"pymupdf", "mineru"}
+        assert legacy_id in {d.id for d in docs}
+
+        # overwrite=True re-ingest must replace ONLY the mineru row, leave 1.x.
+        async with factory() as session:
+            await ingest_mineru_output(
+                mineru_out,
+                session,
+                filename="book2.pdf",
+                images_dir=mineru_out.parent / "images",
+                dest_root=tmp_path / "ev2b",
+                overwrite=True,
+            )
+            await session.commit()
+        async with factory() as session:
+            legacy_still = await session.get(Document, legacy_id)
+            assert legacy_still is not None and legacy_still.extractor == "pymupdf"
+            mineru_docs = list(
+                (
+                    await session.execute(
+                        select(Document).where(
+                            Document.filename == "book2.pdf",
+                            Document.extractor == "mineru",
+                        )
+                    )
+                ).scalars()
+            )
+        assert len(mineru_docs) == 1  # overwrite replaced, not duplicated
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_1x_data_untouched_by_mineru_ingest(
     api_db_path: Path, mineru_out: Path, tmp_path: Path
 ) -> None:

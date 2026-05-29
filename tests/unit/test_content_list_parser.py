@@ -122,6 +122,13 @@ def test_non_int_page_idx_rejects() -> None:
         parse_content_list([{"type": "text", "text": "x", "page_idx": "abc"}])
 
 
+def test_non_int_text_level_rejects() -> None:
+    # verify-cross R1 §4: a malformed text_level must become a ContentListError,
+    # not a raw ValueError escaping ingest.
+    with pytest.raises(ContentListError, match="non-int text_level"):
+        parse_content_list([{"type": "text", "text": "h", "text_level": "two", "page_idx": 0}])
+
+
 def test_non_list_input_rejects() -> None:
     with pytest.raises(ContentListError, match="must be a list"):
         parse_content_list({"type": "text"})  # type: ignore[arg-type]

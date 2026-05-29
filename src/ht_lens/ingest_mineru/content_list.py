@@ -127,8 +127,14 @@ def parse_content_list(items: list[dict[str, Any]]) -> list[ParsedChunk]:
                 continue  # empty body/heading — skip, no hollow chunk
             level = item.get("text_level")
             if level is not None:
+                try:
+                    level_int = int(level)
+                except (TypeError, ValueError) as exc:
+                    # Normalize into the parser's domain error rather than
+                    # letting a raw ValueError escape ingest (verify-cross R1 §4).
+                    raise ContentListError(f"item #{pos} non-int text_level: {level!r}") from exc
                 chunk = ParsedChunk(
-                    page_idx, order, "heading", int(level), bbox, text, None, None, None
+                    page_idx, order, "heading", level_int, bbox, text, None, None, None
                 )
             else:
                 chunk = ParsedChunk(page_idx, order, "text", None, bbox, text, None, None, None)
