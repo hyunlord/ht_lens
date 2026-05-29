@@ -15,6 +15,7 @@ from ht_lens.errors import (
     EncryptedPDFError,
     HtLensError,
     IngestError,
+    MineruError,
     OutputDirNotEmptyError,
     SchemaVersionMismatch,
 )
@@ -239,6 +240,130 @@ def embed_command(
     except SchemaVersionMismatch as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=3) from exc
+    except HtLensError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+
+@app.command("extract-mineru")
+def extract_mineru_command(
+    pdf: Path = typer.Argument(  # noqa: B008
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        help="Path to source PDF.",
+    ),
+    out: Path = typer.Option(  # noqa: B008
+        ...,
+        "-o",
+        "--out",
+        resolve_path=True,
+        help="MinerU output directory.",
+    ),
+    lang: str = typer.Option("en", "--lang", help="OCR language hint (en, korean, ch, ...)."),
+    backend: str = typer.Option("pipeline", "--backend", help="MinerU backend."),
+) -> None:
+    """ht_lens 2.0 — run MinerU (CPU) on a PDF; print the content_list path.
+
+    MinerU must be installed and on ``PATH`` or pointed to by
+    ``HT_LENS_MINERU_BIN``. Extraction is a one-time CPU batch.
+    """
+    from ht_lens.extract_mineru.runner import run_mineru
+
+    try:
+        result = run_mineru(pdf, out, lang=lang, backend=backend)
+    except MineruError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+    typer.echo(
+        f"ok: content_list={result.content_list_path} "
+        f"images={result.images_dir} md={result.markdown_path}"
+    )
+
+
+@app.command("ingest-mineru")
+def ingest_mineru_command(
+    content_list: Path = typer.Argument(  # noqa: B008
+        ...,
+        exists=True,
+        readable=True,
+        resolve_path=True,
+        help="MinerU *_content_list.json (or its output dir).",
+    ),
+    filename: str = typer.Option(..., "--filename", help="Display filename for the document."),
+    src: str = typer.Option("en", "--src", help="Source language code."),
+    tgt: str = typer.Option("ko", "--tgt", help="Target language code."),
+    overwrite: bool = typer.Option(
+        False, "--overwrite/--no-overwrite", help="Replace an already-ingested document."
+    ),
+    db: Path = typer.Option(  # noqa: B008
+        None,
+        "--db",
+        resolve_path=True,
+        help="SQLite DB path. Defaults to HT_LENS_DB_URL env var or data/ht_lens.db.",
+    ),
+) -> None:
+    """ht_lens 2.0 — ingest a MinerU content_list.json into the chunks schema."""
+    from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.extract_mineru.runner import _discover_outputs
+
+    # Accept either the content_list.json file or the MinerU output dir.
+    if content_list.is_dir():
+        try:
+            discovered = _discover_outputs(content_list)
+        except MineruError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(code=exc.exit_code) from exc
+        cl_path = discovered.content_list_path
+        images_dir = discovered.images_dir
+        md_path = discovered.markdown_path
+    else:
+        cl_path = content_list
+        cand = cl_path.parent / "images"
+        images_dir = cand if cand.is_dir() else None
+        md_matches = sorted(cl_path.parent.glob("*.md"))
+        md_path = md_matches[0] if md_matches else None
+
+    db_path = db if db is not None else _db_path_from_env()
+
+    async def _run() -> None:
+        from ht_lens.ingest_mineru.pipeline import ingest_mineru_output
+
+        engine = make_engine(db_path)
+        factory = make_session_factory(engine)
+        try:
+            async with factory() as session:
+                stats = await ingest_mineru_output(
+                    cl_path,
+                    session,
+                    filename=filename,
+                    src=src,
+                    tgt=tgt,
+                    images_dir=images_dir,
+                    markdown_path=md_path,
+                    overwrite=overwrite,
+                )
+                await session.commit()
+            typer.echo(
+                f"ok: doc_id={stats.document_id} chunks={stats.chunks} images={stats.images}"
+            )
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_run())
+    except DocumentAlreadyIngested as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except SchemaVersionMismatch as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    except IngestError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
     except HtLensError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=exc.exit_code) from exc

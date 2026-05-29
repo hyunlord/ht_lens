@@ -36,3 +36,11 @@ class SchemaVersionMismatch(HtLensError):
     """Raised when DB schema version is missing or older than the code head."""
 
     exit_code = 3
+
+
+class MineruError(HtLensError):
+    """Raised when the MinerU extraction subprocess fails or its output is
+    unusable (Phase 8a). Covers missing binary, nonzero exit, timeout, and
+    absent/empty ``content_list.json``."""
+
+    exit_code = 4
