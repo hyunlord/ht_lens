@@ -1,43 +1,39 @@
 ## 1. Verification of automated checks
 
-Lint/format/type/test evidence is credible on timing: `verify.md` was committed at `79328b5` after the code/test commits `3f948fc` and `6d36e31`, and there are no later code commits. Current untracked files are `.claude/phases/phase-8b/summary.md` and `verify-cross.md` stubs, not source changes, so I do not consider the report stale.
+`verify.md` is not stale: current `HEAD` is `2f942de` (`chore(phase-8b): verify v2`) and the last code commit is the preceding `0c47e47`. `git status --short` only shows untracked `.claude/phases/phase-8b/summary.md`, so there are no source/test edits after self-verify.
 
-The test evidence is plausible but thinly documented: `648 passed, 1 skipped, 7 deselected` is reported, but no raw log artifact or command output is committed beyond `verify.md`. Coverage is explicitly not run (`--no-cov`), despite the workflow table carrying a coverage row. CI is also `n/a`; that is honest, but it means the 5-A table does not have a true CI signal.
+Lint/format/type/test evidence is plausible, but coverage is not credible as “n/a”. `pyproject.toml:71` configures pytest with `--cov=ht_lens --cov-report=term-missing`, and `Makefile:17-18` defines `test-fast` without `--no-cov`. The self-verify command explicitly used `--no-cov`, so it did not run the project’s normal coverage path.
 
-One check they should have run but did not: a chunk-specific concurrency test. The debate required `test_chunk_translate_peak_concurrency_is_bounded_and_parallel`; `rg` finds no such test under `tests/integration/test_chunk_translate.py`, and the self-report admits only dedup was tested.
+CI remains `n/a`. That is honestly reported, but it means the 5-A table has only local checks. I did not rerun the full 570s suite in this read-only cross-check; I audited the committed evidence and code.
 
 ## 2. Verification of functional checks
 
-The math preservation path is meaningfully exercised for common `$...$` / `$$...$$` cases via `tests/unit/test_math_protect.py` and `tests/integration/test_chunk_translate.py::test_text_translated_with_math_preserved`. Equation passthrough is also covered at `tests/integration/test_chunk_translate.py:80`.
+Round 1 issues mostly were addressed. `_db_cache_lookup` exists at `src/ht_lens/translate/chunk_pipeline.py:216`, `stats.cached` is asserted in `tests/integration/test_chunk_translate.py:203` and `:248`, collision math has `test_collision_with_real_math_still_protected` at `:287`, and peak bounded concurrency is covered at `:254`.
 
-Embedding generation is reasonably covered by `tests/integration/test_chunk_embed.py`, including type filtering, idempotency, model-change refresh, and cascade delete. That satisfies the “embedding 생성” DoD at pipeline level.
+Math preservation and embedding generation are adequately exercised at mock/integration level. `tests/unit/test_math_protect.py` covers byte-identical round trips and missing placeholder reporting, while `tests/integration/test_chunk_embed.py` covers type filtering, idempotency, model refresh, 1.x preservation, and cascade delete.
 
-The “Phase 7a-2 5.66x 적용” DoD is not functionally exercised. `test_cache_dedup_one_llm_call_for_identical_content` proves duplicate content triggers fewer LLM calls, but it does not prove parallel execution, bounded peak concurrency, retry behavior under chunk concurrency, or cache-hit accounting. The self-report acknowledges this gap, so its own 5-B should not be read as full DoD evidence.
-
-CLI functional coverage is incomplete. Phase 8b added `translate-chunks` and `embed-chunks` in `src/ht_lens/cli.py:372` and `src/ht_lens/cli.py:424`, but tests only cover `ingest-mineru` / `extract-mineru` in `tests/integration/test_cli_mineru.py`. There is no realistic CLI invocation for schema mismatch, missing LLM config, retry-failed, or disabled embedding.
+Two functional gaps remain. First, table HTML/markup behavior is unchanged since Round 1/debate: `challenge.md:34` accepted `test_chunk_translate_table_html_not_corrupted`, but `rg` finds no table translation test in `tests/integration/test_chunk_translate.py`. Second, the “실 E2E doc7 103 chunk” claim in `verify.md:21` has no committed artifact, and `verify.md:48` simultaneously says real qwen was not run. Treat that as mock/local evidence, not live qwen evidence.
 
 ## 3. Score audit
 
-독창성 / 15: `12/15` is justified. The design is conservative reuse of existing block translation/embedding ideas with chunk dispatch and math protection. It is not especially novel, but it is appropriate and avoids a large new dependency.
+독창성 / 15: `12/15` is justified. The design is conservative reuse of existing translation/cache/embedding primitives plus chunk dispatch and nonce math placeholders. No deduction beyond their own.
 
-완결성 / 35: `32/35` is too high. Translation and embedding basics are present, but the Phase 7a-2 concurrency claim is unproven, table behavior is untested, live qwen is not run, and new Phase 8b CLI commands have no tests. I would score `27/35`.
+완결성 / 35: `33/35` is too high. The core DoD paths exist, and the prior 7a-2 cache/concurrency gaps are mostly fixed, but accepted table coverage is absent, coverage was bypassed, and the CLI can report success when translations fail. I would score `29/35`.
 
-안정성 / 30: `27/30` is too high. There is good migration and 1.x preservation coverage, but new error/CLI paths are loose, `ChunkTranslateStats.cached` is dead accounting, and the placeholder-collision guard can bypass math protection entirely. I would score `23/30`.
+안정성 / 30: `28/30` is too high. The RE-CODE added error branches in `src/ht_lens/cli.py:418-429`, but only the `ValueError` doc-404 path is tested (`tests/integration/test_cli_mineru.py:111`). More seriously, failed chunk translations are swallowed into `stats.failed` by `chunk_pipeline.py:186-189`, while the CLI still prints `ok` and exits 0 at `cli.py:406-410`. I would score `23/30`.
 
-확장성 / 20: `18/20` is slightly high. The tables are additive and the embedding helper reuse is clean, but chunk translation cache semantics are weaker than 1.x and may complicate 8e/8d reuse. I would score `16/20`.
+확장성 / 20: `18/20` is mostly fair but slightly generous. The additive schema and reused embedding helpers are good, but caption persistent cache is knowingly absent (`verify.md:48`) and table markup semantics remain deferred. I would score `17/20`.
 
-Fair total: `78/100`, not because the core work is absent, but because several claimed Phase 7a-2/CLI contracts are only partially implemented or untested.
+Fair total: `81/100`.
 
 ## 4. Issues missed (new this round)
 
-`ChunkTranslateStats.cached` is never incremented. The field exists at `src/ht_lens/translate/chunk_pipeline.py:51` and is printed by the CLI at `src/ht_lens/cli.py:407`, but `_cached_translate()` only returns from `pending_cache` / `pending_futures` without touching stats (`chunk_pipeline.py:99-137`). There is no chunk test asserting `stats.cached`. This makes CLI output misleading and weakens the 5.66x evidence.
+`translate-chunks` returns success even when chunk translation fails. `translate_chunks()` catches generic exceptions per chunk and records failed rows (`src/ht_lens/translate/chunk_pipeline.py:186-189`), then finalizes the document as `partial_translated` if needed (`:318-320`). The CLI prints `ok: ... failed=N` at `src/ht_lens/cli.py:406-410` and has no `if stats.failed > 0: raise typer.Exit(code=1)` equivalent to the 1.x command at `src/ht_lens/translate/cli.py:149-156`. There is no `translate-chunks` test using `TRANSLATE_LLM_PROVIDER=mock_fail`.
 
-The chunk pipeline dropped 1.x persistent DB cache behavior. `src/ht_lens/translate/pipeline.py:227-242` looks up prior translations by `cache_key`; `src/ht_lens/translate/chunk_pipeline.py` has no equivalent `_db_cache_lookup`. Identical chunk content translated in an earlier document/run will call the LLM again, despite `chunk_translations.cache_key` and index existing in migration `0006`. That is a real divergence from the “Phase 7a-2 machine reuse” claim.
+The RE-CODE’s new health-error path is effectively unproven and likely dead. `src/ht_lens/cli.py:421-423` catches `LLMHealthCheckFailed`, but `translate_chunks_command()` never calls `await llm.health_check()` unlike the 1.x translate CLI (`src/ht_lens/translate/cli.py:101-105`). If an LLM raises during per-chunk translation, `chunk_pipeline.py:186-189` converts it to a failed chunk instead of propagating to the CLI. `rg` shows no `translate-chunks` test for exit 4 or exit 5; the new `LLMConfigurationError` branch is also only covered by older non-chunk CLI tests.
 
-`translate-chunks` has weaker CLI error handling than the existing `translate` command. `src/ht_lens/cli.py:395-421` does not catch `LLMConfigurationError`, `LLMHealthCheckFailed`, or `ValueError(document not found)`, while `src/ht_lens/translate/cli.py:95-190` maps those cases to clean exit codes/messages. Since Phase 8b adds this command, the lack of CLI tests is not just a coverage nicety.
-
-The placeholder collision guard is unsafe when collision text and real math coexist. `src/ht_lens/translate/chunk_pipeline.py:209-212` skips protection entirely if source contains a `⟦MATH0⟧`-shaped token, so `$...$` in the same chunk is sent raw to the LLM. `tests/unit/test_math_protect.py:89-91` only checks collision detection, not pipeline behavior. This is rare, but it is a direct hole in the “math byte-identical” contract for adversarial or copied text.
+The RE-CODE regression table overstates grep coverage. `verify.md:42-46` says `LLMConfigurationError` is present in src+test, but the test hits are for older factory/translate paths, not the newly added `translate-chunks` handler. Under the workflow’s RE-CODE rule, new CLI error branches should be locked by command-level tests, not incidental symbol matches elsewhere.
 
 ## 5. Verdict
 
-**DOWNGRADE** — The self-report is honest about several limitations and the core translation/embedding paths are real, but the score is still generous. The main downgrade drivers are unproven chunk parallelism, missing Phase 8b CLI coverage, dead cache-hit accounting, and loss of persistent cache reuse compared with the 1.x Phase 7a-2 pipeline. I would treat this as about `78/100` and require a focused RE-CODE if the phase is expected to claim the Phase 7a-2 reuse DoD rather than merely a first chunk translation/embedding prototype.
+**REJECT** — Round 1’s cache/concurrency/math issues were substantially fixed, but the current CLI can exit 0 after translation failures and the newly added health/config error branches are not actually locked for `translate-chunks`. Combined with bypassed coverage and the still-missing accepted table test, the self-score of 91 is too high; I would put this around `81/100` and send it to Planner escalation under the Round 2 cap.
