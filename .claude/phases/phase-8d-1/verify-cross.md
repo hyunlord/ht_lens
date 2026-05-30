@@ -1,43 +1,41 @@
 ## 1. Verification of automated checks
 
-The report is not stale: current HEAD is `16d933a chore(phase-8d-1): verify`, and `verify.md` says the last code/test commit was `c4b2250`. I found no later code commits after `verify.md`.
+The report is not stale. Current HEAD is `5884903 chore(phase-8d-1): verify v2`, and `verify.md` correctly identifies `08e54be` as the last code/test commit after the RE-CODE fixes. I found no later source/test commits after `verify.md`.
 
-Lint/format/type evidence is plausible, but the test command is not CI-equivalent. `verify.md` reports `uv run pytest -m "not llm and not slow" -q --no-cov`, while `.github/workflows/ci.yml:49` runs without `--no-cov`, and `pyproject.toml:71` enables coverage by default. They intentionally bypassed the configured coverage path, then marked coverage n/a.
+The Round 1 findings were materially addressed: `order_idx` sorting was removed in `src/ht_lens/api/static/js/sections.js:25-64`, heading self-enrichment is skipped in `src/ht_lens/api/static/js/reflow.js:176-183`, and `tests/integration/test_reflow_load_js.py:106` covers a no-`order_idx` load path plus TOC toggle behavior.
 
-CI evidence is weak. The repo has real GitHub Actions at `.github/workflows/ci.yml`, including `shellcheck scripts/*.sh` plus the Python checks. `verify.md` says CI is n/a / local equivalent, but does not run or account for shellcheck and does not show a green Actions run.
+Lint/format/type/test evidence is plausible and now uses the configured coverage path: `pyproject.toml:71` enables `--cov=ht_lens`, and `verify.md` reports `692 passed, 1 skipped, 7 deselected` with TOTAL 75%. That fixes the prior `--no-cov` evidence gap.
+
+CI evidence remains incomplete. `.github/workflows/ci.yml:15-17` still runs shellcheck, and `.github/workflows/ci.yml:48-49` runs pytest in GitHub Actions, but `verify.md` marks CI as n/a. More importantly, CI sets up Node but does not install `jsdom`; the new tests locate host-global jsdom via ad hoc paths in `tests/integration/test_reflow_load_js.py:24-33`, so these phase-critical JS tests may skip on a clean GitHub runner.
 
 ## 2. Verification of functional checks
 
-The jsdom functional coverage is materially stronger than the plan stage: the tests cover digit-required citations, section-membership refs, KaTeX skip, original-based section identity, parent section selection, ref-click propagation, and TOC DOM placement.
+Functional coverage is substantially stronger than Round 1. The new load integration test uses the real `reflow.html`, imports `reflow.js`, stubs a live-shaped `/v2/reflow` response with no `order_idx`, verifies section identity, ensures headings do not self-link, checks citation/ref enrichment, renders TOC links, and exercises the TOC toggle.
 
-The largest functional gap is that the new section logic is tested against synthetic chunks containing `order_idx`, but the real `/v2/documents/{doc_id}/reflow` response does not expose `order_idx`; see `src/ht_lens/api/routers/reflow.py:49-62`. `sections.js` sorts on `order_idx` in `buildSectionTree` and `computeSectionChunks` (`src/ht_lens/api/static/js/sections.js:29`, `:63`), so the tests do not match the live API contract.
+The component tests cover the debate risks well: digit-required citations in `test_reflow_enrich_js.py:77`, section membership gating in `:88`, adjacent matches in `:100`, KaTeX skip in `:115`, original-heading parsing in `test_reflow_sections_js.py:125`, parent selection boundaries in `:137`, and ref-click stop propagation in `:188`.
 
-Visual verification is still thin. `test_toc_drawer_outside_compare_grid` only asserts that `#toc` is outside `.layout`; it does not verify rendered drawer width, header overlap, mobile behavior, or actual visible citation/reference styling. The live serving check in `verify.md` confirms assets are 200 and imports exist, not that A+B workflows work in a browser.
+The remaining functional gap is visual/browser realism. `test_toc_drawer_outside_compare_grid` verifies DOM placement only; it does not prove the fixed drawer avoids header overlap, works on mobile widths, or that citation/ref styling is visually usable. That is a fair residual limitation for a frontend phase, though `verify.md` acknowledges pixel/visual checks as manual.
 
 ## 3. Score audit
 
-독창성 / 15: `12/15` is defensible. DOM-only enrichment and heading-membership disambiguation fit the phase without new dependencies. I would keep 12, with the caveat that the client-only section model is a temporary duplicate of future backend section semantics.
+독창성 / 15: `12/15` is justified. The DOM-only enrichment in `enrich_inline.js` and client-side section tree are scoped and dependency-free. No deduction beyond their own score.
 
-완결성 / 35: `31/35` is too high. The A+B unit behavior is mostly covered, but functional evidence misses live API schema integration (`order_idx` absent from `ReflowChunk`) and lacks browser visual evidence for a UI phase. I would score 28/35.
+완결성 / 35: `31/35` is mostly justified after RE-CODE. A+B are covered by 15 focused tests and a load integration test. I would deduct one additional point for lack of real browser visual evidence: fair `30/35`.
 
-안정성 / 30: `28/30` is too high. The exact CI test command was not run because `--no-cov` bypasses configured coverage, CI was not actually green, and the new TOC toggle handler at `src/ht_lens/api/static/js/reflow.js:208-212` has no explicit test. I would score 24/30.
+안정성 / 30: `28/30` is slightly high. The production regressions from Round 1 are locked, but CI does not appear to provision `jsdom`, so the JS safety net may be local-only despite being central to this phase. Fair `26/30`.
 
-확장성 / 20: `17/20` is slightly optimistic. The `sectionselect` event is a useful bridge to 8d-2, but the current JS depends on ordering data absent from the API schema and defers canonical section boundaries. I would score 15/20.
+확장성 / 20: `17/20` is justified. Removing `order_idx` dependence aligns with the API contract, and `sectionselect` exposes `secNo` for 8d-2. The backend canonical section model is still deferred, but already acknowledged.
 
-Fair total: 79/100, not 88/100.
+Fair total: **85/100**. This is a modest downgrade from 88, not a rejection.
 
 ## 4. Issues missed (new this round)
 
-`sections.js` depends on `order_idx`, but the live reflow API omits it. Tests define `H/T` fixtures with `order_idx` in `tests/integration/test_reflow_sections_js.py:61-64`, masking the mismatch. Current browsers may preserve API order when the comparator returns `NaN`, but this is accidental and untested; either the API should expose `order_idx` or the frontend should explicitly trust response order.
+The main missed issue is test portability, not production behavior. The newly added `tests/integration/test_reflow_load_js.py` and the existing/new section tests depend on `_find_jsdom()` host paths such as `~/github/WorldFork/frontend/node_modules/jsdom` and global `/usr/lib/node_modules/jsdom`, but the repo has no `package.json`, no npm install step, and `.github/workflows/ci.yml:28-37` only sets up Node and `uv`. On a clean CI runner, these tests likely skip, weakening the claim that RE-CODE paths are CI-locked.
 
-The TOC toggle path is new but untested. `reflow.html:14` adds `#toc-toggle`, and `reflow.js:208-212` mutates `hidden`/`aria-expanded`, but no test clicks the real toggle or verifies initial/after states. For a UI feature whose main affordance is hidden by default, this is a direct functional gap.
+I do not see an untested new production path from RE-CODE itself. The order contract fix is covered by `test_load_builds_enriches_toc_without_order_idx`, the heading self-ref guard is covered by `headingSelfRef == 0`, and the previously untested TOC toggle is now exercised through the real page DOM.
 
-The full `load()` integration path is not tested. Component tests cover `enrichInline`, `renderToc`, and `wireRefJump` separately, but there is no jsdom fetch-backed test proving that a real `/v2/reflow`-shaped response builds `sectionNums`, enriches chunks, renders the TOC, wires selection callbacks, and handles refs together.
-
-The old error rendering XSS surface remains and weakens the “DOM-only/no XSS surface” claim. `reflow.js:194` interpolates `e.message` into `innerHTML`, and `e.message` includes up to 160 chars of response body from `r.text()` at `reflow.js:154-155`. This predates 8d-1, but the verify report repeats broad safety claims without acknowledging that the page still has an unsafe error sink.
-
-Reference enrichment also applies inside headings. Because `reflow.js:180` calls `enrichInline` on every chunk after setting `data-sec`, a heading like `28.4 Title` can wrap its own section number as `.rf-ref`. Clicking that number will jump to itself and stop the chunk sync handler, which is not covered by `test_ref_click_does_not_trigger_chunk_sync`.
+The pre-existing `innerHTML` error sink at `src/ht_lens/api/static/js/reflow.js:197` is now honestly scoped as debt in `verify.md`; I am not re-raising it as a Round 2 defect because it was acknowledged and not changed by RE-CODE.
 
 ## 5. Verdict
 
-**DOWNGRADE** — The implementation appears mostly functional for the scoped A+B phase, and the debate points were addressed more concretely than usual. But the self-score overstates stability/completeness: CI-equivalent checks were not actually run, visual/browser verification is shallow, and the section tests use an `order_idx` field missing from the real API response. I would rate this around **79/100** and ask for targeted RE-CODE or planner acceptance with explicit debt tracking, not a full rejection.
+**DOWNGRADE** — The RE-CODE fixes the concrete Round 1 defects, and I do not find a new production regression requiring another RE-CODE. The self-verification is still a little too confident because the phase-critical jsdom tests are not guaranteed to run in CI, and visual validation remains shallow for a UI feature. Fair score: **85/100**.
