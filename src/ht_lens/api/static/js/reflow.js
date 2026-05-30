@@ -14,7 +14,7 @@ import {
   jumpToSection,
   parseSectionNo,
   renderToc,
-  selectSection,
+  selectSectionByHeading,
   wireRefJump,
 } from "./sections.js";
 
@@ -190,7 +190,8 @@ async function load() {
     if (tocNav) {
       renderToc(buildSectionTree(data.chunks), tocNav, {
         onJump: (sec) => jumpToSection(sec, paneReflow),
-        onSelect: (sec) => selectSection(sec, data.chunks, paneReflow),
+        onSelect: (headingChunkId) =>
+          selectSectionByHeading(headingChunkId, data.chunks, paneReflow),
       });
     }
     wireRefJump(paneReflow);

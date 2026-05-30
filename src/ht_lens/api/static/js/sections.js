@@ -107,6 +107,52 @@ export function selectSection(secNo, chunks, contentEl) {
   return { secNo, headingChunkId, chunkIds };
 }
 
+/** Section range from a CONCRETE heading chunk id (mirrors the Python
+ *  ``section_chunk_range``). Resolves duplicate/unnumbered section numbers
+ *  unambiguously — the chat path must use this, not the secNo-first variant
+ *  (verify-cross R1). Returns {headingChunkId, secNo, chunkIds}. */
+export function computeSectionByHeading(headingChunkId, chunks) {
+  const head = chunks.findIndex((c) => c.id === headingChunkId);
+  if (head < 0) return { headingChunkId, secNo: null, chunkIds: [] };
+  const secNo = parseSectionNo(chunks[head].original ?? "");
+  const startDepth = secNo ? depthOf(secNo) : null;
+  let end = chunks.length;
+  for (let i = head + 1; i < chunks.length; i++) {
+    const c = chunks[i];
+    if (c.type !== "heading") continue;
+    if (startDepth === null) {
+      end = i; // unnumbered heading → stop at the next heading of any kind
+      break;
+    }
+    const sn = parseSectionNo(c.original ?? "");
+    if (sn && depthOf(sn) <= startDepth) {
+      end = i;
+      break;
+    }
+  }
+  return { headingChunkId, secNo, chunkIds: chunks.slice(head, end).map((c) => c.id) };
+}
+
+/** Highlight + emit ``sectionselect`` for a section identified by its heading
+ *  chunk id (verify-cross R1 — duplicate-safe). The TOC/chat path uses this. */
+export function selectSectionByHeading(headingChunkId, chunks, contentEl) {
+  const { secNo, chunkIds } = computeSectionByHeading(headingChunkId, chunks);
+  const idset = new Set(chunkIds.map(String));
+  for (const el of contentEl.querySelectorAll(".chunk.section-selected")) {
+    el.classList.remove("section-selected");
+  }
+  for (const el of contentEl.querySelectorAll(".chunk")) {
+    if (idset.has(el.dataset.chunkId)) el.classList.add("section-selected");
+  }
+  contentEl.dispatchEvent(
+    new CustomEvent("sectionselect", {
+      detail: { secNo, headingChunkId, chunkIds },
+      bubbles: true,
+    }),
+  );
+  return { secNo, headingChunkId, chunkIds };
+}
+
 /** Scroll to a section's heading chunk and flash it. */
 export function jumpToSection(secNo, contentEl) {
   const target = contentEl.querySelector(`.chunk[data-sec="${secNo}"]`);
@@ -149,15 +195,15 @@ function buildUl(nodes, onJump, onSelect) {
       });
     }
     li.appendChild(a);
-    if (node.secNo && onSelect) {
+    if (node.chunkId != null && onSelect) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "toc-select";
       btn.textContent = "선택";
-      btn.dataset.sec = node.secNo;
+      btn.dataset.chunkId = String(node.chunkId);
       btn.addEventListener("click", (e) => {
         e.preventDefault();
-        onSelect(node.secNo);
+        onSelect(node.chunkId); // pass the concrete heading chunk id (R1, dup-safe)
       });
       li.appendChild(btn);
     }

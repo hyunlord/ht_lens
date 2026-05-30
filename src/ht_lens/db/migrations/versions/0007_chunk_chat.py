@@ -51,6 +51,11 @@ def upgrade() -> None:
         ),
         sa.Column("title", sa.String(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
+        # DB-layer guard beyond the API Literal (verify-cross R1): direct
+        # migration/backfill code cannot insert an unknown anchor_type.
+        sa.CheckConstraint(
+            "anchor_type IN ('chunk', 'section')", name="ck_chunk_threads_anchor_type"
+        ),
     )
     op.create_index("ix_chunk_threads_doc", "chunk_threads", ["doc_id"])
 

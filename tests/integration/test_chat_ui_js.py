@@ -48,6 +48,7 @@ _PRELUDE = """
       <div id="chat-status"></div>
       <div id="content"></div>
       <div id="chat-messages"></div>
+      <div id="chat-pins"></div>
     </body></html>`).window;
     globalThis.window = w; globalThis.document = w.document;
     globalThis.HTMLElement = w.HTMLElement; globalThis.Element = w.Element;
@@ -55,7 +56,8 @@ _PRELUDE = """
     globalThis.DocumentFragment = w.DocumentFragment; globalThis.CustomEvent = w.CustomEvent;
     globalThis.MouseEvent = w.MouseEvent;
     globalThis.fetch = () => Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
-    const { setSelection, renderAssistant, initChat } = await import("%(chat)s");
+    const { setSelection, renderAssistant, initChat, ask, pinCurrent } =
+      await import("%(chat)s");
 """
 
 
@@ -127,3 +129,87 @@ def test_render_assistant_sanitizes_html(jsdom_url: str) -> None:
     assert out["hasOnerror"] is False  # event handler stripped
     assert out["jsHref"] is False  # javascript: href neutralised
     assert out["hasBold"] is True and out["endText"] is True  # markdown preserved
+
+
+def test_set_selection_clears_transcript(jsdom_url: str) -> None:
+    """verify-cross R1: a new selection clears the visible transcript so one
+    anchor's conversation never lingers while a fresh thread starts."""
+    script = """
+    const msgs = document.getElementById('chat-messages');
+    msgs.appendChild(document.createElement('div'));  // pretend prior conversation
+    const before = msgs.children.length;
+    setSelection({ type: 'section', chunkId: 42, label: '28.4' });
+    console.log(JSON.stringify({ before, after: msgs.children.length }));
+    """
+    out = _run(script, jsdom_url)
+    assert out["before"] == 1 and out["after"] == 0
+
+
+def test_ask_creates_thread_posts_and_renders(jsdom_url: str) -> None:
+    """verify-cross R1: the real ask flow — POST /v2/threads (right anchor),
+    POST messages, render the assistant reply (markdown)."""
+    script = """
+    const content = document.getElementById('content');
+    initChat({ docId: 1, contentEl: content });
+    setSelection({ type: 'section', chunkId: 42, label: '28.4' });
+    const calls = [];
+    globalThis.fetch = (url, opts) => {
+      const o = opts || {};
+      calls.push({ url, method: o.method || 'GET', body: o.body });
+      if (url === '/v2/threads' && o.method === 'POST')
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 7 }) });
+      if (url.includes('/messages'))
+        return Promise.resolve({ ok: true,
+          json: () => Promise.resolve({ role: 'assistant', content: '**답변**' }) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    };
+    await ask('이 절 질문');
+    const msgs = document.getElementById('chat-messages');
+    const threadCall = calls.find((c) => c.url === '/v2/threads');
+    const msgCall = calls.find((c) => c.url.includes('/messages'));
+    console.log(JSON.stringify({
+      threadBody: JSON.parse(threadCall.body),
+      msgUrl: msgCall.url,
+      msgBody: JSON.parse(msgCall.body),
+      user: (msgs.querySelector('.msg--user') || {}).textContent,
+      assistantBold: msgs.querySelector('.msg--assistant strong') !== null,
+    }));
+    """
+    out = _run(script, jsdom_url)
+    assert out["threadBody"] == {"doc_id": 1, "anchor_type": "section", "chunk_id": 42}
+    assert out["msgUrl"] == "/v2/threads/7/messages"
+    assert out["msgBody"] == {"content": "이 절 질문"}
+    assert out["user"] == "이 절 질문"
+    assert out["assistantBold"] is True  # markdown-rendered assistant reply
+
+
+def test_pin_posts_and_reloads(jsdom_url: str) -> None:
+    script = """
+    const content = document.getElementById('content');
+    initChat({ docId: 1, contentEl: content });
+    setSelection({ type: 'chunk', chunkId: 5, label: '#5' });
+    const calls = [];
+    globalThis.fetch = (url, opts) => {
+      const o = opts || {};
+      calls.push({ url, method: o.method || 'GET', body: o.body });
+      if (url === '/v2/pins' && o.method === 'POST')
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ id: 1 }) });
+      if (url.includes('/pins'))
+        return Promise.resolve({ ok: true,
+          json: () => Promise.resolve([{ id: 1, chunk_id: 5 }]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    };
+    await pinCurrent();
+    for (let i = 0;
+         i < 50 && document.querySelectorAll('#chat-pins .pin-link').length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const pinCall = calls.find((c) => c.url === '/v2/pins' && c.method === 'POST');
+    console.log(JSON.stringify({
+      pinBody: JSON.parse(pinCall.body),
+      pinLinks: document.querySelectorAll('#chat-pins .pin-link').length,
+    }));
+    """
+    out = _run(script, jsdom_url)
+    assert out["pinBody"] == {"doc_id": 1, "chunk_id": 5}
+    assert out["pinLinks"] == 1  # pin POSTed + list reloaded/rendered

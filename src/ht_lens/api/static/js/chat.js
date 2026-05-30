@@ -22,13 +22,17 @@ let threadId = null; // reset whenever the selection changes → new context
 /** Update the current chat anchor + the status line. Exported for tests. */
 export function setSelection(sel) {
   selection = sel;
-  threadId = null;
+  threadId = null; // new selection → new backend thread
   const status = $("chat-status");
   if (status) {
     status.textContent = sel
       ? `${sel.type === "section" ? "섹션" : "문단"} 선택: ${sel.label}`
       : "선택된 항목 없음";
   }
+  // Clear the visible transcript so a new selection never shows another
+  // anchor's conversation while posting to a fresh thread (verify-cross R1).
+  const messages = $("chat-messages");
+  if (messages) messages.replaceChildren();
 }
 
 /** Render assistant markdown into a sanitised bubble (challenge R7). */
@@ -176,4 +180,4 @@ export function initChat({ docId: id, contentEl }) {
   loadPins();
 }
 
-export { ask, loadPins };
+export { ask, loadPins, pinCurrent };

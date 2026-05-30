@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, LargeBinary
+from sqlalchemy import CheckConstraint, ForeignKey, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ht_lens.db.base import Base
@@ -206,6 +206,9 @@ class ChunkThread(Base):
     """
 
     __tablename__ = "chunk_threads"
+    __table_args__ = (
+        CheckConstraint("anchor_type IN ('chunk', 'section')", name="ck_chunk_threads_anchor_type"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     doc_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))

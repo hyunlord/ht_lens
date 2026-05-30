@@ -55,7 +55,7 @@ _PRELUDE = """
     globalThis.MouseEvent = w.MouseEvent; globalThis.DocumentFragment = w.DocumentFragment;
     const {
       parseSectionNo, buildSectionTree, computeSectionChunks,
-      selectSection, jumpToSection, wireRefJump, renderToc,
+      selectSection, selectSectionByHeading, jumpToSection, wireRefJump, renderToc,
     } = await import("%(mod)s");
     // Heading / text chunk factories. NB: chunks carry NO order_idx (matches
     // ReflowChunk in reflow.py); document order == array order (verify-cross
@@ -225,6 +225,37 @@ def test_render_toc_nested_with_callbacks(jsdom_url: str) -> None:
     out = _run(script, jsdom_url)
     assert out["links"] == ["28.4 C", "28.4.1 D", "28.5 G"]
     assert out["nested"] is True and out["jumped"] == "28.4" and out["selects"] == 3
+
+
+def test_select_section_by_heading_resolves_duplicates(jsdom_url: str) -> None:
+    """verify-cross R1: the product path must anchor a section by its concrete
+    heading chunk id, so a SECOND '28.4' resolves to its own range — not the
+    first. Emits headingChunkId for the 8d-2 chat anchor."""
+    script = """
+    const content = document.getElementById('content');
+    // Two '28.4' headings (e.g. body + appendix excerpt) with distinct ids.
+    const chunks = [
+      H(1, 0, '28.4 First'), T(2, 1), H(3, 2, '28.5 Mid'),
+      H(4, 4, '28.4 Second'), T(5, 5), H(6, 6, '28.6 End'),
+    ];
+    for (const c of chunks) {
+      const d = document.createElement('div');
+      d.className = 'chunk'; d.dataset.chunkId = String(c.id);
+      content.appendChild(d);
+    }
+    let evt = null;
+    content.addEventListener('sectionselect', (e) => { evt = e.detail; });
+    selectSectionByHeading(4, chunks, content);  // pick the SECOND 28.4 (id 4)
+    console.log(JSON.stringify({
+      headingChunkId: evt && evt.headingChunkId,
+      secNo: evt && evt.secNo,
+      chunkIds: evt && evt.chunkIds,
+    }));
+    """
+    out = _run(script, jsdom_url)
+    assert out["headingChunkId"] == 4  # the SECOND 28.4, not the first (id 1)
+    assert out["secNo"] == "28.4"
+    assert out["chunkIds"] == [4, 5]  # second 28.4's range, stops before 28.6
 
 
 _LAYOUT_SCRIPT = """
