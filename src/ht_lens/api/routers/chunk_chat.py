@@ -17,6 +17,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import delete, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ht_lens.api.chunk_chat_context import (
@@ -206,8 +207,10 @@ async def post_message(
         _log.warning("chunk-chat LLM error thread_id=%s: %s", thread_id, exc)
         raise _map_llm_error(exc) from exc  # nothing written yet (challenge R8)
 
-    # Re-check the thread: a concurrent DELETE during the LLM call must not
-    # leave orphaned messages (challenge R8) — deterministic, not FK-reliant.
+    # A DELETE during the LLM call must not orphan messages (challenge R8).
+    # Drop the pre-LLM read snapshot so the re-fetch sees committed deletes;
+    # the FK on chunk_messages.thread_id is the hard backstop at commit.
+    await session.rollback()
     if await session.get(ChunkThread, thread_id) is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -228,7 +231,14 @@ async def post_message(
         created_at=now,
     )
     session.add(assistant)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:  # FK backstop: parent vanished mid-flight
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="thread was deleted during the request",
+        ) from exc
     await session.refresh(assistant)
     return assistant
 
