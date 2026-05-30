@@ -23,17 +23,17 @@ const isAncestor = (anc, sec) => sec.startsWith(anc + ".");
 /** Nested tree of {secNo,title,chunkId,order,depth,children} from heading
  *  chunks (in document order). Unnumbered headings are depth-1 roots. */
 export function buildSectionTree(chunks) {
+  // Chunks arrive in document order: the reflow API orders by order_idx
+  // but does NOT expose the field, so we trust response order rather than
+  // re-sorting on an absent key (verify-cross R1).
   const headings = chunks
     .filter((c) => c.type === "heading")
-    .slice()
-    .sort((a, b) => a.order_idx - b.order_idx)
     .map((c) => {
       const secNo = parseSectionNo(c.original ?? "");
       return {
         secNo,
         title: (c.translated ?? c.original ?? "").trim(),
         chunkId: c.id,
-        order: c.order_idx,
         depth: secNo ? depthOf(secNo) : 1,
         children: [],
       };
@@ -60,7 +60,8 @@ export function buildSectionTree(chunks) {
  *  heading of same-or-shallower depth (so a parent includes its children;
  *  debate R7). Returns {secNo, chunkIds}. */
 export function computeSectionChunks(secNo, chunks) {
-  const ordered = chunks.slice().sort((a, b) => a.order_idx - b.order_idx);
+  // Trust document order from the API (verify-cross R1: no order_idx field).
+  const ordered = chunks;
   const head = ordered.findIndex(
     (c) => c.type === "heading" && parseSectionNo(c.original ?? "") === secNo,
   );

@@ -176,8 +176,11 @@ async function load() {
       if (chunk.type === "heading") {
         const secNo = parseSectionNo(chunk.original ?? "");
         if (secNo) el.dataset.sec = secNo;
+        // Headings are titles, not prose — don't enrich, so a heading never
+        // wraps its own section number as a self-referential link (R1).
+      } else {
+        enrichInline(el, sectionNums); // after renderChunk's applyMath → KaTeX-safe
       }
-      enrichInline(el, sectionNums); // after renderChunk's applyMath → KaTeX-safe
       el.addEventListener("click", () => syncToChunk(el));
       paneReflow.appendChild(el);
     }
