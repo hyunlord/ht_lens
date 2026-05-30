@@ -116,3 +116,48 @@ def test_translate_chunks_cli_unknown_doc_exits_2(
     monkeypatch.setenv("LLM_PROVIDER", "mock")
     rc = main(["translate-chunks", "--doc-id", "99999", "--db", str(api_db_path)])
     assert rc == 2
+
+
+def _ingest_doc(tmp_path: Path, db: Path, monkeypatch) -> int:  # type: ignore[no-untyped-def]
+    """Ingest the fixture as a 2.0 doc; return doc_id (always 1 in a fresh DB)."""
+    monkeypatch.chdir(tmp_path)
+    cl = _mineru_dir(tmp_path)
+    assert main(["ingest-mineru", str(cl), "--filename", "x.pdf", "--db", str(db)]) == 0
+    import sqlite3
+
+    con = sqlite3.connect(db)
+    try:
+        return int(con.execute("SELECT id FROM documents LIMIT 1").fetchone()[0])
+    finally:
+        con.close()
+
+
+def test_translate_chunks_cli_failure_exits_1(
+    tmp_path: Path, api_db_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """verify-cross R2 (real defect): when chunks fail translation the CLI
+    must exit non-zero so 8e batch detects it (was exit 0)."""
+    doc_id = _ingest_doc(tmp_path, api_db_path, monkeypatch)
+    monkeypatch.setenv("TRANSLATE_LLM_PROVIDER", "mock_fail")
+    monkeypatch.setenv("LLM_PROVIDER", "mock_fail")
+    rc = main(["translate-chunks", "--doc-id", str(doc_id), "--db", str(api_db_path)])
+    assert rc == 1  # FailMock → all text chunks failed → exit 1
+
+
+def test_translate_chunks_cli_health_check_failure_exits_4(
+    tmp_path: Path, api_db_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """health_check() is now called (fail-fast); a failing endpoint → exit 4."""
+    doc_id = _ingest_doc(tmp_path, api_db_path, monkeypatch)
+    monkeypatch.setenv("TRANSLATE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+
+    from ht_lens.llm.errors import LLMHealthCheckFailed
+    from ht_lens.llm.mock import MockLLMClient
+
+    async def _boom(self) -> bool:  # type: ignore[no-untyped-def]
+        raise LLMHealthCheckFailed("endpoint down")
+
+    monkeypatch.setattr(MockLLMClient, "health_check", _boom)
+    rc = main(["translate-chunks", "--doc-id", str(doc_id), "--db", str(api_db_path)])
+    assert rc == 4

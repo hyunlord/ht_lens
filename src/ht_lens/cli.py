@@ -394,6 +394,11 @@ def translate_chunks_command(
 
     async def _run() -> None:
         llm = from_env_translate()
+        # Verify endpoint health before starting (fail-fast, mirrors the 1.x
+        # `translate` command). Without this the LLMHealthCheckFailed branch
+        # below is unreachable since per-chunk errors become failed rows
+        # (verify-cross R2).
+        await llm.health_check()
         engine = make_engine(db_path)
         factory = make_session_factory(engine)
         try:
@@ -408,6 +413,12 @@ def translate_chunks_command(
                 f"passthrough={stats.passthrough} cached={stats.cached} "
                 f"skipped={stats.skipped} failed={stats.failed}"
             )
+            # Non-zero exit when any chunk failed, so batch/automation (8e
+            # migration) detects failures instead of silently proceeding —
+            # the real defect verify-cross R2 caught. Mirrors 1.x translate.
+            if stats.failed > 0:
+                typer.echo(f"warning: {stats.failed} chunk(s) failed translation", err=True)
+                raise typer.Exit(code=1)
         finally:
             await engine.dispose()
 
