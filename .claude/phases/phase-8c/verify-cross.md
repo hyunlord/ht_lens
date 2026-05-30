@@ -1,47 +1,45 @@
 ## 1. Verification of automated checks
 
-The verify report is not stale relative to code: HEAD is `4eb073c chore(phase-8c): verify`, after the code/test commits `57867da` and `7bfe387`. No committed code changes appear after `verify.md`.
+`verify.md` is not stale relative to committed code: HEAD is `1ebfe03 chore(phase-8c): verify v2`, after the RE-CODE test commit `2f456ad`. Current working tree has only untracked `.claude/phases/phase-8c/summary.md`, so code evidence is not stale, but the strict clean-tree precheck is not fully true.
 
-The lint/format/type/test claims are plausible but not independently reproducible from the report: it gives only summary strings, not command output. The bigger gap is coverage: `pyproject.toml:71` normally enables coverage, but verify explicitly ran `uv run pytest ... --no-cov`, so the 5-A “Coverage included” workflow requirement was not satisfied.
+R1’s coverage concern is unchanged since Round 1: `verify.md:11` still reports `uv run pytest ... --no-cov`, while `pyproject.toml:71` configures pytest-cov by default. Lint/format/type/test summaries are plausible, but coverage evidence is absent.
 
-`git status` is not clean at audit time: `.claude/phases/phase-8c/summary.md` and `.claude/phases/phase-8c/verify-cross.md` are untracked. That does not make `verify.md` stale for code, but it contradicts the strict “working tree clean” verification precheck.
+The RE-CODE regression evidence is mostly credible: the four tests named in `verify.md:19-22` exist and target traversal, `syncToChunk`, cached page image success, and positive PDF render. Minor accuracy issue: `verify.md:14` says “13 test_reflow_api + 7 test_reflow_viewer_js,” but the file currently contains 12 API tests plus 7 JS tests.
 
-CI is marked n/a because GitHub CI has not run for the branch. That is honest enough, but it means CI evidence is absent, not green.
+CI remains absent, not green: `verify.md:12` marks GitHub CI as n/a. That is honest, but should not be treated as CI-equivalent evidence.
 
 ## 2. Verification of functional checks
 
-The API tests exercise the read-model shape well: order/type, failed translation fallback, table preservation, bbox `[]`, image 404, and missing page cache are covered in `tests/integration/test_reflow_api.py`.
+The four R1 coverage gaps were materially addressed. `tests/integration/test_reflow_api.py:145` now exercises traversal, `:202` positive PDF rendering, and `:217` cached page image success. `tests/integration/test_reflow_viewer_js.py:169` now imports and calls `syncToChunk` against a compare-mode DOM.
 
-The DoD’s strongest functional claim, “doc7 chapter reflow naturalness,” rests on a manual Playwright run described in `.claude/phases/phase-8c/verify.md:19`. There is no committed Playwright test, command transcript, screenshot path, or fixture. That makes the evidence weaker than the report implies.
+The committed tests now cover the API/read-model and core renderer well: ordering, translated-only status, table fallback, bbox `[]`, jpg figures, missing images, page-cache 404/200, heading/text/equation/image/table DOM, and KaTeX.
 
-Left-right compare is under-tested in committed tests. `src/ht_lens/api/static/js/reflow.js:121` defines `syncToChunk`, but tests only assert `data-page-idx` exists; no test imports/calls `syncToChunk`, toggles compare mode, or checks `.pdf-page.hl`.
+Two functional DoD claims still lean on manual evidence. `verify.md:27` cites a Playwright E2E for doc7 naturalness, but no committed Playwright script, screenshot path, command transcript, or fixture is present. `verify.md:28` also cites Playwright for actual toggle behavior. The jsdom test covers `syncToChunk` once already in compare mode; it does not exercise the radio toggle handler at `src/ht_lens/api/static/js/reflow.js:170-173` or the real click listener path at `:157`.
 
-The page-image success path is also not locked. `tests/integration/test_reflow_api.py:159` only asserts 404 when cache is absent, while `src/ht_lens/api/routers/reflow.py:165` is central to the left pane. A cached PNG 200 response test is missing.
+The ROADMAP says “chunk bbox sync” at `ROADMAP.md:231`; the phase artifacts explicitly downgrade this to Planner-approved page-level sync in `.claude/phases/phase-8c/challenge.md:16`. Given that exception, this is acceptable, but it is not full bbox sync.
 
 ## 3. Score audit
 
-독창성 / 15: 12/15 is justified. The implementation is intentionally conservative: `/v2` separation, render-cache instead of `Page` rows, and sandbox-seeded layout. No deduction beyond their own.
+독창성 / 15: 12/15 is justified. The implementation stayed conservative: `/v2` split, render-cache instead of mutating `pages`, single JS module, and reuse of KaTeX.
 
-완결성 / 35: 32/35 is too high. The API shape is complete, but two DoD-facing flows are only manually evidenced: doc7 visual quality and compare sync. The committed suite lacks a positive page-image test and an actual compare sync test. I would score 28/35.
+완결성 / 35: 32/35 is a bit high. R1’s four concrete gaps are fixed, but doc7 naturalness and actual UI toggle/click flow are still manual-only. I would score 30/35.
 
-안정성 / 30: 27/30 is high. The full test run skipped coverage, traversal rejection is claimed by the test name but not actually asserted in `tests/integration/test_reflow_api.py:129`, and new JS sync behavior is not unit-tested. I would score 23/30.
+안정성 / 30: 28/30 is high because coverage was explicitly disabled and some UI event handlers remain untested. The important API regressions are now locked, so this is not a reject-level problem. I would score 26/30.
 
-확장성 / 20: 17/20 is mostly fair, but Phase 8e still has to discover how page render caches get populated operationally; `render_doc_pages` exists but no CLI/API setup path is wired. I would score 15/20.
+확장성 / 20: 16/20 is fair. `render_doc_pages` exists and is tested, but `verify.md:38` correctly admits the operational cache-fill path is deferred to 8e. Confirm 16/20.
 
-Fair total: about 78/100, not 88/100.
+Fair total: about 84/100, not 88/100.
 
 ## 4. Issues missed (new this round)
 
-`test_chunk_image_jpg_served_and_traversal_rejected` does not test traversal. The only seeded `img_path` is a normal temp `.jpg` at `tests/integration/test_reflow_api.py:132-140`. The new `_validate_v2_image` traversal branch at `src/ht_lens/api/routers/reflow.py:132-136` has no explicit coverage despite being called out in debate/challenge.
+No RE-CODE production regression found: commit `2f456ad` is tests-only, and it directly addresses the four Round 1 findings. Do not re-raise those as defects.
 
-`syncToChunk` is a new exported event-path with no direct test coverage. `src/ht_lens/api/static/js/reflow.js:121-131` contains the active chunk, page highlight, and scroll behavior, but `tests/integration/test_reflow_viewer_js.py` never imports `syncToChunk` or constructs a compare-mode layout. This is exactly the kind of UI state/event path that tends to regress silently.
+The regression-check section does not follow the required workflow table. `WORKFLOW.md` requires a RE-CODE table mapping each change to “새 함수/state/handler” and “잠금 단위 테스트”; `verify.md:31-32` gives a narrative sentence instead. The content is mostly there, but the required audit shape is missing.
 
-The left-pane success path is untested. `page_image` at `src/ht_lens/api/routers/reflow.py:165-183` only has a “not cached” test. Phase 8c’s compare pane depends on serving cached source pages, so a test should create `HT_LENS_EXTRACTS_V2_DIR/<doc>/pages/page_0000.png` and assert `200 image/png` plus `Cache-Control: no-cache`.
+The actual compare toggle event remains untested. `test_sync_to_chunk_compare_highlights_page` starts with `data-mode="compare"` and calls `syncToChunk` directly; it does not change the radio buttons or verify `layout.dataset.mode` updates via `reflow.js:170-173`.
 
-`render_doc_pages` has only negative coverage. `tests/integration/test_reflow_api.py:171-175` verifies missing source PDF raises, but no test renders even a tiny fixture PDF and then verifies the cache file names match what `page_image` serves. A filename mismatch here would pass the current suite and break compare mode.
-
-The verify report overstates “Playwright authoritative.” The debate requested a committed Playwright check; verify says manual E2E only at `.claude/phases/phase-8c/verify.md:46`. That may be acceptable as residual risk, but it should not be used as strong automated evidence.
+The image/page fallback event handlers are still untested. `reflow.js:44-50` replaces a failed figure with `.fig-missing`, and `reflow.js:112-114` changes the page label when source-page render is missing. API 404s are tested, but these visible viewer fallback paths are not.
 
 ## 5. Verdict
 
-**DOWNGRADE** — The implementation is directionally sound and addressed most debate concerns, but the self-score over-credits manual verification and misses several untested new paths. I would rate this around 78/100. I do not recommend RE-PLAN; a small RE-CODE focused on traversal, compare sync, cached page-image success, and positive `render_doc_pages` coverage would close the main evidence gaps.
+**DOWNGRADE** — Round 1’s concrete coverage gaps were fixed cleanly, and I do not see a RE-CODE regression. The remaining concerns are evidence/process gaps: no coverage run, manual-only doc7/toggle evidence, missing required regression-check table, and a few untested UI event fallbacks. Fair score: ~84/100.
