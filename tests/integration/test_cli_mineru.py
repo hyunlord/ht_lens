@@ -74,3 +74,32 @@ def test_ingest_mineru_cli_accepts_output_dir(
     out_dir = tmp_path / "doc"
     rc = main(["ingest-mineru", str(out_dir), "--filename", "viadir.pdf", "--db", str(api_db_path)])
     assert rc == 0
+
+
+# --- extract-mineru CLI (Phase 8a residual closed in 8b, verify-cross R2) ---
+
+
+def test_extract_mineru_cli_missing_binary_exits_nonzero(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """extract-mineru maps MineruError (missing binary) to a nonzero exit."""
+    pdf = tmp_path / "in.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    monkeypatch.setenv("HT_LENS_MINERU_BIN", "/nonexistent/mineru-xyz")
+    rc = main(["extract-mineru", str(pdf), "-o", str(tmp_path / "out")])
+    assert rc == 4  # MineruError.exit_code
+
+
+def test_extract_mineru_cli_happy_with_fake_binary(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A fake MinerU binary produces a content_list; CLI exits 0."""
+    import stat
+
+    pdf = tmp_path / "in.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    out = tmp_path / "out"
+    fake = tmp_path / "mineru"
+    fake.write_text(
+        f'#!/bin/sh\nmkdir -p "{out}/in/auto"\nprintf "[]" > "{out}/in/auto/in_content_list.json"\n'
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR)
+    monkeypatch.setenv("HT_LENS_MINERU_BIN", str(fake))
+    rc = main(["extract-mineru", str(pdf), "-o", str(out)])
+    assert rc == 0

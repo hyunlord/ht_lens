@@ -55,8 +55,8 @@ def _table_ddl(db_path: Path) -> dict[str, str]:
     return {name: (sql or "") for name, sql in rows}
 
 
-def test_alembic_head_is_0005() -> None:
-    assert ALEMBIC_HEAD == "0005"
+def test_alembic_head_is_0006() -> None:
+    assert ALEMBIC_HEAD == "0006"
 
 
 def test_migration_0005_additive_only(tmp_path: Path) -> None:
@@ -88,6 +88,83 @@ def test_migration_0005_additive_only(tmp_path: Path) -> None:
     assert set(before) - set(after) == set(), "0005 dropped a pre-existing table"
     # Only 'chunks' is new.
     assert set(after) - set(before) == {"chunks"}
+
+
+def test_migration_0006_additive_only(tmp_path: Path) -> None:
+    db = tmp_path / "diff6.db"
+
+    assert _alembic(db, "0005").returncode == 0
+    before = _table_ddl(db)
+    assert "chunk_translations" not in before
+    assert "chunk_embeddings" not in before
+
+    assert _alembic(db, "0006").returncode == 0
+    after = _table_ddl(db)
+
+    # Only the two new 2.0 tables are added; everything else byte-identical.
+    assert set(after) - set(before) == {"chunk_translations", "chunk_embeddings"}
+    assert set(before) - set(after) == set(), "0006 dropped a pre-existing table"
+    for tbl in [*_1X_TABLES, "chunks", "documents"]:
+        assert before.get(tbl) == after.get(tbl), f"table {tbl} DDL changed in 0006"
+
+
+@pytest.mark.asyncio
+async def test_chunk_translation_embedding_round_trip(async_session_factory) -> None:  # type: ignore[no-untyped-def]
+    from datetime import UTC, datetime
+
+    import numpy as np
+    from sqlalchemy import select
+
+    from ht_lens.db.models import Chunk, ChunkEmbedding, ChunkTranslation, Document
+
+    async with async_session_factory() as s:
+        doc = Document(
+            filename="d.pdf",
+            src_lang="en",
+            tgt_lang="ko",
+            status="translated",
+            created_at=datetime.now(UTC),
+            extractor="mineru",
+        )
+        s.add(doc)
+        await s.flush()
+        ch = Chunk(
+            doc_id=doc.id,
+            page_idx=0,
+            order_idx=0,
+            type="text",
+            bbox_json="[0,0,1,1]",
+            content="body",
+        )
+        s.add(ch)
+        await s.flush()
+        s.add(
+            ChunkTranslation(
+                chunk_id=ch.id,
+                translated_text="[KO] body",
+                caption_translated=None,
+                model="mock",
+                status="translated",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        s.add(
+            ChunkEmbedding(
+                chunk_id=ch.id,
+                model="e",
+                dim=4,
+                vector=np.ones(4, dtype=np.float32).tobytes(),
+                source_hash="h",
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await s.commit()
+
+    async with async_session_factory() as s:
+        tr = (await s.execute(select(ChunkTranslation))).scalar_one()
+        em = (await s.execute(select(ChunkEmbedding))).scalar_one()
+        assert tr.translated_text == "[KO] body" and tr.status == "translated"
+        assert em.dim == 4 and em.source_hash == "h"
 
 
 @pytest.mark.asyncio
