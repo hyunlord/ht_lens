@@ -1,38 +1,38 @@
 ## 1. Verification of automated checks
-No stale-verify issue found. HEAD is `3df6e09 chore(phase-8d-2a): verify`, and the immediately preceding code/test commit is `e5154ed`, matching `.claude/phases/phase-8d-2a/verify.md:3`. The verify commit only changes `verify.md`, so the report is not stale relative to code.
+No stale-verify issue found. Current HEAD is `5502c79 chore(phase-8d-2a): verify v2`, and it only changes `.claude/phases/phase-8d-2a/verify.md`; the last code/test commit remains `87fde93`, matching the self-report.
 
-The reported lint/format/mypy/full pytest evidence is plausible and specific, including `714 passed, 1 skipped, 7 deselected` in `verify.md:8-11`. I could not independently rerun even targeted pytest in this read-only sandbox because `uv` failed creating a cache temp file under `~/.cache/uv`, so this audit relies on reported output plus code inspection.
+The lint/format/type/test evidence is specific and plausible: `718 passed, 1 skipped, 7 deselected in 552.79s`. I did not rerun the full suite in this read-only audit, so this is a credibility check against current HEAD and code/tests, not an independent execution.
 
-CI evidence is intentionally absent: `verify.md:13` says GitHub CI is n/a until 8e. That should not be labeled “CI-equivalent”; it is a known gap, especially because frontend jsdom availability is environment-dependent.
+CI is still not real evidence. `verify.md` correctly marks GitHub CI as n/a due to 8e/jsdom provisioning debt. That is acceptable only because the report does not claim PASS_CANDIDATE.
 
 ## 2. Verification of functional checks
-The backend functional checks cover most planned backend surfaces: section context, chunk context, `/v2/threads`, `/v2/pins`, LLM failure no-write, FK orphan prevention, and 0007 additive migration. The tests in `tests/integration/test_chunk_chat_api.py:78-219` and `tests/integration/test_chunk_chat_context.py:74-197` are credible.
+The Round 1 issues that were fixed should not be re-raised: the frontend duplicate-section select path now uses `renderToc(... onSelect: headingChunkId)` in `src/ht_lens/api/static/js/reflow.js:191-194`, `selectSectionByHeading()` in `src/ht_lens/api/static/js/sections.js:138-153`, and transcript clearing in `src/ht_lens/api/static/js/chat.js:23-35`.
 
-The live qwen E2E claim in `verify.md:24` is weak as evidence: it gives a scenario and answer summary, but no command, transcript, request payload, thread id, or saved artifact. It supports smoke confidence, not reproducible verification.
+Backend functional coverage is credible for 8d-2a: chunk/section thread creation, doc mismatch, section-anchor heading validation, LLM failure no-write, deleted-thread behavior, pins, and 1.x non-interference are covered in `tests/integration/test_chunk_chat_api.py:78-219`.
 
-Frontend verification is underpowered for the stated UI scope. `tests/integration/test_chat_ui_js.py` only checks status text, consuming a synthetic `sectionselect`, and assistant sanitization. It does not assert that submitting the chat form creates a thread, posts a message, renders the assistant response, handles API failure cleanly, creates a pin, or loads/deletes pins through mocked fetch calls.
+Frontend coverage improved materially: ask flow and pin flow are now mocked through fetch in `tests/integration/test_chat_ui_js.py:148-215`. However, the actual TOC button-to-chat path is still not tested end-to-end. The new duplicate test calls `selectSectionByHeading(4, ...)` directly at `tests/integration/test_reflow_sections_js.py:248`; it does not click a rendered `.toc-select` button and prove `renderToc()` passes `node.chunkId`.
 
-The most important functional gap: the duplicate-section issue from debate is fixed in the backend context builder, but not in the actual TOC-to-chat UI path. `src/ht_lens/api/static/js/sections.js:63-68` still selects a section by first matching `secNo`, and `src/ht_lens/api/static/js/reflow.js:191-194` passes only `sec` into `selectSection`. A second `28.4` TOC entry will still emit the first `28.4` heading chunk id to chat.
+The live qwen claim remains smoke-level only. `verify.md` still lacks reproducible command/payload/transcript artifacts, so it should not be weighted heavily.
 
 ## 3. Score audit
-독창성 / 15: 12 is reasonable. The separate `chunk_pins` table and heading `chunk_id` section anchor address debate concerns cleanly in the backend (`src/ht_lens/db/models.py:198-248`). No deduction beyond their self-score.
+독창성 / 15: 12/15 is justified. The concrete heading `chunk_id` section anchor and separate `chunk_pins` table are clean responses to debate/R1, visible in `src/ht_lens/db/models.py:198-251`.
 
-완결성 / 35: 31 is too high. Backend completeness is solid, but the implemented frontend does not exercise the real ask/pin workflows, and duplicate section selection remains wrong in `sections.js`. Suggested: 28/35.
+완결성 / 35: 31/35 is slightly high but defensible only as a non-pass score. The core DoD subset is implemented, but Roadmap Phase 8d still includes figure chat and cross-doc RAG, explicitly deferred to 8d-2b. I would score 30/35.
 
-안정성 / 30: 27 is optimistic. The router tests cover important failure paths, but UI state can become misleading: `setSelection()` resets `threadId` but does not clear `#chat-messages` (`src/ht_lens/api/static/js/chat.js:23-31`), so old visible conversation can remain while a new selection starts a new backend thread. Suggested: 24/30.
+안정성 / 30: 27/30 is high. RE-CODE fixed the visible transcript bug and added ask/pin tests, but two regression-lock claims are overstated: no test asserts the DB CHECK rejects invalid direct inserts, and the real TOC select button path is not locked. Suggested 25/30.
 
-확장성 / 20: 17 is slightly high. The backend anchor contract is extensible, but the frontend still exposes a `secNo`-only callback shape, which undercuts the heading-id design when duplicates appear. Suggested: 15/20.
+확장성 / 20: 17/20 is reasonable. Anchoring section threads by heading chunk id gives 8d-2b a stable base. Minor deduction remains for the old `secNo`-first helpers still being exported and partially used for jump/reference flows. Suggested 16/20.
 
-Fair audited score: about 79/100.
+Fair audited score: about 83/100, not a failure, but below the self-score of 87.
 
 ## 4. Issues missed (new this round)
-The duplicate-section fix is incomplete across the actual product path. Backend `section_chunk_range(chunks, heading_chunk_id)` handles duplicates (`tests/integration/test_chunk_chat_context.py:97-108`), but frontend selection still begins with `computeSectionChunks(secNo, chunks)` and `findIndex` on `secNo` (`src/ht_lens/api/static/js/sections.js:63-68`). `renderToc()` has each node’s `chunkId` available (`sections.js:31-39`) but discards it in callbacks (`sections.js:146-160`), and `reflow.js:193` calls `selectSection(sec, ...)`. This reintroduces the exact ambiguity debate flagged.
+The RE-CODE DB CHECK is not actually tested. `ck_chunk_threads_anchor_type` was added in `src/ht_lens/db/migrations/versions/0007_chunk_chat.py:56-58` and ORM metadata in `src/ht_lens/db/models.py:209-211`, but `rg` finds no test reference to that constraint name or invalid `anchor_type` direct insert. `test_migration_0007_additive_only` only checks table add/drop behavior at `tests/integration/test_chunk_chat_schema.py:65-81`.
 
-The chat panel has no tested real submit/pin fetch workflow. `ask()`, `ensureThread()`, `pinCurrent()`, and `loadPins()` are production-critical (`src/ht_lens/api/static/js/chat.js:51-127`), but `test_chat_ui_js.py` never clicks the form, never inspects request payloads, and never verifies assistant rendering after a mocked `/v2/threads/{id}/messages` response. Backend API tests do not cover this client integration.
+The new TOC callback contract lacks a regression test. `src/ht_lens/api/static/js/sections.js:198-207` changed `.toc-select` to call `onSelect(node.chunkId)`, which was the exact product path implicated by Round 1. Existing `test_render_toc_nested_with_callbacks` counts buttons but does not click a select button or inspect the callback value (`tests/integration/test_reflow_sections_js.py:211-227`). The duplicate test bypasses this path.
 
-Selection changes leave stale transcript visible. `setSelection()` clears only `threadId` and status (`chat.js:23-31`), while `ask()` posts to a fresh thread with fresh backend history (`chat.js:68-93`). The user can select section A, see its conversation, select section B, and ask a follow-up that visually appears in A’s transcript but is persisted in a new B thread without that visible history.
+The self-report overstates grep evidence for `computeSectionByHeading`. That function is a new exported production identifier at `src/ht_lens/api/static/js/sections.js:114-133`, but tests only exercise it indirectly through `selectSectionByHeading`; the identifier itself does not appear in tests. Indirect coverage is not a functional defect, but it does not meet the stated RE-CODE rule as written.
 
-The migration does not enforce valid `anchor_type` at the DB layer. API schemas constrain `Literal["chunk", "section"]`, but `chunk_threads.anchor_type` is just `sa.String()` with no CHECK in `src/ht_lens/db/migrations/versions/0007_chunk_chat.py:45`. Future direct migration/backfill code can insert invalid rows, and `_build_context()` treats anything not `"section"` as chunk (`src/ht_lens/api/routers/chunk_chat.py:163-166`).
+`pinCurrent()` still fires `loadPins()` without awaiting it at `src/ht_lens/api/static/js/chat.js:99-107`. The new test compensates with polling (`tests/integration/test_chat_ui_js.py:202-205`), which proves eventual rendering, not that callers can await a completed pin+reload operation. This is minor, but it is a new async edge in RE-CODE’s exported test surface.
 
 ## 5. Verdict
-**DOWNGRADE** — The self-report is honest about major out-of-scope items, and the backend test coverage is materially stronger than the plan stage. However, a debate-critical duplicate-section ambiguity still exists in the frontend path that feeds chat, and the chat UI’s real ask/pin workflows are not tested. I would score this around **79/100** and recommend a focused RE-CODE on `sections.js`/`reflow.js` heading-id propagation plus jsdom tests for duplicate section selection and mocked form/pin fetch flows.
+**DOWNGRADE** — The important Round 1 functional defects appear fixed, and this is no longer a reject-level phase. The remaining problems are narrower: overstated regression evidence around the DB CHECK and incomplete locking of the new TOC button callback path. I would put the phase around **83/100** and send it to the human Planner with a focused note, not another broad RE-CODE.
