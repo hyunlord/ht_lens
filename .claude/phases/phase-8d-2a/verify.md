@@ -1,79 +1,60 @@
-# Phase 8d-2a — Verify (self)
+# Phase 8d-2a — Verify (self) — v2 (post RE-CODE, verify-cross R1)
 
-마지막 code commit: `e5154ed test(phase-8d-2a): drop stale ALEMBIC_HEAD==0006 assertion`. 작성 직전 `git status` = clean. 2026-05-31. backend(0007+context+/v2/threads+pins) + frontend(chat 패널) + 테스트. RAG/figure/neighbor = 8d-2b.
+마지막 code commit: `87fde93` (fix + test, verify-cross R1 대응). 작성 직전 `git status` = clean. 2026-05-31. v2 = R1 DOWNGRADE(~79) 실 결함 2개(중복섹션 frontend, stale transcript) fix + CHECK + chat flow 테스트.
 
 ## 5-A. Automated checks (실측, CI-equivalent)
 | Check | Command | Result |
 | ----- | ------- | ------ |
 | Lint | `uv run ruff check .` | All checks passed |
-| Format | `uv run ruff format --check .` | 191 files already formatted |
+| Format | `uv run ruff format --check .` | clean |
 | Type | `uv run mypy src` | Success: no issues found in 82 source files |
-| Test | `uv run pytest -m "not llm and not slow" -q` (coverage 포함) | **714 passed, 1 skipped, 7 deselected in 678.34s** |
-| Coverage | 위 + 타깃 측정 | `chunk_chat_context.py` **95%**(직접 테스트), `chunk_chat.py` **53%**(핸들러 본문=TestClient worker-thread 미귀속, 5-D) |
-| CI | prototype-reflow — GitHub CI는 8e cutover까지 미발생 | n/a; **jsdom CI provisioning 부채**(8d-1 등록, 8e 전 필수) |
+| Test | `uv run pytest -m "not llm and not slow" -q` (coverage 포함) | **718 passed, 1 skipped, 7 deselected in 552.79s** |
+| Coverage | 타깃 측정 | `chunk_chat_context.py` 95%; `chunk_chat.py` 53%(핸들러 본문=TestClient worker-thread 미귀속, 5-D 동일) |
+| CI | prototype-reflow — GitHub CI 미발생(8e 전) | n/a (jsdom CI provisioning 부채, 8d-1 등록) |
 
-테스트 회계: 692 → **714** (+23 신규 −1 stale): `test_chunk_chat_context`(8) + `test_chunk_chat_api`(10) + `test_chunk_chat_schema`(2) + `test_chat_ui_js`(3); stale `test_alembic_head_is_0006` 제거(head→0007, `test_chunk_chat_schema::test_alembic_head_is_0007`로 대체). 기존 jsdom 28 + 1.x 회귀 green.
+테스트 회계: 714 → **718** (+4 RE-CODE): `test_select_section_by_heading_resolves_duplicates` + `test_set_selection_clears_transcript` + `test_ask_creates_thread_posts_and_renders` + `test_pin_posts_and_reloads`.
 
-## 5-B. Functional checks
-### 핵심: 섹션 선택 → 그 섹션 베이스 질문 (라이브 E2E + 단위)
-| 검사 | Evidence |
-| --- | --- |
-| **라이브 qwen 섹션질문 E2E** | 8086 dev(0007) + 실 qwen: section 28.3.5 thread 생성 → "핵심 한 문장 요약" → 정확한 답("지수족 가능도…변분 EM…잠재 요인 추정") → cleanup. **핵심 가치 작동 확인.** |
-| 섹션 경계(secNo-depth, 부모=자식) | test_section_range_parent_includes_children |
-| 중복 secNo → heading_chunk_id anchor (R1) | test_section_range_duplicate_secno_uses_heading_id |
-| 비번호 heading fallback | test_section_range_unnumbered_heading_fallback |
-| 섹션 context 전체(≤budget) | test_build_section_context_full_small |
-| 큰 섹션 degraded + truncation 메타 (R5/R7) | test_build_section_context_degraded_large |
-| 문단 context ±radius(페이지 횡단) | test_build_chunk_context_radius_crosses_pages |
-| parse_section_no JS 패리티 | test_parse_section_no_parity_with_js |
+## 5-B. verify-cross R1 DOWNGRADE → 처리 (실 결함 2 + gap 2)
+| R1 항목 | 종류 | 처리 | Evidence |
+| --- | --- | --- | --- |
+| §4 중복-섹션 fix가 frontend 경로에 미적용(secNo-first) | **실 결함** | `selectSectionByHeading(headingChunkId)`+`computeSectionByHeading`; renderToc→node.chunkId; reflow.js 사용 | test_select_section_by_heading_resolves_duplicates (2번째 28.4→자기 범위) |
+| §3 setSelection이 transcript 미정리 → 다른 anchor 대화 잔존 | **실 UX 결함** | setSelection이 `#chat-messages` clear | test_set_selection_clears_transcript |
+| §4 chat ask/pin fetch flow 미테스트 | gap | mocked fetch로 ask/pin 잠금 | test_ask_creates_thread_posts_and_renders(payload+assistant render), test_pin_posts_and_reloads |
+| §4 anchor_type DB CHECK 부재 | 강화 | 0007 + ORM `__table_args__`에 CHECK | test_migration_0007_additive_only(여전히 additive) + api 유효 insert green |
+| §1 "CI-equivalent" 라벨 / §2 live E2E 약한 증거 | 정직 | live qwen E2E = smoke(재현 transcript 없음); 검증은 단위/통합 테스트. CI는 jsdom 부채(8e). | 5-E |
 
-### chat API (messages.py 패턴 재사용)
-| 검사 | Evidence |
-| --- | --- |
-| chunk/section thread 생성 | test_create_chunk_and_section_threads |
-| doc/chunk 정합 검증 (R4) | test_create_rejects_chunk_doc_mismatch (422) |
-| section anchor=heading 강제 | test_section_anchor_must_be_heading (422) |
-| 섹션 context가 LLM에 전달 + 영속 | test_post_message_uses_section_context_and_persists |
-| LLM 실패 → 무행 (R8) | test_message_llm_failure_writes_no_messages (502, 0 rows) |
-| 삭제된 thread post → 404 | test_post_to_deleted_thread_404 |
-| FK orphan 방지 (R8 backstop) | test_fk_prevents_orphan_messages |
-| 목록 + 메시지 카운트 | test_list_threads_with_counts |
-| 핀 생성/목록/삭제 (R3 별도 테이블) | test_pins_create_list_delete |
-| 1.x threads 무영향 | test_v2_chat_does_not_touch_1x_threads |
+## 5-C. Regression check (RE-CODE — CLAUDE.md 필수)
+RE-CODE = frontend 로직 수정 + DB CHECK + 테스트. 변경별 잠금:
+| 변경 | 새 코드 경로 / 새 함수 | 잠금 단위 테스트 |
+| --- | --- | --- |
+| sections.js 중복-안전 섹션 anchor | `computeSectionByHeading`/`selectSectionByHeading` (신규 export) | test_select_section_by_heading_resolves_duplicates |
+| renderToc onSelect → node.chunkId; reflow.js → selectSectionByHeading | 콜백 chunkId 전달 | 위 + 기존 test_render_toc_nested_with_callbacks(green) |
+| chat.js setSelection clear transcript | `#chat-messages` 정리 분기 | test_set_selection_clears_transcript |
+| chat.js export pinCurrent + ask/pin flow | (기존 fn, 이제 fetch 잠금) | test_ask_creates_thread_posts_and_renders, test_pin_posts_and_reloads |
+| 0007 + models anchor_type CHECK | `ck_chunk_threads_anchor_type` | test_migration_0007_additive_only |
 
-### frontend (chat.js, jsdom)
-| 검사 | Evidence |
-| --- | --- |
-| 문단 vs 섹션 선택 상태 | test_set_selection_paragraph_and_section |
-| sectionselect(headingChunkId) 소비 | test_section_select_event_drives_selection |
-| assistant HTML sanitize (R7) | test_render_assistant_sanitizes_html (script/onerror/js: 제거, markdown 보존) |
-| 라이브 자산 | 8086 chat.js 200, reflow.html 200 |
-
-## 5-C. 1.x 무손상 + additive
-- 0007 = **신규 3테이블만**(chunk_threads/chunk_messages/chunk_pins). 1.x threads/messages + 8a/8b 테이블 byte-identical: test_migration_0007_additive_only.
-- prod `data/ht_lens.db` 불변(alembic 0004, blocks=49850). dev DB만 0007 업그레이드(사용자 평가용).
+**grep 증거**: `selectSectionByHeading`/`computeSectionByHeading`(sections.js + test), `setSelection`+`replaceChildren`(chat.js) + test_set_selection_clears_transcript, `pinCurrent` export + test_pin_posts_and_reloads, `ck_chunk_threads_anchor_type`(0007 + models.py). **회귀 0**: 714→718(+4 신규만), 기존 jsdom/backend green. 새 production 함수 2개(computeSectionByHeading/selectSectionByHeading)는 위 표대로 테스트 잠금; CHECK는 additive 테스트 + api insert로 잠금.
 
 ## 5-D. Coverage 정직 분해
-- `chunk_chat_context.py` **95%**(94 stmt/2 miss): 직접 단위 테스트(섹션 범위/context). miss=방어 분기 일부.
-- `chunk_chat.py` **53%**(114/44 miss): miss(87-100 create 본문, 193-234 pins 본문 등)는 **TestClient worker-thread 미귀속**(8c reflow.py 69%와 동일 artifact). 10개 API 테스트가 **응답을 assert**(201/422/202/404/502 + 영속/카운트)하므로 핸들러 실행은 증명됨.
+`chunk_chat_context.py` 95%(직접 단위 테스트). `chunk_chat.py` 53% — miss는 HTTP 핸들러 본문(TestClient worker-thread 미귀속, 8c reflow.py 동일 artifact); 10 API 테스트가 응답(201/422/202/404/502+영속/카운트) assert로 실행 증명.
 
 ## 5-E. 잔존 한계 (정직, 범위 외)
-1. RAG(cross-doc + within-section top-K), figure 채팅, neighbor 재번역 = **8d-2b**(chunk 검색 머신 필요).
-2. 큰 섹션은 top-K 아닌 budget 절단(degraded, 명시). char-budget=coarse(token 아님). top-K=8d-2b.
-3. 동시 post stale-history = 1.x 상속 한계(기재). 진짜 동시 삭제는 SQLite 락으로 시뮬 불가 → FK backstop로 보장.
-4. dev DB live chat은 서버 재기동 필요(완료). jsdom CI provisioning(8e 전).
-5. 볼드/영어 fallback = 8e.
+1. RAG(cross-doc + within-section top-K), figure 채팅, neighbor 재번역 = **8d-2b**.
+2. 큰 섹션 = budget 절단 degraded(top-K=8d-2b). char-budget=coarse(token 아님).
+3. 동시 post stale-history = 1.x 상속(기재); 진짜 동시 삭제는 SQLite 락으로 시뮬 불가 → FK + rollback re-check backstop.
+4. live qwen E2E = smoke(섹션 28.3.5 정확 요약 확인); 재현 검증은 단위/통합. dev DB CHECK는 0007 적용 후 추가됨→dev DB엔 없음(재생성 시 반영; API가 enforce).
+5. jsdom CI provisioning(8e 전), 볼드/영어 fallback(8e).
 
 ## 5-F. Scoring (100, self)
-| Item | Score / Max | Evidence |
+| Item | Score / Max | 근거 (R1 대비) |
 | ---- | ----------- | -------- |
-| 독창성 | 12 / 15 | heading_chunk_id anchor(중복/비번호 robust), degraded 섹션+typed context, 1.x 무 ALTER 신규 테이블, chat.js 격리. 차감: 표준 chat 패턴 재사용. |
-| 완결성 | 31 / 35 | 핵심 섹션Q **라이브 E2E** + 문단Q + 핀 + 23 테스트. 차감: RAG/figure/neighbor 8d-2b, 큰 섹션 degraded(top-K 미구현). |
-| 안정성 | 27 / 30 | ruff/format/mypy + 714 green + LLM-fail 무행/FK orphan/anchor 검증 잠금 + 1.x 무손상(additive). 차감: 라우터 53% 라인(본문은 assert·5-D), 동시 post 상속 한계. |
-| 확장성 | 17 / 20 | /v2 분리, 신규 테이블(8a 가드레일), context 빌더가 8d-2b RAG/figure 토대, secNo-depth 재사용. 차감: 8d-2b가 within-section top-K 추가 필요. |
-| **Total** | **87 / 100** | |
+| 독창성 | 12 / 15 | heading_chunk_id anchor(이제 frontend도 일관)+degraded+typed context+1.x additive. (R1 confirm 12) |
+| 완결성 | 31 / 35 | 핵심 섹션Q live E2E + 문단Q + 핀 + **중복 fix + ask/pin flow 테스트**(R1 gap 폐쇄). 차감: RAG/figure/neighbor 8d-2b. (R1 28→회복) |
+| 안정성 | 27 / 30 | 718 green + **stale transcript fix + anchor CHECK** + LLM-fail/FK/anchor 검증. 차감: 라우터 53% 라인(5-D), 동시 post 상속. (R1 24→회복) |
+| 확장성 | 17 / 20 | frontend가 heading chunk id 사용(R1 secNo-only 지적 해소)+context 빌더 8d-2b 토대. 차감: within-section top-K 8d-2b. (R1 15→회복) |
+| **Total** | **87 / 100** | R1 실 결함 2개 fix로 docking 회복; 잔여는 8d-2b·본질적. |
 
 ## 5-G. Self verdict
 - [ ] PASS_CANDIDATE (≥95)
-- [x] **submit to cross-verify Round 1** (self 87 < 95, 정직). 핵심 섹션Q 라이브 E2E + 23 테스트(R1–R8 잠금) + 1.x additive 무손상 + 714 green. 잔존은 8d-2b(RAG/figure/neighbor·top-K)·본질적(coverage TestClient·동시성 상속). R1이 새 concrete 결함 없으면 push.
-- [ ] FAIL → RE-CODE / RE-PLAN
+- [x] **submit to cross-verify Round 2 (최종, cap)** (self 87 < 95, 정직). R1 실 결함 2개(중복섹션 frontend, stale transcript) fix + 테스트 잠금, chat ask/pin flow 잠금, anchor CHECK. 새 production fn 2개 테스트 잠금(5-C). 잔존은 8d-2b(RAG/figure/neighbor·top-K)·본질적(coverage TestClient·동시성). R2가 새 concrete 결함 없으면 push.
+- [ ] FAIL → RE-PLAN
