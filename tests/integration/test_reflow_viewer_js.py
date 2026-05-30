@@ -143,3 +143,57 @@ def test_chunk_carries_page_idx_for_sync(jsdom_url: str) -> None:
     """
     out = _run(script, jsdom_url)
     assert out["page"] == "4" and out["chunk"] == "9" and out["isChunk"] is True
+
+
+# Full-page DOM harness: builds #content/#layout/#pane-pdf BEFORE importing
+# reflow.js so its module-level refs populate and ``syncToChunk`` can run.
+_FULL_PRELUDE = """
+    import { JSDOM } from "%(jsdom)s";
+    const dom = new JSDOM(`<!doctype html><html><body>
+      <div class="layout" id="layout" data-mode="compare">
+        <aside class="pane--pdf" id="pane-pdf">
+          <div class="pdf-page" data-page-idx="4"><img></div>
+        </aside>
+        <main><article id="content"></article></main>
+      </div></body></html>`);
+    const w = dom.window;
+    w.HTMLElement.prototype.scrollIntoView = function () {};  // jsdom no-op stub
+    globalThis.window = w; globalThis.document = w.document;
+    globalThis.location = w.location;  // auto-init load() reads location.search
+    globalThis.HTMLElement = w.HTMLElement; globalThis.Element = w.Element;
+    globalThis.Node = w.Node; globalThis.DocumentFragment = w.DocumentFragment;
+    const { renderChunk, syncToChunk } = await import("%(reflow)s");
+"""
+
+
+def test_sync_to_chunk_compare_highlights_page(jsdom_url: str) -> None:
+    """verify-cross R1: lock the compare-mode event path (active chunk +
+    page highlight) — previously untested."""
+    full = (
+        (_FULL_PRELUDE % {"jsdom": jsdom_url, "reflow": REFLOW_JS.as_uri()})
+        + """
+    const ch = renderChunk({
+      id: 9, type: 'text', text_level: null, page_idx: 4, original: 'x',
+      translated: '[KO] x', caption: null, caption_translated: null,
+      img_url: null, bbox: null,
+    });
+    document.getElementById('content').appendChild(ch);
+    syncToChunk(ch);
+    const page = document.querySelector('.pdf-page[data-page-idx="4"]');
+    console.log(JSON.stringify({
+      chunkActive: ch.classList.contains('active'),
+      pageHl: page.classList.contains('hl'),
+    }));
+    """
+    )
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", full],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.fail(f"node rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+    out = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert out["chunkActive"] is True and out["pageHl"] is True

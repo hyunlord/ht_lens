@@ -143,6 +143,20 @@ async def test_chunk_image_jpg_served_and_traversal_rejected(
 
 
 @pytest.mark.asyncio
+async def test_chunk_image_traversal_rejected(api_db_path: Path) -> None:
+    """verify-cross R1: actually exercise the traversal branch (the prior
+    test name claimed it but used a normal path)."""
+    doc_id = await _seed(
+        api_db_path,
+        [{"type": "image", "content": "", "img_path": "/data/../etc/passwd.png", "caption": "f"}],
+    )
+    with make_test_client(api_db_path) as client:
+        cid = client.get(f"/v2/documents/{doc_id}/reflow").json()["chunks"][0]["id"]
+        r = client.get(f"/v2/chunks/{cid}/image")
+    assert r.status_code == 500  # traversal segment refused before any read
+
+
+@pytest.mark.asyncio
 async def test_chunk_image_missing_file_404(api_db_path: Path, tmp_path: Path) -> None:
     doc_id = await _seed(
         api_db_path,
@@ -173,3 +187,50 @@ def test_render_doc_pages_requires_source_pdf(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="source PDF not found"):
         render_doc_pages(1, tmp_path / "nope.pdf", dest_root=tmp_path / "ev2")
+
+
+def _tiny_pdf(path: Path, pages: int = 2) -> None:
+    import fitz  # type: ignore[import-untyped]
+
+    doc = fitz.open()
+    for _ in range(pages):
+        doc.new_page(width=200, height=300)
+    doc.save(str(path))
+    doc.close()
+
+
+def test_render_doc_pages_positive(tmp_path: Path) -> None:
+    """verify-cross R1: render a real PDF and assert the cache filenames are
+    exactly what ``page_image`` serves (locks the convention coupling)."""
+    from ht_lens.api.routers.reflow import render_doc_pages
+
+    pdf = tmp_path / "src.pdf"
+    _tiny_pdf(pdf, pages=2)
+    ev2 = tmp_path / "ev2"
+    n = render_doc_pages(7, pdf, dest_root=ev2)
+    assert n == 2
+    # Filenames must match page_image's f"page_{page_idx:04d}.png".
+    assert (ev2 / "7" / "pages" / "page_0000.png").is_file()
+    assert (ev2 / "7" / "pages" / "page_0001.png").is_file()
+
+
+@pytest.mark.asyncio
+async def test_page_image_success_serves_cached_png(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """verify-cross R1: the left-pane success path — a cached render is
+    served as image/png with no-cache. Renders via the same helper the
+    8e migration will use, so filename↔serve coupling is exercised."""
+    from ht_lens.api.routers.reflow import render_doc_pages
+
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    doc_id = await _seed(api_db_path, [{"type": "text", "content": "x", "translated": "[KO] x"}])
+    pdf = tmp_path / "src.pdf"
+    _tiny_pdf(pdf, pages=1)
+    render_doc_pages(doc_id, pdf, dest_root=ev2)
+    with make_test_client(api_db_path) as client:
+        r = client.get(f"/v2/documents/{doc_id}/page/0/image")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert "no-cache" in r.headers.get("cache-control", "").lower()
