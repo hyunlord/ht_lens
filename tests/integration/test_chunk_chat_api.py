@@ -217,3 +217,27 @@ async def test_v2_chat_does_not_touch_1x_threads(api_db_path: Path) -> None:
     finally:
         await engine.dispose()
     assert n_1x == 0 and n_v2 == 1  # v2 thread created, 1.x threads untouched
+
+
+@pytest.mark.asyncio
+async def test_anchor_type_check_rejects_invalid(api_db_path: Path) -> None:
+    """verify-cross R2: ck_chunk_threads_anchor_type rejects an unknown
+    anchor_type on a DIRECT insert — defense beyond the API Literal."""
+    doc_id, ids = await _seed(api_db_path)
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            s.add(
+                ChunkThread(
+                    doc_id=doc_id,
+                    anchor_type="bogus",  # not in ('chunk','section')
+                    chunk_id=ids[0],
+                    title="x",
+                    created_at=datetime.now(UTC),
+                )
+            )
+            with pytest.raises(IntegrityError):
+                await s.commit()
+    finally:
+        await engine.dispose()

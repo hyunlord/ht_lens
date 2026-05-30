@@ -258,6 +258,27 @@ def test_select_section_by_heading_resolves_duplicates(jsdom_url: str) -> None:
     assert out["chunkIds"] == [4, 5]  # second 28.4's range, stops before 28.6
 
 
+def test_toc_select_button_passes_heading_chunk_id(jsdom_url: str) -> None:
+    """verify-cross R2: clicking a rendered .toc-select button must call
+    onSelect with the heading's chunk id — the real product path (TOC →
+    section select → chat anchor), not the bypassed direct call."""
+    script = """
+    const chunks = [H(7, 0, '28.4 C'), H(9, 2, '28.4.1 D'), H(11, 4, '28.5 G')];
+    const nav = document.createElement('nav');
+    let received = null;
+    renderToc(buildSectionTree(chunks), nav, {
+      onJump: () => {}, onSelect: (cid) => { received = cid; },
+    });
+    const btn = nav.querySelector('.toc-select[data-chunk-id="7"]');
+    btn.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true }));
+    console.log(JSON.stringify({
+      received, btnCount: nav.querySelectorAll('.toc-select').length }));
+    """
+    out = _run(script, jsdom_url)
+    assert out["received"] == 7  # heading chunk id (not secNo) → duplicate-safe anchor
+    assert out["btnCount"] == 3
+
+
 _LAYOUT_SCRIPT = """
     import { JSDOM } from "%(jsdom)s";
     import { readFileSync } from "node:fs";
