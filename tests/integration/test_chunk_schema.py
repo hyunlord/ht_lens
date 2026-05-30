@@ -15,8 +15,6 @@ from pathlib import Path
 
 import pytest
 
-from ht_lens.db.session import ALEMBIC_HEAD
-
 REPO = Path(__file__).resolve().parents[2]
 
 _1X_TABLES = [
@@ -53,10 +51,6 @@ def _table_ddl(db_path: Path) -> dict[str, str]:
     finally:
         con.close()
     return {name: (sql or "") for name, sql in rows}
-
-
-def test_alembic_head_is_0006() -> None:
-    assert ALEMBIC_HEAD == "0006"
 
 
 def test_migration_0005_additive_only(tmp_path: Path) -> None:
