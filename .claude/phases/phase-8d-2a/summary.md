@@ -1,12 +1,12 @@
 # Phase 8d-2a — Summary (Chat 코어: 문단Q + 섹션Q + 영속 + UI + 핀)
 
 ## Status
-**ESCALATE_TO_PLANNER** — cross-verify Round 2 = DOWNGRADE(~83), 2-round cap 도달. CLAUDE.md "Round 2 이후엔 호출하지 마라. summary.md에 양측 의견 명시하고 Planner에게 escalate" 적용. **Push 보류.** (R2: R1 실 결함 fix 확인, 새 functional 결함 없음 — Codex 자체가 "send to Planner, not RE-CODE" 권고.)
+**PASS_CANDIDATE** — cross-verify R2 DOWNGRADE(~83) → **Planner-directed micro-fix 완료** → push (R3 cross-verify 없음). cross-verify는 2-round cap 정지. R2의 evidence gap 2건(CHECK 미테스트·TOC 콜백 미잠금)을 **test-only**로 폐쇄(verify v3). R2는 새 functional 결함 0(Codex "not a reject-level phase"). 처리 내역은 "R2 micro-fix resolution" 절.
 
 ## Score
-- Self (verify v2): **87 / 100**
+- Self (verify v2 → **v3**): **87 / 100** (R2 gap 2건 폐쇄 후)
 - Cross R1 (`ae2ae46`): **DOWNGRADE ~79** (실 결함 2: 중복섹션 frontend, stale transcript) → RE-CODE
-- Cross R2 (`a8bf4bd`, 최종/cap): **DOWNGRADE ~83** (새 functional 결함 없음, evidence gap)
+- Cross R2 (`a8bf4bd`, 최종/cap): **DOWNGRADE ~83** (새 functional 결함 없음, evidence gap) → Planner micro-fix → verify v3 (R3 없음)
 
 ## What was built (8d = 8d-1[완료] / 8d-2 → 8d-2a[본 phase] + 8d-2b)
 - **영속**: 신규 `chunk_threads`/`chunk_messages`/`chunk_pins` (migration 0007, additive, 1.x threads/messages 무손상). 섹션 anchor = **heading chunk_id**(challenge R1, 중복/비번호 robust). 핀 = 별도 테이블(R3).
@@ -48,6 +48,16 @@ R2 잔여 (**evidence gap, functional 결함 아님**):
 ### Worker 평가 (R2 응답)
 4건 모두 **사실**. 1·2는 concrete evidence gap(테스트로 cheap 폐쇄 가능), 3은 정직성 nit, 4는 minor async. **새 functional 결함·R1 회귀 0**(Codex 명시). 8b(R2 실 결함)와 다르고, 8c(R2 concrete-cheap gap)·8a/8d-1(R2 process)과 동형.
 
+## R2 micro-fix resolution (Planner-directed, test-only → verify v3 `6fa2441`)
+Codex R2: "important R1 defects fixed, not a reject-level phase, send to Planner not RE-CODE." Planner → micro-fix(8c 선례, test-only → R3 없음). R2 4건 처리:
+| R2 항목 | 처리 | Evidence |
+| --- | --- | --- |
+| #1 DB CHECK 미테스트 | invalid anchor_type 직접 insert → IntegrityError | test_anchor_type_check_rejects_invalid |
+| #2 TOC 콜백 미잠금(핵심 product path) | `.toc-select` 클릭 → onSelect(node.chunkId) | test_toc_select_button_passes_heading_chunk_id |
+| #3 computeSectionByHeading grep 과장 | verify v3에서 "간접 테스트(selectSectionByHeading 경유)"로 정정 | verify v3 §5-C |
+| #4 pinCurrent await 안 함 | minor; eventual render 테스트 + 한계 기재 | verify v3 §5-E |
+- production 변경 0(test-only +2) → R3 cross-verify 없음. 718→**720** green. ruff/mypy clean.
+
 ## Deviations from plan
 - 8d-2 재분할(8d-2a 코어 / 8d-2b RAG·figure·neighbor) — Planner 확정.
 - 섹션 anchor sec_no→**heading_chunk_id** (challenge R1, 중복/비번호 robust).
@@ -67,13 +77,10 @@ R2 잔여 (**evidence gap, functional 결함 아님**):
 4. 동시 post stale-history(1.x 상속), router 53% 라인(TestClient), jsdom CI provisioning(8e 전), 볼드/영어 fallback(8e).
 5. dev DB CHECK 미반영(API enforce). secNo-first helper 일부 잔존(jump/ref용).
 
-## Recommended next (Planner 결정)
-- **Worker 권고: micro-fix** (8c 선례 — concrete-cheap gap, **test-only → production 무변경 → R3 불필요**, verify v3 → push). 묶음(~20분):
-  - (a) test: invalid `anchor_type` 직접 insert → IntegrityError (CHECK 잠금, R2 #1).
-  - (b) jsdom: `renderToc` 렌더 후 `.toc-select` 클릭 → onSelect가 `node.chunkId` 수신 (R1 product path end-to-end, R2 #2).
-  - (c) verify 문구 정정(computeSectionByHeading 간접 테스트 명시, R2 #3).
-- **대안: PASS** (8a/8d-1 선례 — 새 functional 결함 0; Codex "not a reject"). 단 evidence gap 2건이 기록에 남음.
-- **RE-CODE(broad)/RE-PLAN: 불필요** (Codex 명시).
+## Recommended next
+- **8d-2a 완료** (R2 micro-fix 반영, push). 후속:
+- **8d-2b**: figure 텍스트 채팅 + neighbor 재번역(짧은 chunk) + cross-doc RAG + within-section top-K(chunk 검색 머신 `search_chunks`/`get_or_encode_chunk_vector` 신규). dev DB chunk_embeddings embed setup 필요.
+- **8e**: 7-doc 마이그레이션 + 실 볼드(재추출) + jsdom CI provisioning + cutover. dev DB CHECK 반영(재생성).
 
 ## Push 정책
-**보류** — R2 DOWNGRADE, Planner escalate(CLAUDE.md Stage 6). Planner 결정(PASS / micro-fix) 후 진행.
+**Push 진행** — R2 DOWNGRADE escalate → Planner micro-fix 지시 → 처리 완료(test-only +2 → production 무변경 → R3 cross-verify 없음, CLAUDE.md cap 준수). verify v3 self 87, **720 green**. branch prototype-reflow(main은 8e cutover까지 1.x).
