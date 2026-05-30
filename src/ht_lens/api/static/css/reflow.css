@@ -130,3 +130,45 @@ p.rf-text { margin: 1em 0; text-align: justify; word-break: keep-all; overflow-w
   background: none; border: 1px solid var(--border); border-radius: 3px; padding: 0 0.4em;
 }
 .toc .toc-select:hover { color: var(--accent); border-color: var(--accent); }
+
+/* --- Phase 8d-2a: chat panel (fixed drawer, right; outside .layout grid) --- */
+.chat {
+  position: fixed; top: 3.2em; right: 0; z-index: 30;
+  width: 380px; max-width: 90vw; height: calc(100vh - 3.2em);
+  display: flex; flex-direction: column; background: #fff;
+  border-left: 1px solid var(--border); box-shadow: -2px 0 12px rgba(0,0,0,0.08);
+  font-size: 14px;
+}
+.chat[hidden] { display: none; }
+.chat-status {
+  padding: 0.6em 0.9em; border-bottom: 1px solid var(--border);
+  color: var(--accent); font-weight: 600;
+}
+.chat-messages {
+  flex: 1; overflow: auto; padding: 0.9em; display: flex;
+  flex-direction: column; gap: 0.7em;
+}
+.chat .msg { padding: 0.5em 0.7em; border-radius: 8px; line-height: 1.6; max-width: 92%; }
+.chat .msg--user { align-self: flex-end; background: #eef4ff; }
+.chat .msg--assistant { align-self: flex-start; background: #f5f5f5; }
+.chat .msg--err { align-self: stretch; color: #b00020; font-size: 0.9em; }
+.chat .msg p { margin: 0.3em 0; }
+.chat-form { display: flex; gap: 0.4em; padding: 0.6em; border-top: 1px solid var(--border); }
+.chat-form input {
+  flex: 1; padding: 0.45em 0.6em; border: 1px solid var(--border);
+  border-radius: 6px; font: inherit;
+}
+.chat-form button {
+  font: inherit; cursor: pointer; color: #fff; background: var(--accent);
+  border: none; border-radius: 6px; padding: 0.45em 0.8em;
+}
+.chat-actions { padding: 0 0.6em 0.5em; }
+.chat-actions button {
+  font: inherit; cursor: pointer; color: var(--accent); background: none;
+  border: 1px solid var(--border); border-radius: 6px; padding: 0.4em 0.8em;
+}
+.chat-pins { padding: 0 0.9em 1em; display: flex; flex-direction: column; gap: 0.25em; }
+.chat-pins .pin-link {
+  color: var(--muted); cursor: pointer; text-decoration: none; font-size: 13px;
+}
+.chat-pins .pin-link:hover { color: var(--accent); }

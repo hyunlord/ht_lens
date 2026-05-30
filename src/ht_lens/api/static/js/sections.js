@@ -58,14 +58,15 @@ export function buildSectionTree(chunks) {
 
 /** Chunk ids belonging to a section: from its heading until the next
  *  heading of same-or-shallower depth (so a parent includes its children;
- *  debate R7). Returns {secNo, chunkIds}. */
+ *  debate R7). Returns {secNo, headingChunkId, chunkIds}; headingChunkId is
+ *  the concrete heading row the 8d-2 chat anchors to (challenge R1). */
 export function computeSectionChunks(secNo, chunks) {
   // Trust document order from the API (verify-cross R1: no order_idx field).
   const ordered = chunks;
   const head = ordered.findIndex(
     (c) => c.type === "heading" && parseSectionNo(c.original ?? "") === secNo,
   );
-  if (head < 0) return { secNo, chunkIds: [] };
+  if (head < 0) return { secNo, headingChunkId: null, chunkIds: [] };
   const startDepth = depthOf(secNo);
   let end = ordered.length;
   for (let i = head + 1; i < ordered.length; i++) {
@@ -77,14 +78,19 @@ export function computeSectionChunks(secNo, chunks) {
       break;
     }
   }
-  return { secNo, chunkIds: ordered.slice(head, end).map((c) => c.id) };
+  return {
+    secNo,
+    headingChunkId: ordered[head].id,
+    chunkIds: ordered.slice(head, end).map((c) => c.id),
+  };
 }
 
 /** Highlight a section's chunks + emit a ``sectionselect`` CustomEvent
- *  carrying the stable secNo (8d-2 chat resolves chunks server-side from
- *  it rather than trusting opaque client ids; debate R3). */
+ *  carrying secNo + the heading chunk id. The 8d-2 chat anchors a section
+ *  thread to ``headingChunkId`` (challenge R1) and resolves the range
+ *  server-side rather than trusting opaque client ids (debate R3). */
 export function selectSection(secNo, chunks, contentEl) {
-  const { chunkIds } = computeSectionChunks(secNo, chunks);
+  const { headingChunkId, chunkIds } = computeSectionChunks(secNo, chunks);
   const idset = new Set(chunkIds.map(String));
   for (const el of contentEl.querySelectorAll(".chunk.section-selected")) {
     el.classList.remove("section-selected");
@@ -93,9 +99,12 @@ export function selectSection(secNo, chunks, contentEl) {
     if (idset.has(el.dataset.chunkId)) el.classList.add("section-selected");
   }
   contentEl.dispatchEvent(
-    new CustomEvent("sectionselect", { detail: { secNo, chunkIds }, bubbles: true }),
+    new CustomEvent("sectionselect", {
+      detail: { secNo, headingChunkId, chunkIds },
+      bubbles: true,
+    }),
   );
-  return { secNo, chunkIds };
+  return { secNo, headingChunkId, chunkIds };
 }
 
 /** Scroll to a section's heading chunk and flash it. */

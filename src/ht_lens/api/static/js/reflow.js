@@ -8,6 +8,7 @@
 
 import { applyMath } from "./utils/render_markdown.js";
 import { enrichInline } from "./utils/enrich_inline.js";
+import { initChat } from "./chat.js";
 import {
   buildSectionTree,
   jumpToSection,
@@ -193,6 +194,7 @@ async function load() {
       });
     }
     wireRefJump(paneReflow);
+    initChat({ docId: Number(doc), contentEl: paneReflow });
   } catch (e) {
     paneReflow.innerHTML = `<div class="err">로드 실패: ${e.message}</div>`;
     console.error(e);
