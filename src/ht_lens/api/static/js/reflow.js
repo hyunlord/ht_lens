@@ -175,4 +175,7 @@ if (paneReflow && layout) {
   load();
 }
 
-export { renderChunk, syncToChunk };
+// ``buildPdfPane`` is exported only as a test seam (the page-render error
+// fallback at L112-114 lives inside it). Nothing in production imports it;
+// auto-init is unchanged — so this adds no behavior, only testability.
+export { buildPdfPane, renderChunk, syncToChunk };

@@ -150,6 +150,10 @@ def test_chunk_carries_page_idx_for_sync(jsdom_url: str) -> None:
 _FULL_PRELUDE = """
     import { JSDOM } from "%(jsdom)s";
     const dom = new JSDOM(`<!doctype html><html><body>
+      <header>
+        <input type="radio" name="mode" value="single" checked>
+        <input type="radio" name="mode" value="compare">
+      </header>
       <div class="layout" id="layout" data-mode="compare">
         <aside class="pane--pdf" id="pane-pdf">
           <div class="pdf-page" data-page-idx="4"><img></div>
@@ -162,16 +166,31 @@ _FULL_PRELUDE = """
     globalThis.location = w.location;  // auto-init load() reads location.search
     globalThis.HTMLElement = w.HTMLElement; globalThis.Element = w.Element;
     globalThis.Node = w.Node; globalThis.DocumentFragment = w.DocumentFragment;
-    const { renderChunk, syncToChunk } = await import("%(reflow)s");
+    const { renderChunk, syncToChunk, buildPdfPane } = await import("%(reflow)s");
 """
+
+
+def _run_full(script: str, jsdom_url: str) -> dict:
+    """Run a script against the full-page DOM harness (auto-init wires the
+    radio listeners + ``buildPdfPane`` is importable)."""
+    full = (_FULL_PRELUDE % {"jsdom": jsdom_url, "reflow": REFLOW_JS.as_uri()}) + script
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", full],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO),
+        check=False,
+    )
+    if proc.returncode != 0:
+        pytest.fail(f"node rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
+    return json.loads(proc.stdout.strip().splitlines()[-1])
 
 
 def test_sync_to_chunk_compare_highlights_page(jsdom_url: str) -> None:
     """verify-cross R1: lock the compare-mode event path (active chunk +
     page highlight) — previously untested."""
-    full = (
-        (_FULL_PRELUDE % {"jsdom": jsdom_url, "reflow": REFLOW_JS.as_uri()})
-        + """
+    out = _run_full(
+        """
     const ch = renderChunk({
       id: 9, type: 'text', text_level: null, page_idx: 4, original: 'x',
       translated: '[KO] x', caption: null, caption_translated: null,
@@ -184,16 +203,61 @@ def test_sync_to_chunk_compare_highlights_page(jsdom_url: str) -> None:
       chunkActive: ch.classList.contains('active'),
       pageHl: page.classList.contains('hl'),
     }));
-    """
+    """,
+        jsdom_url,
     )
-    proc = subprocess.run(
-        ["node", "--input-type=module", "-e", full],
-        capture_output=True,
-        text=True,
-        cwd=str(REPO),
-        check=False,
-    )
-    if proc.returncode != 0:
-        pytest.fail(f"node rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
-    out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["chunkActive"] is True and out["pageHl"] is True
+
+
+def test_image_error_swaps_in_fig_missing_fallback(jsdom_url: str) -> None:
+    """verify-cross R2: a broken figure image (user actually hits this) must
+    swap to the ``.fig-missing`` placeholder (reflow.js:44-50)."""
+    script = """
+    const fig = mk({
+      id:5, type:'image', original:'', caption:'c',
+      caption_translated:'[KO] c', img_url:'/v2/chunks/5/image',
+    });
+    const img = fig.querySelector('img');
+    img.dispatchEvent(new w.Event('error'));  // jsdom never auto-loads images
+    const ph = fig.querySelector('.fig-missing');
+    console.log(JSON.stringify({
+      imgGone: fig.querySelector('img') === null,
+      hasPh: ph !== null,
+      txt: (ph || {}).textContent || '',
+    }));
+    """
+    out = _run(script, jsdom_url)
+    assert out["imgGone"] is True and out["hasPh"] is True
+    assert "이미지" in out["txt"]
+
+
+def test_page_render_error_updates_label(jsdom_url: str) -> None:
+    """verify-cross R2: when a source-page render is uncached, the left pane
+    must relabel rather than show a broken image (reflow.js:112-114)."""
+    out = _run_full(
+        """
+    buildPdfPane('1', [4]);  // rebuilds #pane-pdf from scratch
+    const page = document.querySelector('.pdf-page[data-page-idx="4"]');
+    page.querySelector('img').dispatchEvent(new w.Event('error'));
+    console.log(JSON.stringify({ lbl: page.querySelector('.lbl').textContent }));
+    """,
+        jsdom_url,
+    )
+    assert "원문 렌더 없음" in out["lbl"]
+
+
+def test_radio_toggle_updates_layout_mode(jsdom_url: str) -> None:
+    """verify-cross R2: the read/compare radios drive ``layout.dataset.mode``
+    (auto-init handler at reflow.js:170-173) — previously untested."""
+    out = _run_full(
+        """
+    const layout = document.getElementById('layout');
+    const pick = (v) => document.querySelector(`input[name="mode"][value="${v}"]`);
+    pick('single').dispatchEvent(new w.Event('change'));
+    const afterSingle = layout.dataset.mode;  // compare(initial) -> single proves it fires
+    pick('compare').dispatchEvent(new w.Event('change'));
+    console.log(JSON.stringify({ afterSingle, afterCompare: layout.dataset.mode }));
+    """,
+        jsdom_url,
+    )
+    assert out["afterSingle"] == "single" and out["afterCompare"] == "compare"
