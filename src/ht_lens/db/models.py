@@ -195,6 +195,59 @@ class ChunkEmbedding(Base):
     updated_at: Mapped[datetime]
 
 
+class ChunkThread(Base):
+    """ht_lens 2.0 (Phase 8d-2a) — a chat thread anchored to a chunk.
+
+    ``anchor_type='chunk'`` → paragraph Q&A (that chunk + neighbours).
+    ``anchor_type='section'`` → anchors to the section's HEADING chunk; the
+    server derives the section range from it (challenge R1: a concrete
+    ``chunk_id`` avoids ``sec_no`` ambiguity for duplicate/unnumbered
+    headings). New table; the 1.x ``threads`` table is untouched.
+    """
+
+    __tablename__ = "chunk_threads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    doc_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    anchor_type: Mapped[str]
+    chunk_id: Mapped[int] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
+    title: Mapped[str]
+    created_at: Mapped[datetime]
+
+    messages: Mapped[list[ChunkMessage]] = relationship(
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        order_by="ChunkMessage.id",
+    )
+
+
+class ChunkMessage(Base):
+    """ht_lens 2.0 (Phase 8d-2a) — one message in a chunk chat thread."""
+
+    __tablename__ = "chunk_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    thread_id: Mapped[int] = mapped_column(ForeignKey("chunk_threads.id", ondelete="CASCADE"))
+    role: Mapped[str]
+    content: Mapped[str]
+    model: Mapped[str | None]
+    created_at: Mapped[datetime]
+
+    thread: Mapped[ChunkThread] = relationship(back_populates="messages")
+
+
+class ChunkPin(Base):
+    """ht_lens 2.0 (Phase 8d-2a) — a bookmarked chunk, separate from threads
+    (challenge R3: pins are not overloaded conversation threads)."""
+
+    __tablename__ = "chunk_pins"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    doc_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"))
+    chunk_id: Mapped[int] = mapped_column(ForeignKey("chunks.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime]
+
+
 class Translation(Base):
     __tablename__ = "translations"
 

@@ -21,6 +21,7 @@ from starlette.types import Receive, Scope, Send
 from ht_lens.api.deps import get_chat_concurrency
 from ht_lens.api.routers import (
     blocks,
+    chunk_chat,
     documents,
     jobs,
     messages,
@@ -219,6 +220,7 @@ def create_app() -> FastAPI:
     app.include_router(uploads.router)
     app.include_router(jobs.router)
     app.include_router(reflow.router)
+    app.include_router(chunk_chat.router)
 
     return app
 

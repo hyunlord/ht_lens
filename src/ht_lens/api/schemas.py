@@ -215,9 +215,89 @@ class RetranslateResponse(BaseModel):
     translation: TranslationRead
 
 
+# --- Phase 8d-2a: chunk chat (ht_lens 2.0) ---
+
+ChunkAnchorType = Literal["chunk", "section"]
+
+
+class ChunkThreadCreate(BaseModel):
+    """Create a 2.0 chat thread. ``anchor_type='chunk'`` → paragraph Q&A;
+    ``anchor_type='section'`` → ``chunk_id`` is the section's HEADING chunk
+    (challenge R1)."""
+
+    doc_id: int
+    anchor_type: ChunkAnchorType
+    chunk_id: int
+    title: str | None = None
+
+
+class ChunkMessageCreate(BaseModel):
+    content: str = Field(..., min_length=1)
+
+    @field_validator("content")
+    @classmethod
+    def _non_whitespace(cls, value: str) -> str:
+        if value.strip() == "":
+            raise ValueError("content must not be empty or whitespace-only")
+        return value
+
+
+class ChunkMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    role: MessageRole
+    content: str
+    model: str | None = None
+    created_at: datetime
+
+
+class ChunkThreadRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    doc_id: int
+    anchor_type: ChunkAnchorType
+    chunk_id: int
+    title: str
+    created_at: datetime
+
+
+class ChunkThreadSummary(BaseModel):
+    id: int
+    doc_id: int
+    anchor_type: ChunkAnchorType
+    chunk_id: int
+    title: str
+    message_count: int
+    created_at: datetime
+
+
+class ChunkPinCreate(BaseModel):
+    doc_id: int
+    chunk_id: int
+
+
+class ChunkPinRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    doc_id: int
+    chunk_id: int
+    created_at: datetime
+
+
 __all__ = [
     "BlockRead",
     "BlockType",
+    "ChunkAnchorType",
+    "ChunkMessageCreate",
+    "ChunkMessageRead",
+    "ChunkPinCreate",
+    "ChunkPinRead",
+    "ChunkThreadCreate",
+    "ChunkThreadRead",
+    "ChunkThreadSummary",
     "DocumentRead",
     "JobRead",
     "MessageCreate",
