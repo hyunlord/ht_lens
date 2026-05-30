@@ -136,12 +136,63 @@ class Chunk(Base):
     caption: Mapped[str | None] = mapped_column(default=None)
 
     document: Mapped[Document] = relationship(back_populates="chunks")
+    translation: Mapped[ChunkTranslation | None] = relationship(
+        back_populates="chunk",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     @property
     def bbox(self) -> list[float]:
         """Decode ``bbox_json`` into a list (``[]`` when provenance was absent)."""
         raw = json.loads(self.bbox_json)
         return [float(v) for v in raw]
+
+
+class ChunkTranslation(Base):
+    """ht_lens 2.0 (Phase 8b) — translation of one chunk.
+
+    ``translated_text`` holds: KO translation for text/heading/table,
+    the LaTeX verbatim for equation (``model='passthrough'``), or ``""``
+    for image chunks with no translatable body. ``caption_translated``
+    is the KO caption for any caption-bearing chunk (image/chart/table).
+    ``cache_key`` is ``cache_key(content, src, tgt, model)`` so identical
+    source content dedups across the run (Phase 7a-2 5.66x).
+    """
+
+    __tablename__ = "chunk_translations"
+
+    chunk_id: Mapped[int] = mapped_column(
+        ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    translated_text: Mapped[str]
+    caption_translated: Mapped[str | None] = mapped_column(default=None)
+    model: Mapped[str]
+    cache_key: Mapped[str | None] = mapped_column(default=None)
+    status: Mapped[str]
+    updated_at: Mapped[datetime]
+
+    chunk: Mapped[Chunk] = relationship(back_populates="translation")
+
+
+class ChunkEmbedding(Base):
+    """ht_lens 2.0 (Phase 8b) — one vector per translated text/heading chunk.
+
+    Mirrors ``BlockEmbedding`` exactly (bge-m3, raw float32 bytes,
+    idempotent ``source_hash``); the chunk path is added alongside the 1.x
+    block path rather than renaming it, so 1.x RAG stays intact.
+    """
+
+    __tablename__ = "chunk_embeddings"
+
+    chunk_id: Mapped[int] = mapped_column(
+        ForeignKey("chunks.id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str]
+    dim: Mapped[int]
+    vector: Mapped[bytes] = mapped_column(LargeBinary)
+    source_hash: Mapped[str]
+    updated_at: Mapped[datetime]
 
 
 class Translation(Base):
@@ -243,6 +294,8 @@ __all__ = [
     "Block",
     "BlockEmbedding",
     "Chunk",
+    "ChunkEmbedding",
+    "ChunkTranslation",
     "Document",
     "Job",
     "Message",

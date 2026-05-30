@@ -369,6 +369,113 @@ def ingest_mineru_command(
         raise typer.Exit(code=exc.exit_code) from exc
 
 
+@app.command("translate-chunks")
+def translate_chunks_command(
+    doc_id: int = typer.Option(..., "--doc-id", help="2.0 (MinerU) document id to translate."),
+    concurrency: int = typer.Option(7, "--concurrency", min=1, max=32),
+    retry_failed: bool = typer.Option(
+        False, "--retry-failed/--no-retry-failed", help="Re-process status='failed' chunks only."
+    ),
+    db: Path = typer.Option(  # noqa: B008
+        None,
+        "--db",
+        resolve_path=True,
+        help="SQLite DB path (default HT_LENS_DB_URL or data/ht_lens.db).",
+    ),
+) -> None:
+    """ht_lens 2.0 — translate a document's chunks (qwen + math placeholder protect)."""
+    from ht_lens.dotenv_loader import load_repo_dotenv
+
+    load_repo_dotenv()
+    from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.llm.factory import from_env_translate
+
+    db_path = db if db is not None else _db_path_from_env()
+
+    async def _run() -> None:
+        llm = from_env_translate()
+        engine = make_engine(db_path)
+        factory = make_session_factory(engine)
+        try:
+            async with factory() as session:
+                from ht_lens.translate.chunk_pipeline import translate_chunks
+
+                stats = await translate_chunks(
+                    doc_id, session, llm, concurrency=concurrency, retry_failed=retry_failed
+                )
+            typer.echo(
+                f"ok: doc_id={stats.document_id} translated={stats.translated} "
+                f"passthrough={stats.passthrough} cached={stats.cached} "
+                f"skipped={stats.skipped} failed={stats.failed}"
+            )
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_run())
+    except SchemaVersionMismatch as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    except HtLensError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+
+@app.command("embed-chunks")
+def embed_chunks_command(
+    doc_id: int | None = typer.Option(
+        None, "--doc-id", help="Embed only this 2.0 document's chunks."
+    ),
+    batch_size: int = typer.Option(16, "--batch-size", min=1, max=256),
+    db: Path = typer.Option(  # noqa: B008
+        None,
+        "--db",
+        resolve_path=True,
+        help="SQLite DB path (default HT_LENS_DB_URL or data/ht_lens.db).",
+    ),
+) -> None:
+    """ht_lens 2.0 — backfill ``chunk_embeddings`` for translated text/heading chunks."""
+    from ht_lens.dotenv_loader import load_repo_dotenv
+
+    load_repo_dotenv()
+    from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.embedding.factory import from_env_embedding
+
+    db_path = db if db is not None else _db_path_from_env()
+
+    async def _run() -> None:
+        client = from_env_embedding()
+        if client is None:
+            typer.echo(
+                "error: RAG_DISABLED is set — embedding subsystem disabled. "
+                "Unset RAG_DISABLED or use EMBEDDING_PROVIDER=mock for dev.",
+                err=True,
+            )
+            raise typer.Exit(code=5)
+        engine = make_engine(db_path)
+        factory = make_session_factory(engine)
+        try:
+            async with factory() as session:
+                from ht_lens.embedding.chunk_backfill import backfill_chunks
+
+                stats = await backfill_chunks(session, client, doc_id=doc_id, batch_size=batch_size)
+            typer.echo(
+                f"ok: doc_id={doc_id} candidates={stats['candidates']} "
+                f"embedded={stats['embedded']} skipped={stats['skipped']}"
+            )
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_run())
+    except SchemaVersionMismatch as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    except HtLensError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     try:
         app(argv if argv is not None else sys.argv[1:], standalone_mode=True)

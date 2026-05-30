@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ht_lens.db.models import BlockEmbedding
+from ht_lens.db.models import BlockEmbedding, ChunkEmbedding
 
 
 def vector_to_bytes(vec: np.ndarray) -> bytes:
@@ -102,9 +102,46 @@ async def get_source_hash(session: AsyncSession, block_id: int) -> str | None:
     return row.source_hash if row else None
 
 
+# --- chunk parallel (Phase 8b) — reuses the serialization helpers above;
+# a thin per-table upsert rather than a second embedding subsystem
+# (challenge §1/§4). The 1.x block functions are untouched. ---
+
+
+async def upsert_chunk_embedding(
+    session: AsyncSession,
+    *,
+    chunk_id: int,
+    vector: np.ndarray,
+    model: str,
+    dim: int,
+    source_hash: str,
+) -> None:
+    """Insert or replace the embedding row for ``chunk_id``."""
+    stmt = sqlite_insert(ChunkEmbedding).values(
+        chunk_id=chunk_id,
+        model=model,
+        dim=dim,
+        vector=vector_to_bytes(vector),
+        source_hash=source_hash,
+        updated_at=datetime.now(UTC),
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[ChunkEmbedding.chunk_id],
+        set_={
+            "model": stmt.excluded.model,
+            "dim": stmt.excluded.dim,
+            "vector": stmt.excluded.vector,
+            "source_hash": stmt.excluded.source_hash,
+            "updated_at": stmt.excluded.updated_at,
+        },
+    )
+    await session.execute(stmt)
+
+
 __all__ = [
     "get_source_hash",
     "load_all",
+    "upsert_chunk_embedding",
     "upsert_embedding",
     "vector_from_bytes",
     "vector_to_bytes",
