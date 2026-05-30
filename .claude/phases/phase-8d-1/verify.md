@@ -1,75 +1,67 @@
-# Phase 8d-1 — Verify (self)
+# Phase 8d-1 — Verify (self) — v2 (post RE-CODE, verify-cross R1)
 
-마지막 code commit: `c4b2250 test(phase-8d-1): jsdom enrich + sections`. 작성 직전 `git status` = clean. 2026-05-31. frontend-only(JS/HTML/CSS) + 테스트만 — API/DB/LLM/src-py 변경 0.
+마지막 code commit: `08e54be test(phase-8d-1): load() integration ... (verify-cross R1)` (직전 `4807705` fix). 작성 직전 `git status` = clean. 2026-05-31. v2 = cross-verify R1 DOWNGRADE(~79) 대응 — 실 결함 2개 fix + 테스트/증거 보강.
 
-## 5-A. Automated checks
+## 5-A. Automated checks (실측, CI-equivalent)
 | Check | Command | Result |
 | ----- | ------- | ------ |
 | Lint | `uv run ruff check .` | All checks passed |
-| Format | `uv run ruff format --check .` | 183 files already formatted |
+| Format | `uv run ruff format --check .` | 184 files already formatted |
 | Type | `uv run mypy src` | Success: no issues found in 79 source files |
-| Test | `uv run pytest -m "not llm and not slow" -q --no-cov` | **691 passed, 1 skipped, 7 deselected in 473.40s** |
-| Coverage | n/a (신규 코드 = JS; py 변경 0) | reflow.js/sections.js/enrich_inline.js는 jsdom 서브프로세스로 잠금(py-cov 밖) |
-| CI | prototype-reflow — GitHub CI는 8e cutover까지 미발생, 로컬 CI-equivalent green | n/a |
+| Test | `uv run pytest -m "not llm and not slow" -q` (coverage 포함, **--no-cov 제거** — R1 §1) | **692 passed, 1 skipped, 7 deselected in 570.21s** |
+| Coverage | 위 명령 (pyproject `--cov=ht_lens`) | TOTAL **75%** (신규 코드=JS이라 py-cov 밖; reflow.py 불변) |
+| shellcheck | CI `shellcheck scripts/*.sh` | 8d-1은 `scripts/*.sh` 무변경 → N/A(로컬 미설치, CI 전용) |
+| CI | prototype-reflow — GitHub CI는 8e cutover까지 미발생 | n/a(이 branch) |
 
-테스트 회계: 677 → **691 (+14)**: `test_reflow_enrich_js`(5) + `test_reflow_sections_js`(9). 기존 `test_reflow_viewer_js`(10) 회귀 green.
+테스트 회계: 677 → v1 691(+14) → **v2 692(+1 RE-CODE: load 통합)**. 8d-1 신규 15: `test_reflow_enrich_js`(5) + `test_reflow_sections_js`(9) + `test_reflow_load_js`(1). 기존 `test_reflow_viewer_js`(10) 회귀 green.
 
-## 5-B. Functional checks
-### A — 인라인 스타일링 (enrich_inline.js)
-| 검사 | Evidence |
+## 5-B. verify-cross R1 DOWNGRADE → 처리 (실 결함 2 + gap 3)
+| R1 항목 | 종류 | 처리 | Evidence |
+| --- | --- | --- | --- |
+| §4 sections.js가 order_idx 정렬, ReflowChunk엔 미노출(undefined→NaN) | **실 결함** | order_idx 의존 제거 → API 응답 순서 신뢰(reflow API가 order_idx로 이미 정렬) | `4807705`; test_load(order_idx 없는 응답으로 트리/선택 작동) |
+| §4 heading이 자기 섹션번호를 self-ref로 wrap | **실 결함** | load()에서 heading은 enrichInline 미호출(title은 prose 아님) | `4807705`; test_load(headingSelfRef==0, dataSec==28.4) |
+| §4 TOC 토글 미테스트 | gap | 토글 hidden→open + aria 검증 | test_load(hiddenBefore/After, aria) |
+| §4 load() 통합 미테스트 | gap | fetch-stub + 실 reflow.html 통합 테스트 | test_reflow_load_js (build→enrich→toc→toggle) |
+| §1 --no-cov로 CI coverage 우회 | 증거 | coverage 포함 재실행(692, 75%) | 5-A |
+| §4 "no XSS" 과한 일반화 | 정직 | 5-D 한정(신규는 DOM-only; 기존 에러 sink는 pre-existing 부채) | 5-D |
+| §2 테스트 fixture가 order_idx로 mismatch 가림 | 증거 | sections fixture에서 order_idx 제거(ReflowChunk shape 일치) | `08e54be` H/T 팩토리 |
+
+## 5-C. Regression check (RE-CODE — CLAUDE.md 필수)
+RE-CODE는 **제거(order_idx 정렬) + 분기 가드(heading enrich skip) + 테스트 추가**. 새 production 함수/state field **도입 0**(제거·가드만). 변경별 잠금:
+| RE-CODE 변경 | 새 코드 경로 | 잠금 단위 테스트 |
+| --- | --- | --- |
+| sections.js: order_idx 정렬 제거 → 입력(문서) 순서 신뢰 | buildSectionTree/computeSectionChunks가 array 순서 사용 | test_load_builds_enriches_toc_without_order_idx (order_idx 없는 응답) + 기존 sections 9(fixture order_idx 제거 후 green) |
+| reflow.js: heading enrich skip | heading은 enrichInline 미호출(자기참조 0) | test_load (headingSelfRef==0) |
+| 신규 test_reflow_load_js | load() 전체 흐름 + 토글 | 자체 |
+
+grep 증거: `test_load_builds_enriches_toc_without_order_idx`·`headingSelfRef`·`hiddenBefore`가 test_reflow_load_js.py에 실재; sections fixture(H/T 팩토리)에 `order_idx` 부재(ReflowChunk 일치). 회귀: 691→692, 기존 24 jsdom + 전체 회귀 green, 0 회귀.
+
+## 5-D. DoD + 안전 (정직)
+| 항목 | Evidence |
 | --- | --- |
-| 인용 ≥1 digit 필수 ([KO]/[EN]/[Note] 제외, [BJ05]/[Kha+10]/[CDS02] 포함) | test_citation_excludes_digitless_markers |
-| 섹션참조는 heading 집합 멤버십만 (식 28.116/그림 28.22 제외) | test_section_ref_membership_only |
-| 다중·인접 매칭 1 노드, 텍스트 무손실 | test_multiple_adjacent_matches_one_node |
-| KaTeX-safe (`closest('.katex')` skip) | test_katex_zone_is_skipped |
-| 평정수(150/16)·미지 소수(0.5) 무손상 | test_plain_integers_and_decimals_untouched |
+| 인용/섹션참조 스타일 (A) | enrich 5 + load 통합 (cites=[BJ05], refs=[28.4], 28.116 plain) |
+| 섹션 트리/선택/점프 (B) | sections 9 + load(tocLinks≥2) |
+| 참조 클릭 stopPropagation | test_ref_click_does_not_trigger_chunk_sync |
+| **신규 코드 XSS** | enrich/sections/toc 전부 createElement+textContent (innerHTML 미사용). **단** `reflow.js` load() **에러 경로**의 `innerHTML=e.message`는 **pre-existing(8c)**, 8d-1 무변경 → 부채로 기재(스코프 외, 자가호스팅 저위험). |
+| 1.x 무손상 | API/DB/src-py 변경 0; `data/ht_lens.db` blocks=49850 불변; 692 회귀 |
 
-### B — 섹션 트리/선택/점프 (sections.js)
-| 검사 | Evidence |
-| --- | --- |
-| parseSectionNo (§/후행점/Appendix/bare 변형) | test_parse_section_no_variants |
-| 트리 중첩 + 합성노드 0 (28.4>28.4.1/28.4.2>28.4.2.1; 28.3.5/28.5 root) | test_build_tree_nests_without_synthetic_nodes |
-| 섹션 식별 = original (번역 prefix 변경 무관) | test_section_id_from_original_when_translation_changes_prefix |
-| 선택 = 부모가 자식 포함, 다음 동급 직전 정지 | test_compute_section_includes_children_until_next_sibling |
-| 선택 하이라이트 + secNo 이벤트 | test_select_section_highlights_and_emits_secno |
-| 점프 scroll+flash, miss=false | test_jump_to_section_scrolls_and_flashes |
-| 참조 클릭 stopPropagation (chunk sync 미발동) | test_ref_click_does_not_trigger_chunk_sync |
-| TOC 중첩 렌더 + onJump 콜백 + 선택버튼 | test_render_toc_nested_with_callbacks |
-| TOC drawer가 compare grid 밖 (2 pane 유지) | test_toc_drawer_outside_compare_grid (실 reflow.html 로드) |
+## 5-E. 잔존 한계 (정직)
+1. chat/핀/RAG/섹션질문/figure/neighbor 재번역 = **8d-2**(하이브리드 context, 짧은chunk 재번역 locked).
+2. backend `sections[]` canonical = 8d-2; 8d-1은 응답순서 신뢰 + secNo 이벤트.
+3. 진짜 볼드 = 8e 재추출(has_bold=0). cross-doc 참조 = plain 유지(8d-2 RAG).
+4. 시각 자연스러움/픽셀 = 수동(in-suite는 25 jsdom 구조/로직; 6i/8c 선례).
+5. load() 에러 경로 innerHTML sink = pre-existing 부채(8d-1 무변경).
 
-### 라이브 서빙 (8086, dev DB doc7)
-- 신규 에셋 전부 200: reflow.html / reflow.js / sections.js / utils/enrich_inline.js / css/reflow.css.
-- 서빙된 reflow.js가 두 신규 모듈 import 확인(grep=2). 사용자 시각 평가 URL 가동: `http://100.70.109.50:8086/static/reflow.html?doc=1`.
-- 시각 품질(인용/참조 표시, 목차, 점프, 섹션선택 하이라이트)은 사용자 확인 대상 (DoD 사용자 시각; 6i/8c 선례 — jsdom이 로직 잠금).
-
-## 5-C. DoD 매핑 (8d-1 = 사용자 A+B 목표)
-| DoD | Evidence |
-| --- | --- |
-| 인용/섹션참조 스타일 (A) | enrich 5 테스트 + 라이브 |
-| 섹션 트리 표시 (B) | buildSectionTree/renderToc 테스트 + 라이브 |
-| 섹션 선택 (B) | select 테스트(부모=자식, secNo 이벤트) |
-| 참조 28.3.5 클릭→점프 (B) | jump + ref-click 테스트(stopPropagation) |
-| 볼드 → 데이터 부재(8e 재추출) | 인용/참조로 대체, 정직 기재 |
-| KaTeX/번역/레이아웃 무손상 | KaTeX-safe + viewer 10 회귀 + compare-layout 테스트 |
-| 1.x 무손상 | API/DB/src-py 변경 0; `data/ht_lens.db` blocks=49850 불변; 691 회귀 |
-
-## 5-D. 잔존 한계 (정직)
-1. chat/핀/RAG/섹션질문/figure채팅/neighbor 재번역 = **8d-2** (결정 locked: 하이브리드 context, 짧은chunk 재번역).
-2. backend `sections[]` canonical 모델 = 8d-2 (chat context); 8d-1은 frontend 파생 + `sectionselect`가 secNo 탑재(opaque-id coupling 회피).
-3. 진짜 볼드 = 8e MinerU 재추출 (현 데이터 has_bold=0).
-4. cross-doc/챕터 외 참조 = plain text 유지(미파손); 해소는 8d-2 RAG.
-5. 시각 자연스러움/스크린샷 = 수동(in-suite는 24 jsdom; 6i/8c 선례).
-
-## 5-E. Scoring (100, self)
-| Item | Score / Max | Evidence |
+## 5-F. Scoring (100, self)
+| Item | Score / Max | Evidence (R1 대비 변화) |
 | ---- | ----------- | -------- |
-| 독창성 | 12 / 15 | KaTeX-safe DOM-only enrich, 멤버십 disambiguation, original 기반 secNo, secNo-event 분리. 차감: 트리는 표준 패턴. |
-| 완결성 | 31 / 35 | A+B DoD 충족 + 14 테스트(debate R1–R12 전부 잠금) + 라이브 서빙. 차감: 시각 자연스러움 수동, 볼드는 데이터 부재. |
-| 안정성 | 28 / 30 | ruff/format/mypy clean, 691 회귀 0, KaTeX-safe·stopPropagation·compare-layout·합성노드0 전부 잠금, 1.x 무손상. 차감: 시각 회귀는 jsdom 구조 검증(픽셀 아님). |
-| 확장성 | 17 / 20 | enrich/sections 모듈 분리(8d-2 토대), secNo 이벤트 계약, frontend-only로 API 무변경. 차감: backend section 모델 8d-2 이연. |
-| **Total** | **88 / 100** | |
+| 독창성 | 12 / 15 | DOM-only enrich, 멤버십 disambiguation, original secNo. (R1 confirm 12) |
+| 완결성 | 31 / 35 | A+B DoD + 15 테스트 + **load() 통합(라이브 계약)**. 차감: 시각은 본질적 수동. (R1 28→ 통합 추가로 회복) |
+| 안정성 | 28 / 30 | ruff/format/mypy + **coverage 692** + 실 결함 2 fix+잠금 + 토글/KaTeX-safe/stopPropagation 전부 테스트. 차감: 픽셀 아닌 구조검증, pre-existing 에러 sink. (R1 24→ 회복) |
+| 확장성 | 17 / 20 | **order_idx 의존 제거(실 계약 robust)** + secNo 이벤트 + 모듈 분리. 차감: backend section 8d-2 이연. (R1 15→ 의존 제거로 회복) |
+| **Total** | **88 / 100** | 결함 2 fix로 R1 docking 회복; 잔여는 본질적 수동·8d-2 이연. |
 
-## 5-F. Self verdict
+## 5-G. Self verdict
 - [ ] PASS_CANDIDATE (≥95)
-- [x] **submit to cross-verify Round 1** (self 88 < 95, 정직). debate R1–R12 전부 구현+테스트 잠금, DoD A+B 충족, 691 회귀 0, 1.x 무손상. 잔존은 8d-2(chat/backend section)·8e(볼드/cross-doc)·본질적 수동(시각).
-- [ ] FAIL → RE-CODE / RE-PLAN
+- [x] **submit to cross-verify Round 2 (최종, cap)** (self 88 < 95, 정직). R1 실 결함 2개 fix + 테스트 잠금(load 통합), CI-equiv coverage 실행, XSS 주장 한정. 새 production 함수 도입 0(제거·가드). 잔존은 8d-2(chat/backend)·8e(볼드)·본질적 수동(픽셀). R2가 새 concrete 결함 없으면 push.
+- [ ] FAIL → RE-PLAN
