@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ht_lens — reflow reading view</title>
+    <!-- Vendored KaTeX (Phase 6i, offline-first). reflow.js reuses applyMath. -->
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+    <link rel="stylesheet" href="css/reflow.css" />
+  </head>
+  <body>
+    <header class="top">
+      <h1>ht_lens · reflow</h1>
+      <span class="meta" id="meta">로딩 중…</span>
+      <span class="modes">
+        <label><input type="radio" name="mode" value="single" checked /> 읽기</label>
+        <label><input type="radio" name="mode" value="compare" /> 원문 비교</label>
+      </span>
+    </header>
+    <div class="layout" id="layout" data-mode="single">
+      <aside class="pane--pdf" id="pane-pdf"></aside>
+      <main class="pane--reflow">
+        <article id="content"><div class="status">로딩 중…</div></article>
+      </main>
+    </div>
+    <script type="module" src="js/reflow.js"></script>
+  </body>
+</html>

@@ -1,0 +1,96 @@
+/* ht_lens 2.0 reflow reading view (Phase 8c) — seeded from the validated
+   ~/mineru_test/result_v2.html prototype. */
+:root {
+  --fg: #1a1a1a;
+  --muted: #6b6b6b;
+  --accent: #2a4d8a;
+  --border: #e3e3e3;
+  --bg: #fdfdfd;
+  --eq-bg: #fafafa;
+  --fig-bg: #f3f6fb;
+  --fig-border: #b9c5db;
+  --hl: #fff3bf;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Pretendard", "Noto Sans CJK KR", "Segoe UI", sans-serif;
+  line-height: 1.9;
+  font-size: 18px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.top {
+  position: sticky; top: 0; z-index: 20;
+  background: #f7f7f7; border-bottom: 1px solid var(--border);
+  padding: 0.6em 1.2em; display: flex; gap: 1em; align-items: baseline;
+  font-size: 14px;
+}
+.top h1 { font-size: 1.05em; margin: 0; font-weight: 600; }
+.top .meta { color: var(--muted); }
+.top .modes { margin-left: auto; }
+.top label { color: var(--muted); cursor: pointer; }
+
+/* layout: single (reading only) or compare (PDF | reflow) */
+.layout { display: grid; }
+.layout[data-mode="single"] { grid-template-columns: 1fr; }
+.layout[data-mode="compare"] { grid-template-columns: 1fr 1fr; }
+
+.pane--pdf {
+  background: #f7f7f7; border-right: 1px solid var(--border);
+  overflow: auto; height: calc(100vh - 3.2em); padding: 1em;
+}
+.layout[data-mode="single"] .pane--pdf { display: none; }
+.pane--pdf .pdf-page { margin: 0 auto 1em; max-width: 100%; }
+.pane--pdf .pdf-page img {
+  display: block; max-width: 100%; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  border: 2px solid transparent;
+}
+.pane--pdf .pdf-page.hl img { border-color: var(--accent); }
+.pane--pdf .pdf-page .lbl { text-align: center; color: var(--muted); font-size: 12px; }
+
+.pane--reflow { overflow: auto; height: calc(100vh - 3.2em); }
+article { max-width: 760px; margin: 0 auto; padding: 2.5rem 2rem 6rem; }
+
+.chunk { scroll-margin-top: 4em; }
+.chunk.active { background: var(--hl); border-radius: 3px; }
+.layout[data-mode="compare"] .chunk { cursor: pointer; }
+
+h2.rf-heading { font-size: 1.5em; font-weight: 700; margin: 1.8em 0 0.4em; letter-spacing: -0.01em; }
+h3.rf-heading { font-size: 1.2em; font-weight: 700; margin: 1.5em 0 0.4em; color: var(--accent); }
+p.rf-text { margin: 1em 0; text-align: justify; word-break: keep-all; overflow-wrap: anywhere; }
+.rf-text--empty { color: var(--muted); font-style: italic; }
+
+.katex { font-size: 1em; }
+.katex-display {
+  margin: 1.2em 0; padding: 0.6em 1em; background: var(--eq-bg);
+  border-left: 3px solid var(--accent); border-radius: 2px; overflow-x: auto;
+}
+.katex-error { color: #b00020; }
+
+.rf-figure { margin: 1.5em 0; }
+.rf-figure img {
+  display: block; max-width: 100%; margin: 0 auto;
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.rf-figure .fig-missing {
+  display: block; padding: 1.2em; text-align: center; color: var(--muted);
+  background: var(--fig-bg); border: 1px dashed var(--fig-border); border-radius: 4px;
+}
+.figure-box {
+  margin: 0.5em auto 0; max-width: 100%; padding: 0.8em 1em;
+  background: var(--fig-bg); border: 1px solid var(--fig-border); border-radius: 6px;
+  font-size: 0.95em;
+}
+.figure-box .fb-cap { font-weight: 600; }
+.figure-box .fb-en { color: var(--muted); font-size: 0.82em; font-style: italic; margin-top: 0.4em; }
+
+.rf-table { margin: 1.2em 0; overflow-x: auto; }
+.rf-table pre {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85em;
+  background: #f4f4f4; padding: 0.8em; border-radius: 4px; white-space: pre-wrap;
+}
+
+.status, .err { color: var(--muted); padding: 2em; text-align: center; }
+.err { color: #b00020; }
