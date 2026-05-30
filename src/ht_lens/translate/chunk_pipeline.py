@@ -96,19 +96,26 @@ async def translate_chunks(
     sem = asyncio.Semaphore(concurrency)
     db_lock = asyncio.Lock()
 
-    async def _cached_translate(text: str) -> str:
-        """Translate ``text`` with run-level dedup + bounded concurrency.
+    async def _cached_translate(text: str) -> tuple[str, bool]:
+        """Translate ``text``; return ``(result, fresh)`` where ``fresh`` is
+        True only if THIS call made a new LLM request.
 
-        Identical source text → one LLM call (others await its future).
-        ``text`` is the *unprotected* source so the cache_key matches
-        across chunks (5.66x). Protection happens inside.
+        Cache order (verify-cross R1 §4 — restores 7a-2 persistent reuse):
+        in-run ``pending_cache`` → DB ``chunk_translations.cache_key``
+        (cross-run/cross-doc, uses ``ix_chunk_tr_cache``) → in-flight future
+        → fresh LLM call. ``text`` is the *unprotected* source so cache_key
+        matches across chunks/runs (5.66x). Protection happens inside.
         """
         ck = make_cache_key(text, doc.src_lang, doc.tgt_lang, model_name)
         own: asyncio.Future[str] | None = None
         inflight: asyncio.Future[str] | None = None
         async with db_lock:
             if ck in pending_cache:
-                return pending_cache[ck]
+                return pending_cache[ck], False
+            db_hit = await _db_cache_lookup(session, ck)
+            if db_hit is not None:
+                pending_cache[ck] = db_hit
+                return db_hit, False
             existing = pending_futures.get(ck)
             if existing is None:
                 own = asyncio.get_running_loop().create_future()
@@ -116,7 +123,7 @@ async def translate_chunks(
             else:
                 inflight = existing
         if inflight is not None:
-            return await inflight
+            return await inflight, False
         assert own is not None
         try:
             result = await _translate_protected(
@@ -134,7 +141,7 @@ async def translate_chunks(
         async with db_lock:
             pending_cache[ck] = result
             pending_futures.pop(ck, None)
-        return result
+        return result, True
 
     async def _process(chunk: Chunk) -> None:
         async with db_lock:
@@ -156,16 +163,21 @@ async def translate_chunks(
                 stats.passthrough += 1
             return
 
+        fresh = False
+        had_text = bool(chunk.content.strip()) or bool(chunk.caption and chunk.caption.strip())
         try:
             # Body: translate non-empty content (image chunks usually have
             # empty content; charts carry text that we DO translate).
-            body = await _cached_translate(chunk.content) if chunk.content.strip() else ""
+            if chunk.content.strip():
+                body, body_fresh = await _cached_translate(chunk.content)
+                fresh |= body_fresh
+            else:
+                body = ""
             # Caption (image/chart/table) → separate translated field.
-            caption_tr = (
-                await _cached_translate(chunk.caption)
-                if chunk.caption and chunk.caption.strip()
-                else None
-            )
+            caption_tr: str | None = None
+            if chunk.caption and chunk.caption.strip():
+                caption_tr, cap_fresh = await _cached_translate(chunk.caption)
+                fresh |= cap_fresh
         except _MathLostError:
             async with db_lock:
                 await _upsert(session, chunk.id, "", None, model_name, None, "failed")
@@ -180,7 +192,12 @@ async def translate_chunks(
         ck = make_cache_key(chunk.content, doc.src_lang, doc.tgt_lang, model_name)
         async with db_lock:
             await _upsert(session, chunk.id, body, caption_tr, model_name, ck, "translated")
-            stats.translated += 1
+            # A chunk that reused cache for all its text (no fresh LLM call)
+            # counts as cached — this is the live 5.66x signal.
+            if had_text and not fresh:
+                stats.cached += 1
+            else:
+                stats.translated += 1
 
     tasks = [asyncio.create_task(_process(c)) for c in chunks]
     try:
@@ -196,6 +213,26 @@ async def translate_chunks(
     return stats
 
 
+async def _db_cache_lookup(session: AsyncSession, ck: str) -> str | None:
+    """Return a prior chunk's ``translated_text`` for this cache_key, or None.
+
+    Cross-run/cross-document persistent reuse (verify-cross R1 §4) — the
+    feature ``ix_chunk_tr_cache`` exists for. Only ``status='translated'``
+    rows are reused. The stored ``cache_key`` is ``hash(content,…)`` so
+    this hits for identical body content across documents."""
+    row = (
+        await session.execute(
+            select(ChunkTranslation.translated_text)
+            .where(
+                ChunkTranslation.cache_key == ck,
+                ChunkTranslation.status == "translated",
+            )
+            .limit(1)
+        )
+    ).first()
+    return str(row[0]) if row is not None else None
+
+
 async def _translate_protected(
     llm: TranslateLLMClient,
     text: str,
@@ -205,14 +242,20 @@ async def _translate_protected(
     sem: asyncio.Semaphore,
 ) -> str:
     """Protect math → translate (with retry) → restore. Raise ``_MathLostError``
-    if the LLM dropped a placeholder."""
-    # Collision guard: if the source already contains a ⟦MATHi⟧-shaped
-    # token, skip protection (translate raw) to avoid restore mis-indexing.
+    if the LLM dropped a placeholder.
+
+    Collision-robust (verify-cross R1 §4): if the source already contains a
+    default ``⟦MATHi⟧``-shaped token, protect with a source-unique sentinel
+    prefix instead of skipping protection — so real ``$math$`` in the same
+    chunk is still byte-identical."""
+    prefix = "MATH"
     if math_protect.source_has_placeholder_collision(text):
-        return await _retry_translate(llm, text, src, tgt, max_retries, sem)
-    protected, store = math_protect.protect_math(text)
+        import hashlib
+
+        prefix = "MATH" + hashlib.sha1(text.encode()).hexdigest()[:10].upper()
+    protected, store = math_protect.protect_math(text, token_prefix=prefix)
     out = await _retry_translate(llm, protected, src, tgt, max_retries, sem)
-    restored, missing = math_protect.restore_math(out, store)
+    restored, missing = math_protect.restore_math(out, store, token_prefix=prefix)
     if missing:
         raise _MathLostError(f"{len(missing)} math placeholder(s) lost by LLM")
     return restored

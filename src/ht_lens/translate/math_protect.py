@@ -43,31 +43,36 @@ def source_has_placeholder_collision(text: str) -> bool:
     return bool(_PLACEHOLDER_RE.search(text))
 
 
-def protect_math(text: str) -> tuple[str, list[str]]:
-    """Replace every ``$$...$$`` then ``$...$`` run with ``⟦MATHi⟧``.
+def protect_math(text: str, *, token_prefix: str = "MATH") -> tuple[str, list[str]]:
+    """Replace every ``$$...$$`` then ``$...$`` run with ``⟦{prefix}i⟧``.
 
     Order matters: display first so ``$$`` is not split by the inline
     pattern. Returns ``(protected_text, store)`` where ``store[i]`` is the
-    raw (delimiters included) i-th math run.
+    raw (delimiters included) i-th math run. ``token_prefix`` lets the
+    caller pick a source-unique sentinel when the default ``MATH`` would
+    collide with placeholder-shaped text already in ``text`` (so real math
+    is still protected — verify-cross R1 §4).
     """
     store: list[str] = []
 
     def take(m: re.Match[str]) -> str:
         store.append(m.group(0))
-        return f"{PH_OPEN}MATH{len(store) - 1}{PH_CLOSE}"
+        return f"{PH_OPEN}{token_prefix}{len(store) - 1}{PH_CLOSE}"
 
     text = _DISPLAY_RE.sub(take, text)
     text = _INLINE_RE.sub(take, text)
     return text, store
 
 
-def restore_math(text: str, store: list[str]) -> tuple[str, list[int]]:
+def restore_math(
+    text: str, store: list[str], *, token_prefix: str = "MATH"
+) -> tuple[str, list[int]]:
     """Restore placeholders to their raw math. Returns ``(restored,
     missing)`` where ``missing`` is the list of store indices whose
     placeholder was absent from ``text`` (LLM dropped/corrupted it)."""
     missing: list[int] = []
     for i, raw in enumerate(store):
-        token = f"{PH_OPEN}MATH{i}{PH_CLOSE}"
+        token = f"{PH_OPEN}{token_prefix}{i}{PH_CLOSE}"
         if token in text:
             text = text.replace(token, raw)
         else:

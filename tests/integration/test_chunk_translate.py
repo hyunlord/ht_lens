@@ -167,7 +167,8 @@ async def test_cache_dedup_one_llm_call_for_identical_content(api_db_path) -> No
         )
         async with factory() as s:
             stats = await translate_chunks(doc_id, s, CountingMock(), concurrency=7)
-        assert stats.translated == 3
+        # 2 unique LLM calls; the duplicate chunk is counted cached, not translated.
+        assert stats.translated == 2 and stats.cached == 1
         assert calls["n"] == 2, f"expected dedup to 2 unique calls, got {calls['n']}"
     finally:
         await engine.dispose()
@@ -195,6 +196,123 @@ async def test_math_lost_marks_chunk_failed(api_db_path) -> None:  # type: ignor
         assert tr.status == "failed"
         # Content NOT mutated with append-comment fakery.
         assert "누락" not in tr.translated_text and "MATH" not in tr.translated_text
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cached_stat_reflects_dedup(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """verify-cross R1: stats.cached must be live (was dead accounting).
+    Two identical chunks → 1 translated + 1 cached."""
+    engine, factory = await _factory(api_db_path)
+    try:
+        doc_id = await _make_doc(
+            factory,
+            [
+                {"type": "text", "content": "Identical paragraph content here now."},
+                {"type": "text", "content": "Identical paragraph content here now."},
+            ],
+        )
+        async with factory() as s:
+            stats = await translate_chunks(doc_id, s, MockLLMClient())
+        assert stats.translated == 1 and stats.cached == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_persistent_db_cache_across_runs(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """verify-cross R1: identical content in a SECOND document reuses the
+    first doc's translation from chunk_translations (cross-run persistent
+    cache) — no fresh LLM call. Restores the 7a-2 DB-cache feature."""
+    calls = {"n": 0}
+
+    class CountingMock(MockLLMClient):
+        async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
+            calls["n"] += 1
+            return await super().translate(text, src, tgt, context=context)
+
+    engine, factory = await _factory(api_db_path)
+    try:
+        shared = "A shared paragraph appearing in two separate documents here."
+        doc1 = await _make_doc(factory, [{"type": "text", "content": shared}])
+        async with factory() as s:
+            await translate_chunks(doc1, s, CountingMock())
+        calls_after_doc1 = calls["n"]
+        assert calls_after_doc1 == 1
+
+        doc2 = await _make_doc(factory, [{"type": "text", "content": shared}])
+        async with factory() as s:
+            stats = await translate_chunks(doc2, s, CountingMock())
+        # doc2's chunk reused doc1's translation from the DB → no new call.
+        assert calls["n"] == calls_after_doc1, "second doc should hit DB cache"
+        assert stats.cached == 1 and stats.translated == 0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_peak_concurrency_is_parallel_and_bounded(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """verify-cross R1 / debate §5: prove Semaphore(N) lets N translations
+    run concurrently (not just dedup). A barrier mock records peak overlap."""
+    import asyncio
+
+    state = {"active": 0, "peak": 0}
+
+    class BarrierMock(MockLLMClient):
+        async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+            await asyncio.sleep(0.05)  # hold the slot so others overlap
+            state["active"] -= 1
+            return await super().translate(text, src, tgt, context=context)
+
+    engine, factory = await _factory(api_db_path)
+    try:
+        # 6 distinct chunks, concurrency 3 → peak should reach exactly 3.
+        doc_id = await _make_doc(
+            factory,
+            [
+                {"type": "text", "content": f"Distinct paragraph number {i} of six."}
+                for i in range(6)
+            ],
+        )
+        async with factory() as s:
+            await translate_chunks(doc_id, s, BarrierMock(), concurrency=3)
+        assert state["peak"] == 3, f"expected peak concurrency 3, got {state['peak']}"
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_collision_with_real_math_still_protected(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """verify-cross R1 §4: a chunk that contains BOTH a placeholder-shaped
+    token AND real math must still preserve the real math byte-identical
+    (nonce sentinel), not send it raw."""
+
+    class DroppingMock(MockLLMClient):
+        async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
+            # Drop ONLY the default-format placeholder ⟦MATH<digit>⟧, to
+            # prove the pipeline used a nonce prefix (so real math survives).
+            import re
+
+            return "[KO] " + re.sub(r"⟦MATH\d+⟧", "DROPPED", text)
+
+    engine, factory = await _factory(api_db_path)
+    try:
+        doc_id = await _make_doc(
+            factory,
+            [{"type": "text", "content": "Copied ⟦MATH0⟧ token and real $x^2+y^2$ math."}],
+        )
+        async with factory() as s:
+            stats = await translate_chunks(doc_id, s, DroppingMock())
+        # The real math used a nonce sentinel (not ⟦MATH0⟧), so it survives.
+        assert stats.translated == 1 and stats.failed == 0
+        async with factory() as s:
+            from sqlalchemy import select
+
+            tr = (await s.execute(select(ChunkTranslation))).scalar_one()
+        assert "$x^2+y^2$" in tr.translated_text  # real math byte-identical
     finally:
         await engine.dispose()
 

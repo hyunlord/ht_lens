@@ -103,3 +103,16 @@ def test_extract_mineru_cli_happy_with_fake_binary(tmp_path: Path, monkeypatch) 
     monkeypatch.setenv("HT_LENS_MINERU_BIN", str(fake))
     rc = main(["extract-mineru", str(pdf), "-o", str(out)])
     assert rc == 0
+
+
+# --- translate-chunks CLI error mapping (verify-cross R1 §4) ---
+
+
+def test_translate_chunks_cli_unknown_doc_exits_2(
+    tmp_path: Path, api_db_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """Unknown doc_id → ValueError → clean exit 2 (not a traceback)."""
+    monkeypatch.setenv("TRANSLATE_LLM_PROVIDER", "mock")
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    rc = main(["translate-chunks", "--doc-id", "99999", "--db", str(api_db_path)])
+    assert rc == 2

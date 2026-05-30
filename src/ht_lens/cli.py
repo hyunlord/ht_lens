@@ -411,11 +411,22 @@ def translate_chunks_command(
         finally:
             await engine.dispose()
 
+    from ht_lens.llm.errors import LLMConfigurationError, LLMHealthCheckFailed
+
     try:
         asyncio.run(_run())
+    except LLMConfigurationError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=5) from exc
+    except LLMHealthCheckFailed as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=4) from exc
     except SchemaVersionMismatch as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=3) from exc
+    except ValueError as exc:  # translate_chunks raises on unknown doc_id
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
     except HtLensError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=exc.exit_code) from exc
