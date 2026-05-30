@@ -1,60 +1,62 @@
-# Phase 8b — Verify (self)
+# Phase 8b — Verify (self) — v2 (post RE-CODE)
 
-마지막 code commit: tests 커밋 (feat + test). git status = 코드 무변경(워크플로 stub 3개만 untracked). 2026-05-30.
+마지막 code commit: `fix(phase-8b): persistent DB cache + live cached stat + collision-safe math + CLI errors`.
+git status = 코드 무변경(워크플로 summary.md stub만 untracked). 2026-05-30. RE-CODE = verify-cross R1 DOWNGRADE 대응.
 
 ## 5-A. Automated checks
 | Check | Command | Result |
 | --- | --- | --- |
 | Lint | `uv run ruff check .` | All checks passed |
-| Format | `uv run ruff format --check .` | 179 files already formatted |
+| Format | `uv run ruff format --check .` | clean |
 | Type | `uv run mypy src` | Success: no issues found in 79 source files |
-| Test | `uv run pytest -m "not llm and not slow" -q --no-cov` | 648 passed, 1 skipped, 7 deselected in 589.62s |
+| Test | `uv run pytest -m "not llm and not slow" -q --no-cov` | 653 passed, 1 skipped, 7 deselected in 570.77s |
 | Coverage | n/a (프로젝트 `make test-fast` 표준 `--no-cov`) | n/a |
-| CI | prototype-reflow 브랜치 — GitHub CI는 8e cutover까지 미발생. 로컬 CI-equivalent green(위 4행). | n/a |
+| CI | prototype-reflow — GitHub CI는 8e cutover까지 미발생, 로컬 CI-equivalent green | n/a |
 
-테스트 회계: 619 → 648 = +29 = 12 test_math_protect + 8 test_chunk_translate + 5 test_chunk_embed + 2 test_chunk_schema(0006 additive + round-trip) + 2 extract-mineru CLI.
+테스트 회계: 619 → v1 648 (+29) → v2 653 (+5 RE-CODE) = +34 total.
 
 ## 5-B. DoD 검증 (ROADMAP 8b)
 | DoD | Evidence |
 | --- | --- |
-| chunk 번역 + 수식 placeholder byte-identical 보존 | test_math_protect 12건(operatorname*/textstyle byte-identical, 누락 검출) + test_chunk_translate(math 보존, `⟦MATH` 잔존 0) + **실 E2E doc7 103 chunk**: equation content==translated_text(byte-identical passthrough), text `$...$` 보존, 리터럴 placeholder 잔존 0 |
-| embedding 생성 | test_chunk_embed 5건(text/heading만, idempotent, model-change refresh) + chunk_embeddings COUNT |
-| Phase 7a-2 5.66x 적용 | test_cache_dedup(3 chunk 중 동일 2개 → LLM 2회 호출) + Semaphore(7) + as_completed/cancel/retry_failed/status finalize 재사용 |
+| chunk 번역 + 수식 placeholder byte-identical | test_math_protect 12 + test_chunk_translate(math 보존, ⟦MATH 잔존 0) + 실 E2E doc7 103 chunk (equation byte-identical passthrough, $ 보존) |
+| embedding 생성 | test_chunk_embed 5 (text/heading, idempotent, model-change, cascade) |
+| Phase 7a-2 5.66x 적용 | **(R1 fix 후 완전)** in-run dedup + **persistent DB cache**(cross-doc) + **live stats.cached** + **peak-concurrency 병렬 증명**(Semaphore(3)→peak 3) + retry/cancel/status |
 
-## 5-C. verify-cross R1(debate) contract fix 검증
-| debate 지적 | 처리 | Evidence |
+## 5-C. verify-cross R1 DOWNGRADE 지적 → 처리
+| R1 지적 | 처리 | Evidence |
 | --- | --- | --- |
-| cache_key content-only 오류 | full `cache_key(content,src,tgt,model)` | test_cache_key_includes_src_tgt_model |
-| missing placeholder append가 byte-identical 위반 | **status='failed', content 미변형** | test_math_lost_marks_chunk_failed (status=failed, "누락"/"MATH" 미포함) |
-| chart content 손실 | image chunk content도 번역 | test_image_caption_and_chart_content_translated (chart translated_text="[KO] bar chart values") |
-| 7a-2 retry/cancel/status 누락 | 충실 재사용 | chunk_pipeline retry_failed/as_completed cancel/_finalize + test_skips_already_translated |
-| 0006 additive | additive-only | test_migration_0006_additive_only (1.x+chunks DDL byte-identical) |
-| embedding 중복 | helper 재사용 thin upsert_chunk_embedding | store.py 공유 |
-| type 택소노미 lock | 파서출력 (text/heading) | chunk_backfill 필터 + test |
-| FK cascade | CASCADE | test_chunk_embedding_cascade_on_document_delete |
+| persistent DB cache 누락 (ix_chunk_tr_cache 미사용) | `_db_cache_lookup` 추가, cross-run/doc 재사용 | test_persistent_db_cache_across_runs (2nd doc, LLM 0 호출, cached=1) |
+| stats.cached dead accounting | `_cached_translate→(text,fresh)`, 캐시 chunk는 cached 카운트 | test_cached_stat_reflects_dedup, dedup 테스트 translated=2/cached=1 |
+| collision guard가 real math raw 전송 | nonce sentinel prefix로 보호(skip 아님) | test_collision_with_real_math_still_protected ($x^2+y^2$ byte-identical 생존) |
+| translate-chunks CLI 약한 에러 처리 | LLMConfig(5)/Health(4)/doc-404(2) 매핑 | test_translate_chunks_cli_unknown_doc_exits_2 |
+| peak-concurrency 미증명 (debate §5) | barrier 테스트 | test_peak_concurrency_is_parallel_and_bounded |
 
-## 5-D. 1.x 무손상 (3중)
-- test_migration_0006_additive_only: 1.x 7테이블 + chunks + documents DDL byte-identical.
-- test_1x_translations_untouched (chunk_translate): 1.x translation "안녕" 유지.
-- test_1x_block_embeddings_untouched (chunk_embed): 1.x block_embeddings 유지.
-- full regression 619 영역 전부 green.
+## 5-D. Regression check (RE-CODE — CLAUDE.md 필수)
+| RE-CODE 변경 | 잠금 테스트 (grep) |
+| --- | --- |
+| `_db_cache_lookup` (chunk_pipeline) | test_persistent_db_cache_across_runs (`_db_cache_lookup` 경로) |
+| `_cached_translate` → (text, fresh) + stats.cached | test_cached_stat_reflects_dedup, test_cache_dedup (translated=2/cached=1) |
+| `_translate_protected` nonce prefix + `protect_math(token_prefix=)` | test_collision_with_real_math_still_protected |
+| CLI except LLMConfig/Health/ValueError | test_translate_chunks_cli_unknown_doc_exits_2 |
+- R1 fix 영역 회귀: 기존 24 chunk 테스트(math/passthrough/image/1.x intact) 전부 green; dedup 테스트만 의미 변경(translated=2/cached=1, 올바름). full regression 648→653, 기존 영역 회귀 0.
+- grep 확인: `_db_cache_lookup`/`token_prefix`/`stats.cached`/`LLMConfigurationError` 모두 src+test에 등장.
 
-## 5-E. 잔존 한계 (정직)
-1. **실 qwen 번역 미실행**: E2E는 MockLLMClient (1.x 테스트와 동일 관행). 실 qwen+v2_ko 번역 품질은 sandbox에서 검증됨, 8b는 파이프라인/수식보호 검증. 실 번역은 8e 마이그레이션.
-2. **진짜 병렬성 미증명 (debate §5)**: dedup-count(LLM 2회)는 cache 동작 증명이나 Semaphore(7) 동시 실행을 타이밍/barrier로 증명하진 않음. 7a-2 구조 그대로 재사용이라 동시성 보존되나 8b 테스트는 dedup만.
-3. **table 실검증 0**: doc7 챕터 table 0개. text 동일 로직(risk 낮음), 실검증 8e.
-4. **chunk 검색(RAG) 미구현**: 임베딩 생성만, 검색은 1.x 유지(8d).
+## 5-E. 1.x 무손상 (3중, R1 후 유지)
+test_migration_0006_additive_only + test_1x_translations_untouched + test_1x_block_embeddings_untouched + full regression 619 영역 green.
 
-## 5-F. Scoring (self)
+## 5-F. 잔존 한계 (정직)
+1. 실 qwen 번역 미실행 (Mock E2E; 실 번역은 8e). 2. table 실검증 0 (doc7 챕터 table 없음; 8e). 3. caption은 in-run 캐시만(content는 DB 캐시), 캡션 DB 재사용은 미구현(영향 작음). 4. chunk 검색(RAG)은 8d.
+
+## 5-G. Scoring (self)
 | Item | /Max | 근거 |
 | --- | --- | --- |
-| 독창성 | 12/15 | placeholder 보호(byte-identical/missing→failed) + 7a-2 일반화 + chunk-parallel embedding(1.x 무손상). 견고, 비-신규. |
-| 완결성 | 32/35 | DoD 3/3 + 29 테스트 + 실 doc7 E2E(103 chunk) + full regression. 차감: 진짜 병렬성 테스트 미작성(§5), 실 qwen 미실행, table 미검증. |
-| 안정성 | 27/30 | mypy/ruff clean, 0006 additive 증명, missing→failed(손실 0), 1.x 3중 무손상, FK cascade. 차감: 병렬성 타이밍 미증명. |
-| 확장성 | 18/20 | chunk_translations/embeddings가 8c viewer/8d chat 수용, math_protect 재사용 가능, embedding helper 공유. 차감: chunk 검색 8d 연기. |
-| **Total** | **89/100** | |
+| 독창성 | 12/15 | placeholder(byte-identical/missing→failed/collision-nonce) + 7a-2 완전 일반화(DB 캐시 포함) + chunk-parallel embedding. |
+| 완결성 | 33/35 | DoD 3/3 + 34 테스트 + 실 E2E + full regression. R1의 7a-2 reuse 갭(DB 캐시/cached stat/병렬) 전부 해소. 차감: 실 qwen/table 미검증(8e). |
+| 안정성 | 28/30 | mypy/ruff clean, 0006 additive, missing→failed, collision-safe, 1.x 3중 무손상, CLI 에러 매핑. 차감: caption DB 캐시 미구현(minor). |
+| 확장성 | 18/20 | chunk_translations/embeddings가 8c/8d 수용, persistent 캐시가 8e 대량 재처리에 유효, helper 재사용. 차감: chunk 검색 8d 연기. |
+| **Total** | **91/100** | |
 
-## 5-G. Self verdict
+## 5-H. Self verdict
 - [ ] PASS_CANDIDATE (≥95)
-- [x] **submit to cross-verify** (self 89 < 95, 정직). DoD 3/3 + debate contract fix 전부 반영. 잔존은 구조적(실 qwen/병렬성 타이밍/table = 8e·운영). RE-CODE 후보: 진짜 병렬성 barrier 테스트(§5) 추가 여부 cross-verify 판단.
+- [x] **submit to cross-verify Round 2 (최종, CLAUDE.md cap)** (self 91 < 95, 정직). R1 DOWNGRADE의 concrete 지적(DB 캐시/cached stat/collision/CLI/병렬) 전부 fix+테스트. 잔존은 8e·8d 영역(구조적). R2가 새 concrete 결함 없이 REJECT면 Planner escalate.
 - [ ] FAIL → RE-PLAN
