@@ -7,12 +7,23 @@
 // chunk scrolls the left PDF pane to that chunk's source page.
 
 import { applyMath } from "./utils/render_markdown.js";
+import { enrichInline } from "./utils/enrich_inline.js";
+import {
+  buildSectionTree,
+  jumpToSection,
+  parseSectionNo,
+  renderToc,
+  selectSection,
+  wireRefJump,
+} from "./sections.js";
 
 const $ = (id) => document.getElementById(id);
 const layout = $("layout");
 const paneReflow = $("content");
 const panePdf = $("pane-pdf");
 const metaEl = $("meta");
+const tocNav = $("toc");
+const tocToggle = $("toc-toggle");
 
 function parseQuery() {
   const q = new URLSearchParams(location.search);
@@ -146,6 +157,14 @@ async function load() {
     const data = await r.json();
     metaEl.textContent = `${data.filename} · ${data.chunks.length} chunks · ${data.extractor}`;
     paneReflow.replaceChildren();
+    // Section identity from heading ORIGINALS (translation-independent).
+    const sectionNums = new Set();
+    for (const c of data.chunks) {
+      if (c.type === "heading") {
+        const s = parseSectionNo(c.original ?? "");
+        if (s) sectionNums.add(s);
+      }
+    }
     const pageIdxs = [];
     let lastPage = null;
     for (const chunk of data.chunks) {
@@ -154,10 +173,23 @@ async function load() {
         lastPage = chunk.page_idx;
       }
       const el = renderChunk(chunk);
+      if (chunk.type === "heading") {
+        const secNo = parseSectionNo(chunk.original ?? "");
+        if (secNo) el.dataset.sec = secNo;
+      }
+      enrichInline(el, sectionNums); // after renderChunk's applyMath → KaTeX-safe
       el.addEventListener("click", () => syncToChunk(el));
       paneReflow.appendChild(el);
     }
     buildPdfPane(doc, [...new Set(pageIdxs)]);
+    // Section TOC drawer + ref-jump (capture handler intercepts before sync).
+    if (tocNav) {
+      renderToc(buildSectionTree(data.chunks), tocNav, {
+        onJump: (sec) => jumpToSection(sec, paneReflow),
+        onSelect: (sec) => selectSection(sec, data.chunks, paneReflow),
+      });
+    }
+    wireRefJump(paneReflow);
   } catch (e) {
     paneReflow.innerHTML = `<div class="err">로드 실패: ${e.message}</div>`;
     console.error(e);
@@ -170,6 +202,14 @@ if (paneReflow && layout) {
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
     radio.addEventListener("change", (e) => {
       layout.dataset.mode = e.target.value;
+    });
+  }
+  if (tocToggle && tocNav) {
+    tocToggle.addEventListener("click", () => {
+      const opening = tocNav.hasAttribute("hidden");
+      if (opening) tocNav.removeAttribute("hidden");
+      else tocNav.setAttribute("hidden", "");
+      tocToggle.setAttribute("aria-expanded", String(opening));
     });
   }
   load();

@@ -11,12 +11,15 @@
   <body>
     <header class="top">
       <h1>ht_lens · reflow</h1>
+      <button type="button" id="toc-toggle" class="toc-toggle" aria-expanded="false">목차</button>
       <span class="meta" id="meta">로딩 중…</span>
       <span class="modes">
         <label><input type="radio" name="mode" value="single" checked /> 읽기</label>
         <label><input type="radio" name="mode" value="compare" /> 원문 비교</label>
       </span>
     </header>
+    <!-- Section TOC: fixed drawer, outside .layout so the compare grid is unaffected. -->
+    <nav class="toc" id="toc" aria-label="목차" hidden></nav>
     <div class="layout" id="layout" data-mode="single">
       <aside class="pane--pdf" id="pane-pdf"></aside>
       <main class="pane--reflow">
