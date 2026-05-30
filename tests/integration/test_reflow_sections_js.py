@@ -57,11 +57,13 @@ _PRELUDE = """
       parseSectionNo, buildSectionTree, computeSectionChunks,
       selectSection, jumpToSection, wireRefJump, renderToc,
     } = await import("%(mod)s");
-    // Heading / text chunk factories (original drives section identity).
-    const H = (id, order, orig, tr) =>
-      ({ id, order_idx: order, type: 'heading', original: orig, translated: tr || null });
-    const T = (id, order) =>
-      ({ id, order_idx: order, type: 'text', original: 'body', translated: '본문' });
+    // Heading / text chunk factories. NB: chunks carry NO order_idx (matches
+    // ReflowChunk in reflow.py); document order == array order (verify-cross
+    // R1). The 2nd arg is a positional doc-order hint only, intentionally
+    // unused by the section code.
+    const H = (id, _order, orig, tr) =>
+      ({ id, type: 'heading', original: orig, translated: tr || null });
+    const T = (id, _order) => ({ id, type: 'text', original: 'body', translated: '본문' });
 """
 
 
