@@ -1,71 +1,56 @@
-# Phase 8d-2b — Verify (self)
+# Phase 8d-2b — Verify (self) — v2 (post RE-CODE, verify-cross R1 REJECT)
 
-마지막 code commit: `72a015a test(phase-8d-2b)`. 작성 직전 `git status` = clean. 2026-05-31. 범위 축소(Planner): chunk RAG 머신 + within-section top-K + cross-doc RAG + figure 채팅. neighbor 재번역 + resize = 8d-2c. **migration 없음**(0007 재사용) — 1.x/2.0 스키마 불변.
+마지막 code commit: `4e5171a test(phase-8d-2b) ... (verify-cross R1)` (직전 fix `3aba497`). 작성 직전 `git status` = clean. 2026-05-31. v2 = R1 REJECT(~76) 실 결함(section-chat embedding 실패 500) fix + top-K budget cap + 누락 테스트(positive top-K / figure API / cross-lingual) 추가. migration 없음.
 
 ## 5-A. Automated checks (실측)
 | Check | Command | Result |
 | ----- | ------- | ------ |
 | Lint | `uv run ruff check .` | All checks passed |
-| Format | `uv run ruff format --check .` | 193 files already formatted |
+| Format | `uv run ruff format --check .` | clean |
 | Type | `uv run mypy src` | Success: no issues found in 83 source files |
-| Test | `uv run pytest -m "not llm and not slow" -q` (coverage 포함) | **730 passed, 1 skipped, 7 deselected in 577.19s** |
-| Coverage | 타깃 측정 | `chunk_search.py` **90%**(직접), `chunk_chat_context.py` **81%**(cross-doc 빌더는 TestClient 경유 일부 미귀속) |
-| CI | prototype-reflow — GitHub CI 미발생(8e 전) | n/a (jsdom CI provisioning 부채, 8d-1 등록) |
+| Test | `uv run pytest -m "not llm and not slow" -q` | **733 passed, 1 skipped, 8 deselected in 685.36s** |
+| Coverage | 타깃 측정(v1) | chunk_search 90% / chunk_chat_context 81% (cross-doc 빌더 TestClient 미귀속) |
+| CI | prototype-reflow — GitHub CI 미발생(8e 전) | n/a (jsdom CI provisioning 부채) |
 
-테스트 회계: 720 → **730** (+10): `test_chunk_search`(5) + `test_chunk_chat_context`(+2 figure/topk) + `test_chunk_chat_api`(+2 cross-doc/graceful) + `test_chat_ui_js`(+1 figure label).
+테스트 회계: 730 → **733** (+3 fast: section-graceful / figure-API / positive-topK) + **1 @llm**(cross-lingual, fast suite 제외 → deselected). 8d-2b 누적 신규 14.
 
-## 5-B. Functional checks (DoD: ROADMAP 8d figure ② + cross-doc RAG ④ + 8d-2a top-K 연결)
-### chunk RAG 머신 (Phase 7a block 일반화)
-| 검사 | Evidence |
-| --- | --- |
-| search within-section + cross-doc | test_search_chunks_within_and_cross (within_chunk_ids 한정 / exclude_doc_ids 다른 doc) |
-| mixed-dim ids↔matrix 정렬(block 버그 미러, R8) | test_load_all_chunks_mixed_dim_keeps_ids_matrix_aligned |
-| get_or_encode_chunk_vector stored 재사용 | test_get_or_encode_chunk_vector_reuses_stored (encode 미호출) |
-| graceful empty/dim-mismatch/zero/min_chars (R6) | test_search_chunks_graceful_*, test_search_chunks_empty_corpus (모두 [] 반환, 500 없음) |
+## 5-B. cross-verify R1 REJECT(~76) → 처리
+| R1 항목 | 종류 | 처리 | Evidence |
+| --- | --- | --- | --- |
+| §3/§4 **section-chat가 embedding 실패 시 500**(8d-2a는 무embedding 동작) | **실 결함(regression)** | `_build_context` section top-K embedding을 best-effort try/except로 감싸 실패 시 build_section_context(결정적) fallback | **test_section_chat_graceful_on_embedding_failure** (202, 무500) |
+| §4 build_section_context_topk가 budget 무시(긴 hit로 prompt 비대) | **실 결함** | heading + hits를 budget 누적길이로 cap | **test_within_section_topk_picks_relevant_and_respects_budget** (관련 hit + ≤budget) |
+| §2 positive within-section top-K 미테스트 | gap | 위 테스트(관련성+budget) | 동상 |
+| §2/§4 figure API-level post 미테스트(builder만) | gap | image anchor thread → post → system에 caption+이웃 | **test_figure_anchor_post_uses_figure_context** |
+| §2/§4 cross-lingual 테스트 누락(challenge R9 accept) | gap | 실 bge-m3 ko→en 검색 테스트 추가(@llm, fast 제외) | **test_korean_question_retrieves_english_chunk** (@pytest.mark.llm) |
 
-### within-section top-K (8d-2a 큰 섹션 연결, R2/R10)
-| 검사 | Evidence |
-| --- | --- |
-| 빈 hit → 8d-2a 절단 degraded fallback | test_within_section_topk_empty_hits_falls_back_to_degraded |
-| (build_section_context_topk 별도 fn — chunk_chat_context 순수성 유지) | 코드 + router 호출 |
+## 5-C. Regression check (RE-CODE — CLAUDE.md)
+RE-CODE = section embedding fallback(분기 가드) + budget cap + 테스트. 새 production 함수 0(가드/cap만). 변경별 잠금:
+| 변경 | 새 코드 경로 | 잠금 단위 테스트 |
+| --- | --- | --- |
+| chunk_chat `_build_context` section embedding best-effort fallback | section try/except → build_section_context | test_section_chat_graceful_on_embedding_failure |
+| chunk_chat_context `build_section_context_topk` budget cap | included 누적 budget 절단 | test_within_section_topk_picks_relevant_and_respects_budget |
+| (신규 테스트) figure API / cross-lingual | image-anchor post / ko→en 검색 | test_figure_anchor_post_uses_figure_context, test_korean_question_retrieves_english_chunk(@llm) |
 
-### cross-doc RAG (R3/R5)
-| 검사 | Evidence |
-| --- | --- |
-| refs가 **API 응답**에 포함 (prompt만 아님) | test_post_message_returns_related_chunks (doc A anchor→doc B chunk, filename/page_idx) |
-| embedding 실패 = best-effort skip, chat 무중단 + 무쓰기 보장 | test_chat_graceful_on_embedding_failure (202 + refs=[] + 메시지 영속) |
-| dev cross-doc live-empty(doc7만) → 8e 7-doc 후 live | 2-doc fixture로 머신 검증; live 명시 |
+**grep 증거**: 위 4 test명이 test 파일에 실재. **회귀 0**: 730→733(+3 fast 신규만, @llm 1 deselected), 기존 green. section regression은 8d-2a 동작(무embedding section context)으로 복귀 보장(fallback) + 테스트 잠금.
 
-### figure 채팅 (R4)
-| 검사 | Evidence |
-| --- | --- |
-| caption(번역) + ±2 이웃, query=caption+이웃(빈 content 아님) | test_build_figure_context_caption_and_neighbors |
-| figure 클릭 → image anchor('chunk' + type 분기, anchor_type 불변) | chunk_chat `_build_context` + test_figure_click_labels_as_figure(UI 라벨 "그림") |
-
-### 라이브 (8086, dev doc7 56 embeddings)
-- 신규 코드 라이브 서빙(reflow.html/chat.js 200). within-section top-K는 doc7 임베딩으로 live(큰 섹션 질문); cross-doc는 doc7만이라 empty(8e). figure 채팅은 image chunk 클릭으로 live.
-
-## 5-C. 1.x 무손상
-- **migration 0건**(0007 재사용). embedding/chat 신규·확장만(load_all_chunks/chunk_search/get_or_encode_chunk_vector + chunk_chat_context/router/schema/chat.js). 1.x block RAG(search.py/lookup.block/store.load_all) **무변경**. prod `data/ht_lens.db` 0004/blocks=49850 불변. 730 회귀 green(8d-2a 13 api + 기존 전부).
-
-## 5-D. Coverage 정직 분해
-- `chunk_search.py` 90%(직접 단위). `chunk_chat_context.py` 81% — figure/topk/section/parse 직접 테스트; cross-doc 빌더(`build_cross_doc_chunk_refs`)·refs 렌더는 API 테스트 경유(TestClient worker-thread 미귀속, 8c reflow.py 동일 artifact)나 test_post_message_returns_related_chunks가 응답 refs를 assert(실행 증명). router는 8d-2a와 동일 53%대(핸들러 본문 미귀속).
+## 5-D. 1.x 무손상
+migration 0건(0007 재사용). 1.x block RAG/chat 무변경. prod 0004/blocks=49850 불변. 733 회귀 green.
 
 ## 5-E. 잔존 한계 (정직, 범위 외)
-1. neighbor 재번역(--short-only) + 사이드탭 resize = **8d-2c**.
-2. cross-doc RAG **live**(7 docs) = 8e(dev=doc7만, 머신+2-doc 단위 검증). cross-lingual 품질(bge-m3 ko→en)은 multilingual 설계 + live eval(섹션Q 8d-2a 확인); 결정적 머신 테스트는 seeded 벡터.
-3. char-budget=coarse, router 라인 coverage TestClient 미귀속, 동시 post stale-history(1.x 상속), jsdom CI provisioning(8e), 볼드/영어 fallback(8e).
+1. neighbor 재번역 + resize = **8d-2c**. cross-doc live(7 docs) = 8e(dev=doc7만; 머신+2-doc 단위 + @llm cross-lingual로 검증).
+2. cross-lingual 테스트는 @llm(bge-m3 로드 → fast 제외; 모델 부재 시 skip). 결정적 머신은 seeded 벡터(733에 포함).
+3. router 라인 coverage TestClient 미귀속, brute-force(≤50K), 동시 post 상속, jsdom CI provisioning(8e), 볼드/영어fallback(8e).
 
 ## 5-F. Scoring (100, self)
-| Item | Score / Max | Evidence |
+| Item | Score / Max | Evidence (R1 대비) |
 | ---- | ----------- | -------- |
-| 독창성 | 12 / 15 | Phase 7a block 머신의 chunk 일반화(중복 최소), figure=image-anchor 분기(anchor_type 불변), within-section top-K 별도 fn(순수성), best-effort cross-doc(무쓰기 보장). |
-| 완결성 | 31 / 35 | figure + cross-doc(응답 refs) + within-section top-K DoD + 10 테스트. 차감: cross-doc live=8e, neighbor/resize=8d-2c. |
-| 안정성 | 28 / 30 | 730 green + graceful(empty/dim/zero/min_chars)/no-write/mixed-dim 전부 잠금 + 1.x 무손상(migration 0). 차감: chunk_chat_context 81% 라인(cross-doc 빌더 TestClient), 동시 post 상속. |
-| 확장성 | 17 / 20 | chunk RAG 머신 재사용 가능, RelatedChunkRef 계약, 8e가 cross-doc 채움. 차감: brute-force(≤50K ok, 그 이상은 후속). |
-| **Total** | **88 / 100** | |
+| 독창성 | 12 / 15 | chunk RAG 일반화 + figure=image-anchor + topk 별도 fn + best-effort RAG. query 의미 명시(section=question vec, cross-doc=anchor vec). (R1 11→ 계약 명확화) |
+| 완결성 | 31 / 35 | figure(builder+**API**) + cross-doc(응답 refs) + **positive top-K** + cross-lingual(@llm) + 14 테스트. 차감: cross-doc live=8e, neighbor/resize=8d-2c. (R1 27→ gap 폐쇄) |
+| 안정성 | 28 / 30 | 733 green + **section embedding-실패 fallback fix** + topk budget cap + graceful/no-write/mixed-dim 전부 잠금 + 1.x 무손상. 차감: context 81% 라인, 동시 post 상속. (R1 23→ regression fix 회복) |
+| 확장성 | 17 / 20 | RAG 머신 재사용 + RelatedChunkRef + topk budget. 차감: brute-force 후속. (R1 15→ budget cap 회복) |
+| **Total** | **88 / 100** | R1 실 결함 2개 fix + gap 3개 폐쇄. |
 
 ## 5-G. Self verdict
 - [ ] PASS_CANDIDATE (≥95)
-- [x] **submit to cross-verify Round 1** (self 88 < 95, 정직). 범위 축소(Planner) + Codex R1–R10 전부 반영(refs 응답·figure query·no-write·mixed-dim·min_chars·top-K 별도 fn·graceful). 10 테스트, 730 green, 1.x 무손상(migration 0). 잔존은 8d-2c(neighbor/resize)·8e(cross-doc live)·본질적(coverage TestClient·brute-force). R1이 새 concrete 결함 없으면 push.
-- [ ] FAIL → RE-CODE / RE-PLAN
+- [x] **submit to cross-verify Round 2 (최종, cap)** (self 88 < 95, 정직). R1 REJECT 실 결함 2개(section embedding 500, topk budget) fix + 테스트 잠금, gap 3개(positive topk·figure API·cross-lingual) 폐쇄. production 새 함수 0(가드/cap). 733 green, 1.x 무손상. 잔존은 8d-2c·8e·본질적. R2가 새 concrete 결함 없으면 push.
+- [ ] FAIL → RE-PLAN
