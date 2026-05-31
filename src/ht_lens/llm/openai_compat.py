@@ -196,6 +196,11 @@ class OpenAICompatibleClient:
                 "- 기술 용어는 표준 한국어 번역을 사용합니다 "
                 "(예: gradient descent → 경사 하강법).\n"
                 "- 다음만 영어 유지: 고유명사 (GPT-4 등), 수식 ($...$), 코드, URL, arXiv ID.\n"
+                # Phase 8e-1: protected chunks arrive with [[MATHn]] sentinels in
+                # place of math. qwen used to mangle/hallucinate over them; this
+                # rule (with the ASCII sentinel) makes the 6 doc7 chunks recover.
+                "- `[[MATH0]]`, `[[MATH1]]` 같은 자리표시자 토큰은 **그대로 복사**하세요. "
+                "번역·수정·삭제하지 말고, 그 자리에 수식이나 LaTeX를 만들어내지 마세요.\n"
                 "- 번역문만 출력합니다. 설명 없음."
             )
         src_name = _LANG_NAMES.get(src_norm, src_norm)
@@ -205,6 +210,9 @@ class OpenAICompatibleClient:
             "Output only the translation. "
             "Preserve technical terms, acronyms, numbers, and markdown structure "
             "(bold, italic, lists, code). "
+            # Phase 8e-1: see the en→ko branch — copy placeholder sentinels verbatim.
+            "Copy any placeholder token of the form [[MATHn]] EXACTLY and verbatim; "
+            "never translate, alter, remove, or invent LaTeX/math in its place. "
             "Do not add explanations, quotes, or preamble."
         )
 

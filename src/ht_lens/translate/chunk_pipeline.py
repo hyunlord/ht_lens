@@ -57,6 +57,13 @@ class _MathLostError(Exception):
     """Internal: LLM dropped a math placeholder → mark chunk failed."""
 
 
+# Phase 8e-1: extra whole-translation re-rolls when a math placeholder is lost,
+# on top of the transient-error retries in ``_retry_translate``. Kept small —
+# the ASCII sentinel + system-prompt rule are the real fix, so this is just a
+# net for provider nondeterminism (2 total attempts).
+_MATH_LOSS_RETRIES = 1
+
+
 async def translate_chunks(
     doc_id: int,
     session: AsyncSession,
@@ -179,6 +186,12 @@ async def translate_chunks(
                 caption_tr, cap_fresh = await _cached_translate(chunk.caption)
                 fresh |= cap_fresh
         except _MathLostError:
+            # All-or-nothing (debate §3): body and caption share one chunk
+            # status. If EITHER loses a math placeholder (after the 8e-1
+            # retries), the whole ChunkTranslation is 'failed' — a successful
+            # body is discarded rather than stored next to a caption whose math
+            # broke. The reflow API suppresses 'failed' rows, so a half-Korean
+            # row with broken math would be worse than the English fallback.
             async with db_lock:
                 await _upsert(session, chunk.id, "", None, model_name, None, "failed")
                 stats.failed += 1
@@ -242,23 +255,35 @@ async def _translate_protected(
     sem: asyncio.Semaphore,
 ) -> str:
     """Protect math → translate (with retry) → restore. Raise ``_MathLostError``
-    if the LLM dropped a placeholder.
+    if the LLM dropped a placeholder after the math-loss retries.
 
     Collision-robust (verify-cross R1 §4): if the source already contains a
-    default ``⟦MATHi⟧``-shaped token, protect with a source-unique sentinel
+    default ``[[MATHi]]``-shaped token, protect with a source-unique sentinel
     prefix instead of skipping protection — so real ``$math$`` in the same
-    chunk is still byte-identical."""
+    chunk is still byte-identical.
+
+    Phase 8e-1: the ASCII sentinel (math_protect) + the placeholder-preservation
+    rule (``_translate_system``) are the real fix for the 6 doc7 failures. This
+    bounded math-loss retry is a cheap defensive net on top: if the provider is
+    not fully deterministic at temperature 0, a transiently dropped placeholder
+    recovers on a re-roll instead of falling back to English. It runs INSIDE the
+    owner future (``_cached_translate``), so deduped waiters share the recovered
+    result and never trigger their own retry storm (debate §3)."""
     prefix = "MATH"
     if math_protect.source_has_placeholder_collision(text):
         import hashlib
 
         prefix = "MATH" + hashlib.sha1(text.encode()).hexdigest()[:10].upper()
     protected, store = math_protect.protect_math(text, token_prefix=prefix)
-    out = await _retry_translate(llm, protected, src, tgt, max_retries, sem)
-    restored, missing = math_protect.restore_math(out, store, token_prefix=prefix)
-    if missing:
-        raise _MathLostError(f"{len(missing)} math placeholder(s) lost by LLM")
-    return restored
+    missing: list[int] = []
+    for _attempt in range(_MATH_LOSS_RETRIES + 1):
+        out = await _retry_translate(llm, protected, src, tgt, max_retries, sem)
+        restored, missing = math_protect.restore_math(out, store, token_prefix=prefix)
+        if not missing:
+            return restored
+    raise _MathLostError(
+        f"{len(missing)} math placeholder(s) lost by LLM after {_MATH_LOSS_RETRIES + 1} attempt(s)"
+    )
 
 
 async def _retry_translate(

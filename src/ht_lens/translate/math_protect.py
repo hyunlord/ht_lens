@@ -1,9 +1,16 @@
 r"""Math placeholder protection for chunk translation (Phase 8b).
 
 Round-trips every ``$$...$$`` / ``$...$`` run through an opaque
-``⟦MATHi⟧`` placeholder so the LLM never sees — and therefore cannot
+``[[MATHi]]`` placeholder so the LLM never sees — and therefore cannot
 mangle — LaTeX. Validated in the ``~/mineru_test`` sandbox: KaTeX-valid
 output, ``\operatorname*`` / ``\textstyle`` preserved byte-identical.
+
+Phase 8e-1: the sentinel was ``⟦MATHi⟧`` (U+27E6/27E7) through 8d, but live
+qwen3.6-27b diagnosis showed those exotic brackets are NOT opaque — the model
+mangled them into LaTeX or hallucinated math in their place, which is why 6
+doc7 chunks fell back to English. ASCII ``[[MATHi]]`` survives (the alphanumeric
+core always did; only the brackets failed), and together with the
+placeholder-preservation rule in ``_translate_system`` recovers them.
 
 Contract (challenge §1, post-debate):
 - ``protect_math(text) -> (protected, store)``.
@@ -28,23 +35,24 @@ from __future__ import annotations
 
 import re
 
-PH_OPEN = "⟦"
-PH_CLOSE = "⟧"
+PH_OPEN = "[["
+PH_CLOSE = "]]"
 
 _DISPLAY_RE = re.compile(r"\$\$[\s\S]+?\$\$")
 _INLINE_RE = re.compile(r"(?<!\$)\$[^$\n]+?\$(?!\$)")
 # Detects a pre-existing placeholder-shaped token in source (collision guard).
-_PLACEHOLDER_RE = re.compile(rf"{PH_OPEN}MATH\d+{PH_CLOSE}")
+# PH_OPEN/PH_CLOSE now contain a regex metachar (``[``), so escape them.
+_PLACEHOLDER_RE = re.compile(re.escape(PH_OPEN) + r"MATH\d+" + re.escape(PH_CLOSE))
 
 
 def source_has_placeholder_collision(text: str) -> bool:
-    """True if ``text`` already contains a ``⟦MATHi⟧``-shaped token, which
+    """True if ``text`` already contains a ``[[MATHi]]``-shaped token, which
     would collide with our restore indexing (challenge §3)."""
     return bool(_PLACEHOLDER_RE.search(text))
 
 
 def protect_math(text: str, *, token_prefix: str = "MATH") -> tuple[str, list[str]]:
-    """Replace every ``$$...$$`` then ``$...$`` run with ``⟦{prefix}i⟧``.
+    """Replace every ``$$...$$`` then ``$...$`` run with ``[[{prefix}i]]``.
 
     Order matters: display first so ``$$`` is not split by the inline
     pattern. Returns ``(protected_text, store)`` where ``store[i]`` is the
