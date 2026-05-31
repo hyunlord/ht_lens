@@ -205,3 +205,35 @@ def test_short_only_llm_health_fail_exit_4(tmp_path: Path) -> None:
         },
     )
     assert proc.returncode == 4, (proc.stdout, proc.stderr)
+
+
+def test_dry_run_without_short_or_chunk_id_exit_2_no_write(tmp_path: Path) -> None:
+    # verify-cross 8d-2c R1 defect A: --dry-run on the normal path would be
+    # silently ignored and WRITE. It must fail fast (exit 2) instead, and the
+    # seed row must be untouched.
+    db_path, doc_id, where_id = _seed_chunk_doc(tmp_path)
+    proc = _run(
+        "--doc-id",
+        str(doc_id),
+        "--dry-run",
+        db_path=db_path,
+        extra_env={"TRANSLATE_LLM_PROVIDER": "mock"},
+    )
+    assert proc.returncode == 2, (proc.stdout, proc.stderr)
+    # Untouched: original cache_key preserved, never re-translated.
+    assert _read_where(db_path, where_id) == ("[KO] where", "seed", "translated")
+
+
+def test_chunk_id_unknown_exit_2(tmp_path: Path) -> None:
+    # verify-cross 8d-2c R1 defect B: a nonexistent --chunk-id must exit 2,
+    # not silently report candidates=0 / exit 0.
+    db_path, doc_id, _ = _seed_chunk_doc(tmp_path)
+    proc = _run(
+        "--doc-id",
+        str(doc_id),
+        "--chunk-id",
+        "999999",
+        db_path=db_path,
+        extra_env={"TRANSLATE_LLM_PROVIDER": "mock"},
+    )
+    assert proc.returncode == 2, (proc.stdout, proc.stderr)

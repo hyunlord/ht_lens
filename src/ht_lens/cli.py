@@ -414,6 +414,15 @@ def translate_chunks_command(
     db_path = db if db is not None else _db_path_from_env()
 
     async def _run() -> None:
+        # --dry-run only has meaning for the re-translation branch; the full
+        # translate_chunks path has no dry-run mode and would WRITE. Reject the
+        # misuse fail-fast (exit 2) instead of silently ignoring the flag and
+        # mutating the DB (verify-cross 8d-2c R1 defect A).
+        if dry_run and not (short_only or chunk_id):
+            raise ValueError(
+                "--dry-run requires --short-only or --chunk-id "
+                "(the full translate-chunks path has no dry-run and would write)"
+            )
         llm = from_env_translate()
         # Verify endpoint health before starting (fail-fast, mirrors the 1.x
         # `translate` command). Without this the LLMHealthCheckFailed branch

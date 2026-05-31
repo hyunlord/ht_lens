@@ -227,9 +227,18 @@ async def test_short_retranslate_writes_null_cache_key_no_poison(api_db_path) ->
 
 
 @pytest.mark.asyncio
-async def test_short_retranslate_malformed_llm_preserves_existing(api_db_path) -> None:  # type: ignore[no-untyped-def]
-    """R3: empty output or a dropped math placeholder leaves the existing row
-    untouched and counts as failed (no silent degradation)."""
+async def test_short_retranslate_empty_or_lost_placeholder_preserves_existing(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """R3 fail-preserve: the only STRUCTURAL failures we guard are an empty
+    output and a dropped math placeholder — both leave the existing row
+    untouched and count as failed (no silent degradation).
+
+    Note (verify-cross 8d-2c R1 #C): the challenge's "returns both neighbour and
+    target / delimiter-free prose" concern belonged to the *extraction* design
+    that R3 deliberately dropped. We translate the TARGET ONLY (neighbours are
+    system context, never echoed back), so there is no delimiter to malform and
+    no neighbour text to strip. A non-empty output whose placeholders survive is
+    trusted as the translation — distinguishing a good translation from an
+    LLM explanation would need fragile heuristics and is out of scope (8e)."""
 
     class _EmptyMock(MockLLMClient):
         async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
@@ -324,5 +333,24 @@ async def test_short_retranslate_explicit_chunk_id_path(api_db_path) -> None:  #
         _, trs = await _load(factory, doc_id)
         assert trs[target_id].cache_key is None  # still NULL-keyed (R1)
         assert trs[target_id].translated_text.startswith("[KO]")
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_short_retranslate_unknown_chunk_id_raises(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    # verify-cross 8d-2c R1 defect B: an explicit chunk_id not in the doc must
+    # fail loudly (so the CLI exits non-zero), not silently no-op as success.
+    engine, factory = await _factory(api_db_path)
+    try:
+        doc_id = await _make_doc(
+            factory, [{"type": "text", "content": "where", "tr": {"text": "[KO] where"}}]
+        )
+        chunks, _ = await _load(factory, doc_id)
+        real_id = chunks[0].id
+        async with factory() as s:
+            doc = (await s.execute(select(Document).where(Document.id == doc_id))).scalar_one()
+            with pytest.raises(ValueError, match="not found in doc"):
+                await retranslate_short(s, doc, MockLLMClient(), chunk_ids={real_id, 999999})
     finally:
         await engine.dispose()

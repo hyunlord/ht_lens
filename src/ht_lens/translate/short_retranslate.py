@@ -150,6 +150,12 @@ async def retranslate_short(
     ).scalars()
     translations = {t.chunk_id: t for t in tr_rows}
     if chunk_ids is not None:
+        # Explicit repair path: every requested id must exist in this doc.
+        # Silently dropping unknown / wrong-document ids (candidates=0, exit 0)
+        # would make a typo look like success (verify-cross 8d-2c R1 defect B).
+        missing = chunk_ids - {c.id for c in chunks}
+        if missing:
+            raise ValueError(f"chunk_id(s) not found in doc {doc.id}: {sorted(missing)}")
         targets = [c for c in chunks if c.id in chunk_ids]
     else:
         targets = select_short_retranslate(chunks, translations, max_chars=max_chars)
