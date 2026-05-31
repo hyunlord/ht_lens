@@ -10,11 +10,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from ht_lens.api.chunk_chat_context import (
     build_chunk_context,
+    build_figure_context,
     build_section_context,
+    build_section_context_topk,
     parse_section_no,
     section_chunk_range,
 )
@@ -51,15 +54,17 @@ async def _seed(db_path: Path, chunks: list[dict]) -> tuple[int, list[int]]:
                     text_level=c.get("text_level"),
                     bbox_json="[]",
                     content=c["content"],
+                    caption=c.get("caption"),
                 )
                 s.add(ch)
                 await s.flush()
                 ids.append(ch.id)
-                if "translated" in c:
+                if "translated" in c or "caption_translated" in c:
                     s.add(
                         ChunkTranslation(
                             chunk_id=ch.id,
-                            translated_text=c["translated"],
+                            translated_text=c.get("translated", ""),
+                            caption_translated=c.get("caption_translated"),
                             model="mock",
                             status=c.get("tr_status", "translated"),
                             updated_at=datetime.now(UTC),
@@ -195,3 +200,66 @@ async def test_build_chunk_context_radius_crosses_pages(api_db_path: Path) -> No
     # ±2 around idx1 → ids 0..3, crossing the page_idx boundary (reflow continuous).
     assert ctx.included_chunk_ids == ids[:4]
     assert "현재 문단" in ctx.text
+
+
+@pytest.mark.asyncio
+async def test_build_figure_context_caption_and_neighbors(api_db_path: Path) -> None:
+    """Figure context = caption (translated) + ±2 neighbours; query_text is
+    caption+neighbours, never the empty image content (challenge R4)."""
+    _doc_id, ids = await _seed(
+        api_db_path,
+        [
+            {"type": "text", "content": "before text", "translated": "[KO] 앞 본문"},
+            {
+                "type": "image",
+                "content": "",  # image chunks have empty content
+                "caption": "Figure 1: a cat",
+                "caption_translated": "[KO] 그림 1: 고양이",
+            },
+            {"type": "text", "content": "after text", "translated": "[KO] 뒤 본문"},
+        ],
+    )
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            ctx = await build_figure_context(s, ids[1], radius=2)
+    finally:
+        await engine.dispose()
+    assert "[KO] 그림 1: 고양이" in ctx.text  # translated caption
+    assert "앞 본문" in ctx.text and "뒤 본문" in ctx.text  # ±2 neighbours
+    assert "그림 1: 고양이" in ctx.query_text  # cross-doc query = caption+neighbours
+    assert "앞 본문" in ctx.query_text  # not the empty image content (R4)
+    assert ids[1] in ctx.included_chunk_ids
+
+
+@pytest.mark.asyncio
+async def test_within_section_topk_empty_hits_falls_back_to_degraded(api_db_path: Path) -> None:
+    """Over-budget section with NO embeddings → search returns [] → falls back
+    to the 8d-2a degraded truncation (heading + budget-fit; challenge R10)."""
+    big = "가" * 5000
+    doc_id, ids = await _seed(
+        api_db_path,
+        [
+            {"type": "heading", "content": "28.4 Sec", "translated": "[KO] 28.4 절"},
+            {"type": "text", "content": "b1", "translated": big},
+            {"type": "text", "content": "b2", "translated": big},
+            {"type": "heading", "content": "28.5 Next", "translated": "[KO] 28.5"},
+        ],
+    )
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:  # no chunk_embeddings seeded → search [] → fallback
+            ctx = await build_section_context_topk(
+                s,
+                doc_id,
+                ids[0],
+                question_vector=np.array([1.0, 0.0], dtype=np.float32),
+                budget=6000,
+            )
+    finally:
+        await engine.dispose()
+    assert ctx.truncated is True  # degraded
+    assert ids[0] in ctx.included_chunk_ids  # heading always kept
+    assert "일부만" in ctx.text  # 8d-2a degraded notice (fell back, not top-K)

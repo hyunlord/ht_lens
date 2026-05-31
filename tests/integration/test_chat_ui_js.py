@@ -213,3 +213,28 @@ def test_pin_posts_and_reloads(jsdom_url: str) -> None:
     out = _run(script, jsdom_url)
     assert out["pinBody"] == {"doc_id": 1, "chunk_id": 5}
     assert out["pinLinks"] == 1  # pin POSTed + list reloaded/rendered
+
+
+def test_figure_click_labels_as_figure(jsdom_url: str) -> None:
+    """Phase 8d-2b: clicking a figure chunk labels the selection "그림"
+    (still a 'chunk' anchor — the server branches to figure context)."""
+    script = """
+    const content = document.getElementById('content');
+    initChat({ docId: 1, contentEl: content });
+    const fig = document.createElement('figure');
+    fig.className = 'rf-figure chunk';
+    fig.dataset.chunkId = '5';
+    content.appendChild(fig);
+    fig.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    const para = document.createElement('p');
+    para.className = 'rf-text chunk';
+    para.dataset.chunkId = '6';
+    content.appendChild(para);
+    const figStatus = document.getElementById('chat-status').textContent;
+    para.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+    console.log(JSON.stringify({
+      figStatus, paraStatus: document.getElementById('chat-status').textContent }));
+    """
+    out = _run(script, jsdom_url)
+    assert "그림 선택: #5" in out["figStatus"]  # figure → 그림
+    assert "문단 선택: #6" in out["paraStatus"]  # plain chunk → 문단

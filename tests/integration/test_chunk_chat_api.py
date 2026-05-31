@@ -1,19 +1,40 @@
-"""Phase 8d-2a — /v2/threads + /v2/pins API tests (mock chat LLM)."""
+"""Phase 8d-2a/8d-2b — /v2/threads + /v2/pins API tests (mock chat LLM)."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from ht_lens.db.models import Chunk, ChunkMessage, ChunkThread, Document, Thread
+from ht_lens.db.models import Chunk, ChunkEmbedding, ChunkMessage, ChunkThread, Document, Thread
 from ht_lens.db.session import make_engine, make_session_factory
+from ht_lens.embedding.service import text_source_hash
+from ht_lens.embedding.store import vector_to_bytes
 from ht_lens.llm.client import Message as LLMMessage
 
 from ._api_helpers import make_test_client
+
+
+class FakeEmbed:
+    """Phase 8d-2b — deterministic embedding client for cross-doc RAG tests."""
+
+    dim = 2
+
+    def __init__(self, vec: tuple[float, float] = (1.0, 0.0), fail: bool = False) -> None:
+        self._vec = np.asarray(vec, dtype=np.float32)
+        self.fail = fail
+
+    def encode(self, texts: list[str]) -> np.ndarray:
+        if self.fail:
+            raise RuntimeError("embedding backend down")
+        return np.tile(self._vec, (len(texts), 1))
+
+    async def health_check(self) -> bool:  # pragma: no cover
+        return True
 
 
 class RecordingLLM:
@@ -241,3 +262,105 @@ async def test_anchor_type_check_rejects_invalid(api_db_path: Path) -> None:
                 await s.commit()
     finally:
         await engine.dispose()
+
+
+async def _seed_two_docs_with_emb(db_path: Path) -> tuple[int, int, int]:
+    """doc A (heading + anchor text chunk, emb [1,0]) + doc B (related text
+    chunk, emb [1,0]). Returns (docA_id, anchor_chunk_id, docB_chunk_id)."""
+    anchor_text = "exponential family factor analysis derivation and variational inference"
+    related_text = "another book's section on exponential family latent variable models"
+    engine = make_engine(db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            docs = [
+                Document(
+                    filename=f"{name}.pdf",
+                    src_lang="en",
+                    tgt_lang="ko",
+                    status="translated",
+                    created_at=datetime.now(UTC),
+                    extractor="mineru",
+                )
+                for name in ("A", "B")
+            ]
+            s.add_all(docs)
+            await s.flush()
+            head = Chunk(
+                doc_id=docs[0].id,
+                page_idx=0,
+                order_idx=0,
+                type="heading",
+                bbox_json="[]",
+                content="1 Sec",
+            )
+            anchor = Chunk(
+                doc_id=docs[0].id,
+                page_idx=0,
+                order_idx=1,
+                type="text",
+                bbox_json="[]",
+                content=anchor_text,
+            )
+            b_chunk = Chunk(
+                doc_id=docs[1].id,
+                page_idx=2,
+                order_idx=0,
+                type="text",
+                bbox_json="[]",
+                content=related_text,
+            )
+            s.add_all([head, anchor, b_chunk])
+            await s.flush()
+            for ch, content in ((anchor, anchor_text), (b_chunk, related_text)):
+                s.add(
+                    ChunkEmbedding(
+                        chunk_id=ch.id,
+                        model="fake",
+                        dim=2,
+                        vector=vector_to_bytes(np.asarray([1.0, 0.0], dtype=np.float32)),
+                        source_hash=text_source_hash(content),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+            await s.commit()
+            return docs[0].id, anchor.id, b_chunk.id
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_post_message_returns_related_chunks(api_db_path: Path) -> None:
+    """challenge R3: cross-doc refs surface in the API RESPONSE (not only the
+    system prompt). doc A anchor → related chunk from doc B."""
+    doc_a, anchor_id, b_chunk = await _seed_two_docs_with_emb(api_db_path)
+    with make_test_client(
+        api_db_path, chat_llm_override=RecordingLLM(), embedding_override=FakeEmbed()
+    ) as client:
+        tid = client.post(
+            "/v2/threads", json={"doc_id": doc_a, "anchor_type": "chunk", "chunk_id": anchor_id}
+        ).json()["id"]
+        r = client.post(f"/v2/threads/{tid}/messages", json={"content": "이게 뭐야"})
+    assert r.status_code == 202
+    refs = r.json()["related_chunks"]
+    assert [ref["chunk_id"] for ref in refs] == [b_chunk]  # only the OTHER doc's chunk
+    assert refs[0]["doc_filename"] == "B.pdf" and refs[0]["page_idx"] == 2
+
+
+@pytest.mark.asyncio
+async def test_chat_graceful_on_embedding_failure(api_db_path: Path) -> None:
+    """challenge R5: an embedding/encode failure must NOT 500 or block chat —
+    refs are best-effort (empty), the message still persists. Anchor has no
+    stored embedding → get_or_encode encodes → FakeEmbed(fail) raises → skip."""
+    doc_id, ids = await _seed(api_db_path)  # no embeddings seeded
+    with make_test_client(
+        api_db_path, chat_llm_override=RecordingLLM(), embedding_override=FakeEmbed(fail=True)
+    ) as client:
+        tid = client.post(
+            "/v2/threads", json={"doc_id": doc_id, "anchor_type": "chunk", "chunk_id": ids[1]}
+        ).json()["id"]
+        r = client.post(f"/v2/threads/{tid}/messages", json={"content": "q"})
+        msgs = client.get(f"/v2/threads/{tid}/messages").json()
+    assert r.status_code == 202  # chat succeeded despite embedding failure
+    assert r.json()["related_chunks"] == []  # best-effort skip
+    assert [m["role"] for m in msgs] == ["user", "assistant"]  # message persisted
