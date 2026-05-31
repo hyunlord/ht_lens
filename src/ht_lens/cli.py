@@ -265,6 +265,13 @@ def extract_mineru_command(
     ),
     lang: str = typer.Option("en", "--lang", help="OCR language hint (en, korean, ch, ...)."),
     backend: str = typer.Option("pipeline", "--backend", help="MinerU backend."),
+    timeout: int = typer.Option(
+        3600,
+        "--timeout",
+        min=1,
+        help="MinerU subprocess timeout in seconds. Raise for large PDFs "
+        "(e.g. a 500+ page textbook on CPU may exceed the 3600s default).",
+    ),
 ) -> None:
     """ht_lens 2.0 — run MinerU (CPU) on a PDF; print the content_list path.
 
@@ -274,7 +281,7 @@ def extract_mineru_command(
     from ht_lens.extract_mineru.runner import run_mineru
 
     try:
-        result = run_mineru(pdf, out, lang=lang, backend=backend)
+        result = run_mineru(pdf, out, lang=lang, backend=backend, timeout_s=timeout)
     except MineruError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(code=exc.exit_code) from exc
