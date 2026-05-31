@@ -1,39 +1,39 @@
 ## 1. Verification of automated checks
 
-Lint/format/type/test evidence in `.claude/phases/phase-8d-2c/verify.md` is broadly credible: current `HEAD` is `87b2c13 chore(phase-8d-2c): verify`, after the code commits `96eb729`, `ceae9fa`, and test commit `faf8d13`. No code commits appear after verify, so this is not a stale-verify case.
+The v2 automated-check evidence is credible for current `HEAD`: `8fadc38` is the latest commit and only rewrote `.claude/phases/phase-8d-2c/verify.md`; the last code commit is `8771386`, so verify is not stale. `git status --short` shows only untracked `.claude/phases/phase-8d-2c/summary.md` and `.claude/scheduled_tasks.lock`, not source/test drift.
 
-`git status` is not clean now, but only because `.claude/phases/phase-8d-2c/summary.md` and `verify-cross.md` are untracked/template artifacts. I do not see source/test drift after `verify.md`.
+The claimed RE-CODE locks exist: `src/ht_lens/cli.py:421` rejects `--dry-run` without `--short-only`/`--chunk-id`, and `src/ht_lens/translate/short_retranslate.py:156` rejects missing explicit chunk ids. The matching tests are present at `tests/integration/test_short_retranslate_cli.py:210`, `tests/integration/test_short_retranslate_cli.py:227`, and `tests/integration/test_short_retranslate.py:341`.
 
-The local test count claim is plausible: `pyproject.toml:71` enables coverage automatically, and the new test files match the claimed surfaces. The weak item is CI: `verify.md` marks GitHub Actions as N/A, while `WORKFLOW.md` lists CI green as the standard check. That is acceptable as a disclosed gap only if this branch truly has no PR/main workflow trigger; it is not equivalent to actual CI.
+CI remains a disclosed gap. `WORKFLOW.md` lists GitHub Actions as a standard check, while verify marks it N/A because this branch has no trigger. That is not equivalent to green CI, but it is honestly reported and not a stale-evidence issue.
 
 ## 2. Verification of functional checks
 
-The short retranslation path is materially exercised. Tests cover selector inclusion/exclusion, duplicate `where`, all-type neighbor context, cache-key nulling, dry-run no-write, explicit `--chunk-id`, and CLI subprocess paths in `tests/integration/test_short_retranslate.py` and `tests/integration/test_short_retranslate_cli.py`.
+Round 1 issues A/B are fixed rather than reframed. The dry-run footgun is now guarded before provider creation/health check in `src/ht_lens/cli.py:416-425`, and invalid explicit `--chunk-id` values now fail loudly in `src/ht_lens/translate/short_retranslate.py:152-159`.
 
-The live check demonstrates the key `where -> 여기서` behavior, but it is weaker than stated because it is against dev DB `data/ht_lens_v2.db` doc 1, not a reproducible fixture or the doc7 evidence described in `plan.md`. It proves one local state, not broad selector safety before 8e.
+The prior malformed-output concern was addressed as an evidence correction, not a code hardening change. The renamed test at `tests/integration/test_short_retranslate.py:230-241` now accurately claims only empty output and lost placeholders are fail-preserved. I will not re-raise the Round 1 overclaim since verify v2 explicitly narrows it.
 
-Resize is only tested at `resize.js` unit level. `tests/integration/test_resize_js.py` covers clamp/session/margin/compare/close/drag well, but `verify.md` correctly admits `reflow.js` radio-to-`syncPaneMargin` wiring lacks end-to-end jsdom coverage. No browser-level functional check validates the real drawer on `reflow.html`.
+The durable functional coverage is good for the subphase DoD: selector inclusion/exclusion, duplicate `where`, all-type neighbor context, cache-key nulling, dry-run no-write, explicit chunk-id path, CLI exit codes, and resize margin behavior are covered in `tests/integration/test_short_retranslate.py`, `tests/integration/test_short_retranslate_cli.py`, and `tests/integration/test_resize_js.py`.
+
+Remaining functional gaps are disclosed rather than hidden: no browser-level resize check, and `reflow.js` radio-to-`syncPaneMargin` wiring is only indirectly covered through `resize.js` unit tests. The live `where -> 여기서` demo is supplemental because it depends on ignored dev DB state, but the fixture tests carry the safety contract.
 
 ## 3. Score audit
 
-독창성 13/15: Mostly justified. `src/ht_lens/translate/short_retranslate.py:127` correctly isolates context-specific retranslation and avoids content-cache poisoning with `cache_key = None` at lines 177-180. Deduction remains warranted because translation repair plus drawer resize is still a broad scope bundle for one phase.
+독창성 13/15: justified. The context-specific translation write avoids content-cache poisoning via `cache_key = None` at `src/ht_lens/translate/short_retranslate.py:185`, and all-type labeled neighbors address the original `where` context issue. The existing −2 for bundling translation repair with resize is fair.
 
-완결성 33/35: Slightly high. The challenge explicitly accepted testing malformed/delimiter-free output in `.claude/phases/phase-8d-2c/challenge.md`, but the actual malformed test only covers empty output and dropped math placeholders at `tests/integration/test_short_retranslate.py:230-271`. Suggested score: 31/35.
+완결성 33/35: justified. The two Round 1 CLI defects now have unit/subprocess locks, and the malformed-output claim was corrected. The missing browser/e2e resize wiring check supports the stated −2.
 
-안정성 28/30: Too high. `src/ht_lens/cli.py:395-399` exposes `--dry-run`, but if passed without `--short-only` or `--chunk-id`, the command falls through to normal `translate_chunks` and can write. Also, explicit `--chunk-id` values not found in the document silently produce `candidates=0` and exit 0 via `short_retranslate.py:152-156`. Suggested score: 25/30.
+안정성 29/30: slightly generous but defensible after RE-CODE. The concrete Round 1 write-risk and silent no-op risks are now fixed and tested. I would not deduct further beyond the disclosed residual: `_translate_with_context` still trusts any non-empty placeholder-preserving LLM output at `src/ht_lens/translate/short_retranslate.py:170-178`, but verify no longer overclaims that as structurally guarded.
 
-확장성 18/20: Reasonable but slightly optimistic. The `cache_key=NULL` approach is a good 8e-safe choice, but silent no-op explicit chunk targeting will be painful during 7-doc migration. Suggested score: 17/20.
+확장성 18/20: justified. `--chunk-id`, `--max-chars`, and cache-null retranslation leave a usable path for Phase 8e. The deduction for math-dense handling depending on 8e remains appropriate.
 
 ## 4. Issues missed (new this round)
 
-`--dry-run` is unsafe when used without `--short-only` or `--chunk-id`. The option is globally available in `src/ht_lens/cli.py:395-399`, but the branch at lines 431-462 only honors it for short/explicit retranslation. A realistic operator command like `translate-chunks --doc-id X --dry-run` will run the normal translation path at lines 464-479 and can write. No test covers this misuse.
+No new RE-CODE regression found. The new `dry_run` guard and missing-id branch introduced in `8771386` are both explicitly covered by grep-visible tests, satisfying the Round 2 requirement for new identifiers/paths.
 
-Explicit `--chunk-id` silently accepts nonexistent or wrong-document IDs. `retranslate_short` filters `targets = [c for c in chunks if c.id in chunk_ids]` at `src/ht_lens/translate/short_retranslate.py:152-153`, but never checks that requested IDs were found. The CLI then exits 0 with `candidates=0` at `src/ht_lens/cli.py:452-462`. This undermines the “safe manual repair” path added after debate.
+No untested new handler/state from RE-CODE was introduced in the frontend; the RE-CODE commit touched only CLI, short retranslation, and tests. Resize residuals predate RE-CODE and are already disclosed in verify v2.
 
-Malformed LLM output is overclaimed. `challenge.md` promised delimiter-free/prose preservation, but `_translate_with_context` accepts any non-empty string if placeholders are intact (`src/ht_lens/translate/short_retranslate.py:120-124`, 170-172). A response that includes explanation text or repeats neighbor context would overwrite the existing translation. The current test name says “malformed,” but only locks whitespace and placeholder loss.
-
-The live functional evidence mutates ignored dev DB state and is not reproducible from committed fixtures. That is fine as supplemental evidence, but the durable evidence should be the tests; `where -> 여기서` itself is not locked in a realistic integration fixture because mocks do not verify Korean connective behavior.
+One minor residual outside the RE-CODE diff: the short retranslation branch queries `Document`/`Chunk` directly and does not call the schema-head check used by normal `translate_chunks` at `src/ht_lens/translate/chunk_pipeline.py:76`. Pointing `--short-only` at an old 1.x DB would likely fail as a raw DB error rather than a clean schema mismatch. This is not a new Round 2 regression and does not undermine the claimed 1.x non-mutation evidence.
 
 ## 5. Verdict
 
-**DOWNGRADE** — The implementation addresses the major debate risks, especially cache poisoning and compare-mode margin behavior, and the reported 92 is directionally honest. However, the CLI has two concrete untested safety gaps around `--dry-run` misuse and silent invalid `--chunk-id`, and the claimed malformed-output guard is narrower than the challenge required. Fair score: **86/100**. No RE-PLAN is needed, but these are legitimate RE-CODE candidates before treating 8d-2c as migration-safe.
+**CONFIRM_PASS** — Round 1’s two real CLI safety defects were fixed and locked with targeted tests, and the third issue was corrected as an honest evidence/scope clarification. The self-score of **93/100** is credible and conservative enough for this subphase; remaining gaps are disclosed and do not justify another RE-CODE round.
