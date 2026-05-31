@@ -376,6 +376,27 @@ def translate_chunks_command(
     retry_failed: bool = typer.Option(
         False, "--retry-failed/--no-retry-failed", help="Re-process status='failed' chunks only."
     ),
+    short_only: bool = typer.Option(
+        False,
+        "--short-only/--no-short-only",
+        help="Re-translate only short low-context chunks (<--max-chars) WITH neighbour "
+        "context, bypassing the content cache (cache_key=NULL). Excludes reference "
+        "numbers and math.",
+    ),
+    max_chars: int = typer.Option(
+        25, "--max-chars", min=1, help="Length bound for --short-only candidate selection."
+    ),
+    chunk_id: list[int] = typer.Option(  # noqa: B008
+        None,
+        "--chunk-id",
+        help="Re-translate these explicit chunk id(s) with neighbour context (repeatable). "
+        "Implies the --short-only re-translation path; ignores --max-chars selection.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run/--no-dry-run",
+        help="With --short-only/--chunk-id: print before/after without writing the DB.",
+    ),
     db: Path = typer.Option(  # noqa: B008
         None,
         "--db",
@@ -403,6 +424,43 @@ def translate_chunks_command(
         factory = make_session_factory(engine)
         try:
             async with factory() as session:
+                # --short-only / --chunk-id: neighbour-context re-translation
+                # (Phase 8d-2c). Bypasses the content cache and writes
+                # cache_key=NULL so a context-specific phrase can't poison a
+                # future identical-source chunk (challenge R1).
+                if short_only or chunk_id:
+                    from sqlalchemy import select
+
+                    from ht_lens.db.models import Document
+                    from ht_lens.translate.short_retranslate import retranslate_short
+
+                    doc = (
+                        await session.execute(select(Document).where(Document.id == doc_id))
+                    ).scalar_one_or_none()
+                    if doc is None:
+                        raise ValueError(f"unknown 2.0 doc_id={doc_id}")
+                    rstats = await retranslate_short(
+                        session,
+                        doc,
+                        llm,
+                        max_chars=max_chars,
+                        chunk_ids=set(chunk_id) if chunk_id else None,
+                        dry_run=dry_run,
+                    )
+                    for cid, before, after in rstats.previews:
+                        typer.echo(f"  chunk {cid}: {before!r} -> {after!r}")
+                    typer.echo(
+                        f"ok: doc_id={doc_id} mode={'dry-run' if dry_run else 'apply'} "
+                        f"candidates={rstats.candidates} retranslated={rstats.retranslated} "
+                        f"failed={rstats.failed}"
+                    )
+                    if rstats.failed > 0:
+                        typer.echo(
+                            f"warning: {rstats.failed} chunk(s) failed re-translation", err=True
+                        )
+                        raise typer.Exit(code=1)
+                    return
+
                 from ht_lens.translate.chunk_pipeline import translate_chunks
 
                 stats = await translate_chunks(
