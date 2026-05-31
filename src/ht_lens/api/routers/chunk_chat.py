@@ -182,10 +182,17 @@ async def _build_context(
 ) -> ChatContext:
     if thread.anchor_type == "section":
         if embedding_client is not None:  # within-section top-K (challenge R2)
-            qvec = await encode_query(embedding_client, question)
-            return await build_section_context_topk(
-                session, thread.doc_id, thread.chunk_id, question_vector=qvec
-            )
+            try:
+                qvec = await encode_query(embedding_client, question)
+                return await build_section_context_topk(
+                    session, thread.doc_id, thread.chunk_id, question_vector=qvec
+                )
+            except Exception:  # embedding failure must NOT break section chat (R5/cross-verify R1)
+                _log.warning(
+                    "section top-K embedding failed thread_id=%s; degraded fallback",
+                    thread.id,
+                    exc_info=True,
+                )
         return await build_section_context(session, thread.doc_id, thread.chunk_id)
     if anchor is not None and anchor.type == "image":  # figure (challenge R4)
         return await build_figure_context(session, anchor.id)

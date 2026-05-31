@@ -291,11 +291,22 @@ async def build_section_context_topk(
         return await build_section_context(session, doc_id, heading_chunk_id, budget=budget)
     by_id = {c.id: c for c in section}
     heading = section[0]
-    picked = [by_id[h.chunk_id] for h in hits if h.chunk_id in by_id]
-    included = [heading, *picked]
+    # Heading + relevant hits, still capped by ``budget`` so a few long hits
+    # can't blow past the degraded path it replaces (cross-verify R1).
+    included = [heading]
+    used = len(_body(heading))
+    for h in hits:
+        c = by_id.get(h.chunk_id)
+        if c is None:
+            continue
+        blen = len(_body(c))
+        if used + blen > budget:
+            break
+        included.append(c)
+        used += blen
     head_label = _body(heading) or "(제목 없음)"
     parts = [
-        f"[섹션: {head_label}] (질문 관련 top-K {len(picked)}/{len(section)} chunk)",
+        f"[섹션: {head_label}] (질문 관련 top-K {len(included) - 1}/{len(section)} chunk)",
         "\n".join(_render(c) for c in included),
         "---",
     ]
