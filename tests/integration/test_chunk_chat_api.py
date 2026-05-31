@@ -447,3 +447,162 @@ async def test_figure_anchor_post_uses_figure_context(api_db_path: Path) -> None
     assert "Figure 1: a histogram" in system  # caption reached the LLM
     assert "before the figure" in system and "after the figure" in system  # ±neighbours (R4)
     assert "[그림]" in system  # figure context marker
+
+
+async def _other_doc_chunk_with_emb(s: object, content: str, page_idx: int = 1) -> int:
+    """Add a second document with one embedded chunk (vec [1,0]); return its id."""
+    doc = Document(
+        filename="B.pdf",
+        src_lang="en",
+        tgt_lang="ko",
+        status="translated",
+        created_at=datetime.now(UTC),
+        extractor="mineru",
+    )
+    s.add(doc)  # type: ignore[attr-defined]
+    await s.flush()  # type: ignore[attr-defined]
+    ch = Chunk(
+        doc_id=doc.id, page_idx=page_idx, order_idx=0, type="text", bbox_json="[]", content=content
+    )
+    s.add(ch)  # type: ignore[attr-defined]
+    await s.flush()  # type: ignore[attr-defined]
+    s.add(  # type: ignore[attr-defined]
+        ChunkEmbedding(
+            chunk_id=ch.id,
+            model="fake",
+            dim=2,
+            vector=vector_to_bytes(np.asarray([1.0, 0.0], dtype=np.float32)),
+            source_hash=text_source_hash(content),
+            updated_at=datetime.now(UTC),
+        )
+    )
+    return ch.id
+
+
+@pytest.mark.asyncio
+async def test_figure_cross_doc_refs_end_to_end(api_db_path: Path) -> None:
+    """cross-verify R2: an image anchor's cross-doc refs use the caption+
+    neighbour query (not empty content) and surface a related chunk from
+    another document."""
+    rel = "another document's section discussing histograms of synthetic binary data"
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            a = Document(
+                filename="A.pdf",
+                src_lang="en",
+                tgt_lang="ko",
+                status="translated",
+                created_at=datetime.now(UTC),
+                extractor="mineru",
+            )
+            s.add(a)
+            await s.flush()
+            rows = [
+                Chunk(
+                    doc_id=a.id,
+                    page_idx=0,
+                    order_idx=0,
+                    type="text",
+                    bbox_json="[]",
+                    content="before the figure",
+                ),
+                Chunk(
+                    doc_id=a.id,
+                    page_idx=0,
+                    order_idx=1,
+                    type="image",
+                    bbox_json="[]",
+                    content="",
+                    caption="Figure 1: histogram of synthetic data",
+                ),
+                Chunk(
+                    doc_id=a.id,
+                    page_idx=0,
+                    order_idx=2,
+                    type="text",
+                    bbox_json="[]",
+                    content="after the figure",
+                ),
+            ]
+            s.add_all(rows)
+            await s.flush()
+            doc_a, img_id = a.id, rows[1].id
+            b_id = await _other_doc_chunk_with_emb(s, rel)
+            await s.commit()
+    finally:
+        await engine.dispose()
+    with make_test_client(
+        api_db_path, chat_llm_override=RecordingLLM(), embedding_override=FakeEmbed()
+    ) as client:
+        tid = client.post(
+            "/v2/threads", json={"doc_id": doc_a, "anchor_type": "chunk", "chunk_id": img_id}
+        ).json()["id"]
+        r = client.post(f"/v2/threads/{tid}/messages", json={"content": "이 그림 설명"})
+    assert r.status_code == 202
+    assert [ref["chunk_id"] for ref in r.json()["related_chunks"]] == [b_id]  # figure → doc B
+
+
+@pytest.mark.asyncio
+async def test_section_cross_doc_refs_use_heading_vector(api_db_path: Path) -> None:
+    """cross-verify R2: section-anchor cross-doc refs use the heading chunk
+    vector → a related chunk from another document (contract lock)."""
+    rel = "another document's chapter on exponential family latent variable models"
+    head_text = "28.4 Exponential family factor analysis"
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            a = Document(
+                filename="A.pdf",
+                src_lang="en",
+                tgt_lang="ko",
+                status="translated",
+                created_at=datetime.now(UTC),
+                extractor="mineru",
+            )
+            s.add(a)
+            await s.flush()
+            head = Chunk(
+                doc_id=a.id,
+                page_idx=0,
+                order_idx=0,
+                type="heading",
+                bbox_json="[]",
+                content=head_text,
+            )
+            body = Chunk(
+                doc_id=a.id,
+                page_idx=0,
+                order_idx=1,
+                type="text",
+                bbox_json="[]",
+                content="short body",
+            )
+            s.add_all([head, body])
+            await s.flush()
+            s.add(
+                ChunkEmbedding(
+                    chunk_id=head.id,
+                    model="fake",
+                    dim=2,
+                    vector=vector_to_bytes(np.asarray([1.0, 0.0], dtype=np.float32)),
+                    source_hash=text_source_hash(head_text),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+            doc_a, head_id = a.id, head.id
+            b_id = await _other_doc_chunk_with_emb(s, rel)
+            await s.commit()
+    finally:
+        await engine.dispose()
+    with make_test_client(
+        api_db_path, chat_llm_override=RecordingLLM(), embedding_override=FakeEmbed()
+    ) as client:
+        tid = client.post(
+            "/v2/threads", json={"doc_id": doc_a, "anchor_type": "section", "chunk_id": head_id}
+        ).json()["id"]
+        r = client.post(f"/v2/threads/{tid}/messages", json={"content": "이 절 설명"})
+    assert r.status_code == 202
+    assert [ref["chunk_id"] for ref in r.json()["related_chunks"]] == [b_id]  # section → doc B

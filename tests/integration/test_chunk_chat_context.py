@@ -327,3 +327,56 @@ async def test_within_section_topk_picks_relevant_and_respects_budget(api_db_pat
     assert ids[0] in ctx.included_chunk_ids  # heading
     assert ids[2] in ctx.included_chunk_ids  # c2 (most relevant to [0,1]) selected
     assert len(ctx.included_chunk_ids) <= 2  # budget=300 fits heading + one ~153-char hit (R1)
+
+
+@pytest.mark.asyncio
+async def test_within_section_topk_packs_smaller_hit_when_top_oversized(api_db_path: Path) -> None:
+    """cross-verify R2: an oversized top hit is SKIPPED (not a hard stop) so a
+    smaller still-relevant hit further down the ranking is still packed."""
+    big = "big " * 90  # ~360 chars (> budget)
+    small = "small relevant content here ok"  # ~30 chars (> min_chars 20)
+    doc_id, ids = await _seed(
+        api_db_path,
+        [
+            {"type": "heading", "content": "28.4 Sec", "translated": "[KO] 28.4 절"},
+            {
+                "type": "text",
+                "content": "filler " * 30,
+                "translated": "filler " * 30,
+                "emb": [0.0, 1.0],
+            },
+            {
+                "type": "text",
+                "content": big,
+                "translated": big,
+                "emb": [1.0, 0.0],
+            },  # top hit, oversized
+            {
+                "type": "text",
+                "content": small,
+                "translated": small,
+                "emb": [0.95, 0.05],
+            },  # next, fits
+            {"type": "heading", "content": "28.5", "translated": "[KO] 28.5"},
+        ],
+    )
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            ctx = await build_section_context_topk(
+                s,
+                doc_id,
+                ids[0],
+                question_vector=np.array(
+                    [1.0, 0.0], dtype=np.float32
+                ),  # closest to the oversized hit
+                budget=120,
+                top_k=6,
+            )
+    finally:
+        await engine.dispose()
+    assert ids[2] not in ctx.included_chunk_ids  # oversized top hit skipped
+    assert (
+        ids[3] in ctx.included_chunk_ids
+    )  # smaller relevant hit still packed (R2: continue, not break)

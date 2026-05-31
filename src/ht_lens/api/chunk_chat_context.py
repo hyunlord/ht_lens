@@ -291,8 +291,10 @@ async def build_section_context_topk(
         return await build_section_context(session, doc_id, heading_chunk_id, budget=budget)
     by_id = {c.id: c for c in section}
     heading = section[0]
-    # Heading + relevant hits, still capped by ``budget`` so a few long hits
-    # can't blow past the degraded path it replaces (cross-verify R1).
+    # Heading + relevant hits, capped by ``budget``. An oversized hit is
+    # SKIPPED (not a hard stop) so smaller still-relevant hits further down the
+    # ranking are still packed — a single huge top hit shouldn't reduce the
+    # context to heading-only (cross-verify R2).
     included = [heading]
     used = len(_body(heading))
     for h in hits:
@@ -301,7 +303,7 @@ async def build_section_context_topk(
             continue
         blen = len(_body(c))
         if used + blen > budget:
-            break
+            continue
         included.append(c)
         used += blen
     head_label = _body(heading) or "(제목 없음)"
