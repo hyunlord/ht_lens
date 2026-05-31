@@ -25,9 +25,8 @@ export function setSelection(sel) {
   threadId = null; // new selection → new backend thread
   const status = $("chat-status");
   if (status) {
-    status.textContent = sel
-      ? `${sel.type === "section" ? "섹션" : "문단"} 선택: ${sel.label}`
-      : "선택된 항목 없음";
+    const kind = sel ? (sel.type === "section" ? "섹션" : sel.figure ? "그림" : "문단") : "";
+    status.textContent = sel ? `${kind} 선택: ${sel.label}` : "선택된 항목 없음";
   }
   // Clear the visible transcript so a new selection never shows another
   // anchor's conversation while posting to a fresh thread (verify-cross R1).
@@ -138,10 +137,15 @@ export function initChat({ docId: id, contentEl }) {
     if (e.target.closest(".rf-ref")) return;
     const chunk = e.target.closest(".chunk");
     if (chunk && chunk.dataset.chunkId) {
+      // A figure is still a 'chunk' anchor (no new anchor_type); the server
+      // branches to figure context on chunk.type=='image'. Flag it so the UI
+      // labels it "그림" (the backend already does caption+neighbours).
+      const figure = chunk.classList.contains("rf-figure") || chunk.tagName === "FIGURE";
       setSelection({
         type: "chunk",
         chunkId: chunk.dataset.chunkId,
         label: `#${chunk.dataset.chunkId}`,
+        figure,
       });
     }
   });

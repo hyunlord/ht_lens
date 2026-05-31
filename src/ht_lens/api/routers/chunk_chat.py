@@ -22,20 +22,33 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ht_lens.api.chunk_chat_context import (
     ChatContext,
+    RelatedChunkRef,
     build_chunk_context,
+    build_cross_doc_chunk_refs,
+    build_figure_context,
     build_section_context,
+    build_section_context_topk,
+    render_cross_doc_refs,
 )
-from ht_lens.api.deps import get_chat_llm_client, get_chat_semaphore, get_session
+from ht_lens.api.deps import (
+    get_chat_llm_client,
+    get_chat_semaphore,
+    get_embedding_client,
+    get_session,
+)
 from ht_lens.api.schemas import (
     ChunkMessageCreate,
     ChunkMessageRead,
     ChunkPinCreate,
     ChunkPinRead,
+    ChunkRelatedRef,
     ChunkThreadCreate,
     ChunkThreadRead,
     ChunkThreadSummary,
 )
 from ht_lens.db.models import Chunk, ChunkMessage, ChunkPin, ChunkThread
+from ht_lens.embedding.lookup import encode_query, get_or_encode_chunk_vector
+from ht_lens.embedding.service import EmbeddingClient
 from ht_lens.llm.client import ChatLLMClient
 from ht_lens.llm.client import Message as LLMMessage
 from ht_lens.llm.errors import LLMError, LLMPermanentError, LLMTransientError
@@ -160,10 +173,49 @@ async def delete_thread(
     await session.commit()
 
 
-async def _build_context(session: AsyncSession, thread: ChunkThread) -> ChatContext:
+async def _build_context(
+    session: AsyncSession,
+    thread: ChunkThread,
+    anchor: Chunk | None,
+    question: str,
+    embedding_client: EmbeddingClient | None,
+) -> ChatContext:
     if thread.anchor_type == "section":
+        if embedding_client is not None:  # within-section top-K (challenge R2)
+            qvec = await encode_query(embedding_client, question)
+            return await build_section_context_topk(
+                session, thread.doc_id, thread.chunk_id, question_vector=qvec
+            )
         return await build_section_context(session, thread.doc_id, thread.chunk_id)
+    if anchor is not None and anchor.type == "image":  # figure (challenge R4)
+        return await build_figure_context(session, anchor.id)
     return await build_chunk_context(session, thread.chunk_id)
+
+
+async def _cross_doc_refs(
+    session: AsyncSession,
+    thread: ChunkThread,
+    anchor: Chunk | None,
+    ctx: ChatContext,
+    embedding_client: EmbeddingClient | None,
+) -> list[RelatedChunkRef]:
+    """Best-effort cross-doc refs (challenge R3/R5): any encode/search
+    failure → ``[]`` so the chat never 500s. The figure query is the
+    caption+neighbours text, never the empty image content (challenge R4).
+    dev DB has only doc7 → empty until the 8e migration."""
+    if embedding_client is None or anchor is None:
+        return []
+    try:
+        if anchor.type == "image":
+            qvec = await encode_query(embedding_client, ctx.query_text)
+        else:
+            qvec = await get_or_encode_chunk_vector(session, embedding_client, anchor)
+        return await build_cross_doc_chunk_refs(
+            session, query_vector=qvec, doc_id=thread.doc_id, exclude_chunk_ids={thread.chunk_id}
+        )
+    except Exception:  # refs are best-effort, never break the chat (challenge R5)
+        _log.warning("chunk-chat cross-doc refs failed thread_id=%s", thread.id, exc_info=True)
+        return []
 
 
 @router.post(
@@ -177,12 +229,18 @@ async def post_message(
     session: Annotated[AsyncSession, Depends(get_session)],
     llm: Annotated[ChatLLMClient, Depends(get_chat_llm_client)],
     sem: Annotated[asyncio.Semaphore, Depends(get_chat_semaphore)],
-) -> ChunkMessage:
+    embedding_client: Annotated[EmbeddingClient | None, Depends(get_embedding_client)],
+) -> ChunkMessageRead:
     thread = await session.get(ChunkThread, thread_id)
     if thread is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="thread not found")
 
-    ctx = await _build_context(session, thread)
+    anchor = await session.get(Chunk, thread.chunk_id)
+    ctx = await _build_context(session, thread, anchor, payload.content, embedding_client)
+    refs = await _cross_doc_refs(session, thread, anchor, ctx, embedding_client)
+    system = _SYSTEM_PREAMBLE + ctx.text
+    if refs:
+        system += "\n\n" + render_cross_doc_refs(refs)
     prior = (
         await session.execute(
             select(ChunkMessage)
@@ -202,7 +260,7 @@ async def post_message(
 
     try:
         async with sem:
-            assistant_text = await llm.chat(history, system=_SYSTEM_PREAMBLE + ctx.text)
+            assistant_text = await llm.chat(history, system=system)
     except LLMError as exc:
         _log.warning("chunk-chat LLM error thread_id=%s: %s", thread_id, exc)
         raise _map_llm_error(exc) from exc  # nothing written yet (challenge R8)
@@ -240,7 +298,20 @@ async def post_message(
             detail="thread was deleted during the request",
         ) from exc
     await session.refresh(assistant)
-    return assistant
+    read = ChunkMessageRead.model_validate(assistant)
+    read.related_chunks = [
+        ChunkRelatedRef(
+            chunk_id=r.chunk_id,
+            doc_id=r.doc_id,
+            doc_filename=r.doc_filename,
+            page_idx=r.page_idx,
+            score=r.score,
+            original_preview=r.original_preview,
+            translated_preview=r.translated_preview,
+        )
+        for r in refs
+    ]
+    return read
 
 
 @router.post("/pins", response_model=ChunkPinRead, status_code=status.HTTP_201_CREATED)

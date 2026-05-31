@@ -14,7 +14,7 @@ from __future__ import annotations
 import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ht_lens.db.models import Block, BlockEmbedding
+from ht_lens.db.models import Block, BlockEmbedding, Chunk, ChunkEmbedding
 from ht_lens.embedding.service import EmbeddingClient, text_source_hash
 from ht_lens.embedding.store import vector_from_bytes
 
@@ -43,4 +43,37 @@ async def get_or_encode_block_vector(
     return vec
 
 
-__all__ = ["get_or_encode_block_vector"]
+async def get_or_encode_chunk_vector(
+    session: AsyncSession,
+    embedding_client: EmbeddingClient,
+    chunk: Chunk,
+) -> np.ndarray:
+    """Chunk analogue of :func:`get_or_encode_block_vector` (Phase 8d-2b).
+
+    Reuses ``chunk_embeddings.vector`` when ``source_hash`` matches the
+    current ``chunk.content`` (what chunk_backfill embeds); else encodes
+    live. Empty content → zero vector (never sent to ``encode``)."""
+    text = (chunk.content or "").strip()
+    if not text:
+        return np.zeros((embedding_client.dim,), dtype=np.float32)
+    row = await session.get(ChunkEmbedding, chunk.id)
+    if row is not None and row.source_hash == text_source_hash(text):
+        return vector_from_bytes(row.vector, row.dim)
+    vec: np.ndarray = embedding_client.encode([text])[0]
+    return vec
+
+
+async def encode_query(
+    embedding_client: EmbeddingClient,
+    text: str,
+) -> np.ndarray:
+    """Encode an arbitrary query string (question, or figure caption+neighbours
+    — challenge R4: never an empty image chunk's content). Empty → zero vector."""
+    t = (text or "").strip()
+    if not t:
+        return np.zeros((embedding_client.dim,), dtype=np.float32)
+    vec: np.ndarray = embedding_client.encode([t])[0]
+    return vec
+
+
+__all__ = ["encode_query", "get_or_encode_block_vector", "get_or_encode_chunk_vector"]

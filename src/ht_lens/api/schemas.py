@@ -242,6 +242,20 @@ class ChunkMessageCreate(BaseModel):
         return value
 
 
+class ChunkRelatedRef(BaseModel):
+    """Phase 8d-2b — one cross-doc chunk surfaced into chat (mirrors
+    RelatedBlock; challenge R3). Returned in the API response, not only the
+    system prompt, so UI + tests can verify it."""
+
+    chunk_id: int
+    doc_id: int
+    doc_filename: str
+    page_idx: int
+    score: float
+    original_preview: str
+    translated_preview: str | None = None
+
+
 class ChunkMessageRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -250,6 +264,9 @@ class ChunkMessageRead(BaseModel):
     content: str
     model: str | None = None
     created_at: datetime
+    # Phase 8d-2b: cross-doc chunk refs the LLM saw (empty when RAG disabled,
+    # embedding client unavailable, or no hit — dev DB has only doc7).
+    related_chunks: list[ChunkRelatedRef] = []
 
 
 class ChunkThreadRead(BaseModel):
@@ -295,6 +312,7 @@ __all__ = [
     "ChunkMessageRead",
     "ChunkPinCreate",
     "ChunkPinRead",
+    "ChunkRelatedRef",
     "ChunkThreadCreate",
     "ChunkThreadRead",
     "ChunkThreadSummary",

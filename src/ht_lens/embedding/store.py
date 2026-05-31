@@ -138,9 +138,37 @@ async def upsert_chunk_embedding(
     await session.execute(stmt)
 
 
+async def load_all_chunks(session: AsyncSession) -> tuple[list[int], np.ndarray, list[str]]:
+    """Load every stored chunk embedding into one matrix (Phase 8d-2b).
+
+    Mirrors :func:`load_all` for ``chunk_embeddings``: returns
+    ``(chunk_ids, matrix, models)`` with the matrix ``(N, dim)`` float32,
+    rows kept only for the majority dim so ``ids[idx]`` stays aligned with
+    ``np.argsort`` in chunk_search (the desync bug that bit block search).
+    Empty corpus → ``([], (0, 0), [])``.
+    """
+    rows = (await session.execute(select(ChunkEmbedding))).scalars().all()
+    if not rows:
+        return [], np.zeros((0, 0), dtype=np.float32), []
+    dim_counts: dict[int, int] = {}
+    for row in rows:
+        dim_counts[row.dim] = dim_counts.get(row.dim, 0) + 1
+    target_dim = max(dim_counts, key=lambda d: dim_counts[d])
+    kept_rows = [r for r in rows if r.dim == target_dim]
+    matrix = np.zeros((len(kept_rows), target_dim), dtype=np.float32)
+    ids: list[int] = []
+    models: list[str] = []
+    for i, row in enumerate(kept_rows):
+        matrix[i] = vector_from_bytes(row.vector, target_dim)
+        ids.append(row.chunk_id)
+        models.append(row.model)
+    return ids, matrix, models
+
+
 __all__ = [
     "get_source_hash",
     "load_all",
+    "load_all_chunks",
     "upsert_chunk_embedding",
     "upsert_embedding",
     "vector_from_bytes",
