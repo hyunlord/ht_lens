@@ -21,8 +21,10 @@ from ht_lens.api.chunk_chat_context import (
     parse_section_no,
     section_chunk_range,
 )
-from ht_lens.db.models import Chunk, ChunkTranslation, Document
+from ht_lens.db.models import Chunk, ChunkEmbedding, ChunkTranslation, Document
 from ht_lens.db.session import make_engine, make_session_factory
+from ht_lens.embedding.service import text_source_hash
+from ht_lens.embedding.store import vector_to_bytes
 
 
 def _c(cid: int, ctype: str, content: str) -> SimpleNamespace:
@@ -67,6 +69,18 @@ async def _seed(db_path: Path, chunks: list[dict]) -> tuple[int, list[int]]:
                             caption_translated=c.get("caption_translated"),
                             model="mock",
                             status=c.get("tr_status", "translated"),
+                            updated_at=datetime.now(UTC),
+                        )
+                    )
+                if "emb" in c:
+                    vec = np.asarray(c["emb"], dtype=np.float32)
+                    s.add(
+                        ChunkEmbedding(
+                            chunk_id=ch.id,
+                            model="fake",
+                            dim=int(vec.shape[0]),
+                            vector=vector_to_bytes(vec),
+                            source_hash=text_source_hash(c["content"]),
                             updated_at=datetime.now(UTC),
                         )
                     )
@@ -263,3 +277,53 @@ async def test_within_section_topk_empty_hits_falls_back_to_degraded(api_db_path
     assert ctx.truncated is True  # degraded
     assert ids[0] in ctx.included_chunk_ids  # heading always kept
     assert "일부만" in ctx.text  # 8d-2a degraded notice (fell back, not top-K)
+
+
+@pytest.mark.asyncio
+async def test_within_section_topk_picks_relevant_and_respects_budget(api_db_path: Path) -> None:
+    """Over-budget section WITH embeddings → heading + question-relevant
+    chunks, still capped by budget (cross-verify R1 positive path)."""
+    body = "내용 " * 50  # ~150 chars (> min_chars 20)
+    doc_id, ids = await _seed(
+        api_db_path,
+        [
+            {"type": "heading", "content": "28.4 Sec", "translated": "[KO] 28.4 절"},
+            {
+                "type": "text",
+                "content": "c1 " + body,
+                "translated": "c1 " + body,
+                "emb": [1.0, 0.0],
+            },
+            {
+                "type": "text",
+                "content": "c2 " + body,
+                "translated": "c2 " + body,
+                "emb": [0.0, 1.0],
+            },
+            {
+                "type": "text",
+                "content": "c3 " + body,
+                "translated": "c3 " + body,
+                "emb": [0.7, 0.7],
+            },
+            {"type": "heading", "content": "28.5 Next", "translated": "[KO] 28.5"},
+        ],
+    )
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            ctx = await build_section_context_topk(
+                s,
+                doc_id,
+                ids[0],
+                question_vector=np.array([0.0, 1.0], dtype=np.float32),  # closest to c2
+                budget=300,
+                top_k=6,
+            )
+    finally:
+        await engine.dispose()
+    assert ctx.truncated is True
+    assert ids[0] in ctx.included_chunk_ids  # heading
+    assert ids[2] in ctx.included_chunk_ids  # c2 (most relevant to [0,1]) selected
+    assert len(ctx.included_chunk_ids) <= 2  # budget=300 fits heading + one ~153-char hit (R1)

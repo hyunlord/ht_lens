@@ -182,3 +182,65 @@ async def test_search_chunks_empty_corpus(api_db_path: Path) -> None:
             assert await search_chunks(s, query_vector=_unit(1, 0), threshold=0.1) == []
     finally:
         await engine.dispose()
+
+
+@pytest.mark.llm
+@pytest.mark.asyncio
+async def test_korean_question_retrieves_english_chunk(api_db_path: Path) -> None:
+    """Challenge R9 / cross-verify R1: bge-m3 is multilingual — a KOREAN
+    question retrieves the relevant ENGLISH chunk (embeddings are source
+    English; questions are Korean). Loads bge-m3 → @llm (excluded from the
+    fast suite); skips if the model is unavailable."""
+    from ht_lens.db.models import Chunk as _Chunk
+
+    try:
+        from ht_lens.embedding.service import BgeM3Client
+
+        client = BgeM3Client()
+    except Exception:
+        pytest.skip("bge-m3 unavailable")
+    en1 = "Exponential family principal component analysis for binary and categorical data."
+    en2 = "Convolutional neural networks for natural image classification and detection."
+    v1, v2 = client.encode([en1, en2])
+    dim = int(np.asarray(v1).shape[0])
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            doc = Document(
+                filename="m.pdf",
+                src_lang="en",
+                tgt_lang="ko",
+                status="translated",
+                created_at=datetime.now(UTC),
+                extractor="mineru",
+            )
+            s.add(doc)
+            await s.flush()
+            c1 = _Chunk(
+                doc_id=doc.id, page_idx=0, order_idx=0, type="text", bbox_json="[]", content=en1
+            )
+            c2 = _Chunk(
+                doc_id=doc.id, page_idx=0, order_idx=1, type="text", bbox_json="[]", content=en2
+            )
+            s.add_all([c1, c2])
+            await s.flush()
+            for ch, vec, txt in ((c1, v1, en1), (c2, v2, en2)):
+                s.add(
+                    ChunkEmbedding(
+                        chunk_id=ch.id,
+                        model=client.model_name,
+                        dim=dim,
+                        vector=vector_to_bytes(np.asarray(vec, dtype=np.float32)),
+                        source_hash=text_source_hash(txt),
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+            await s.commit()
+            c1_id = c1.id
+        qvec = client.encode(["지수족 주성분 분석이 무엇인가요?"])[0]  # ko: what is exp-family PCA?
+        async with factory() as s:
+            hits = await search_chunks(s, query_vector=qvec, top_k=2, threshold=0.0, min_chars=10)
+    finally:
+        await engine.dispose()
+    assert hits and hits[0].chunk_id == c1_id  # ko query ranks the exp-family English chunk top

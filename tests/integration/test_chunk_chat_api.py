@@ -364,3 +364,86 @@ async def test_chat_graceful_on_embedding_failure(api_db_path: Path) -> None:
     assert r.status_code == 202  # chat succeeded despite embedding failure
     assert r.json()["related_chunks"] == []  # best-effort skip
     assert [m["role"] for m in msgs] == ["user", "assistant"]  # message persisted
+
+
+@pytest.mark.asyncio
+async def test_section_chat_graceful_on_embedding_failure(api_db_path: Path) -> None:
+    """cross-verify R1 regression fix: SECTION chat must NOT 500 when the
+    embedding backend fails — it falls back to deterministic context. (8d-2a
+    section chat worked without embeddings; this must too.)"""
+    doc_id, ids = await _seed(api_db_path)  # heading/text/heading, no embeddings
+    with make_test_client(
+        api_db_path, chat_llm_override=RecordingLLM(), embedding_override=FakeEmbed(fail=True)
+    ) as client:
+        tid = client.post(
+            "/v2/threads", json={"doc_id": doc_id, "anchor_type": "section", "chunk_id": ids[0]}
+        ).json()["id"]
+        r = client.post(f"/v2/threads/{tid}/messages", json={"content": "이 절 설명"})
+        msgs = client.get(f"/v2/threads/{tid}/messages").json()
+    assert r.status_code == 202  # graceful degraded fallback, not a 500
+    assert [m["role"] for m in msgs] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_figure_anchor_post_uses_figure_context(api_db_path: Path) -> None:
+    """cross-verify R1: an image-anchored thread routes through
+    build_figure_context in the API (not just the builder unit) — the
+    caption + neighbours reach the LLM system prompt (challenge R4)."""
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            doc = Document(
+                filename="m.pdf",
+                src_lang="en",
+                tgt_lang="ko",
+                status="translated",
+                created_at=datetime.now(UTC),
+                extractor="mineru",
+            )
+            s.add(doc)
+            await s.flush()
+            rows = [
+                Chunk(
+                    doc_id=doc.id,
+                    page_idx=0,
+                    order_idx=0,
+                    type="text",
+                    bbox_json="[]",
+                    content="before the figure",
+                ),
+                Chunk(
+                    doc_id=doc.id,
+                    page_idx=0,
+                    order_idx=1,
+                    type="image",
+                    bbox_json="[]",
+                    content="",
+                    caption="Figure 1: a histogram",
+                ),
+                Chunk(
+                    doc_id=doc.id,
+                    page_idx=0,
+                    order_idx=2,
+                    type="text",
+                    bbox_json="[]",
+                    content="after the figure",
+                ),
+            ]
+            s.add_all(rows)
+            await s.flush()
+            doc_id, img_id = doc.id, rows[1].id
+            await s.commit()
+    finally:
+        await engine.dispose()
+    llm = RecordingLLM()
+    with make_test_client(api_db_path, chat_llm_override=llm) as client:
+        tid = client.post(
+            "/v2/threads", json={"doc_id": doc_id, "anchor_type": "chunk", "chunk_id": img_id}
+        ).json()["id"]
+        r = client.post(f"/v2/threads/{tid}/messages", json={"content": "이 그림 설명"})
+    assert r.status_code == 202
+    system = llm.calls[-1][1] or ""
+    assert "Figure 1: a histogram" in system  # caption reached the LLM
+    assert "before the figure" in system and "after the figure" in system  # ±neighbours (R4)
+    assert "[그림]" in system  # figure context marker
