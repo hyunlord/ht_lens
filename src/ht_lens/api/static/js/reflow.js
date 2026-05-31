@@ -9,6 +9,7 @@
 import { applyMath } from "./utils/render_markdown.js";
 import { enrichInline } from "./utils/enrich_inline.js";
 import { initChat } from "./chat.js";
+import { syncPaneMargin } from "./resize.js";
 import {
   buildSectionTree,
   jumpToSection,
@@ -208,6 +209,8 @@ if (paneReflow && layout) {
   for (const radio of document.querySelectorAll('input[name="mode"]')) {
     radio.addEventListener("change", (e) => {
       layout.dataset.mode = e.target.value;
+      // compare → overlay (clear body margin); single → restore it (R9).
+      syncPaneMargin({ doc: document });
     });
   }
   if (tocToggle && tocNav) {

@@ -12,6 +12,7 @@
 // Self-contained module — reflow.js only calls initChat() (R10).
 
 import { applyMath, renderMarkdown } from "./utils/render_markdown.js";
+import { initResize, syncPaneMargin } from "./resize.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -171,6 +172,8 @@ export function initChat({ docId: id, contentEl }) {
   }
   const pinBtn = $("chat-pin");
   if (pinBtn) pinBtn.addEventListener("click", pinCurrent);
+  // Drawer width drag-resize + single-mode body coupling (8d-2c).
+  initResize({ doc: document, win: window });
   const toggle = $("chat-toggle");
   const panel = $("chat");
   if (toggle && panel) {
@@ -179,6 +182,8 @@ export function initChat({ docId: id, contentEl }) {
       if (opening) panel.removeAttribute("hidden");
       else panel.setAttribute("hidden", "");
       toggle.setAttribute("aria-expanded", String(opening));
+      // open → reserve body margin (single mode only); close → clear (R9).
+      syncPaneMargin({ doc: document });
     });
   }
   loadPins();

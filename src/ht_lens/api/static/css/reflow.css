@@ -134,12 +134,20 @@ p.rf-text { margin: 1em 0; text-align: justify; word-break: keep-all; overflow-w
 /* --- Phase 8d-2a: chat panel (fixed drawer, right; outside .layout grid) --- */
 .chat {
   position: fixed; top: 3.2em; right: 0; z-index: 30;
-  width: 380px; max-width: 90vw; height: calc(100vh - 3.2em);
+  width: var(--chat-w, 380px); max-width: 90vw; height: calc(100vh - 3.2em);
   display: flex; flex-direction: column; background: #fff;
   border-left: 1px solid var(--border); box-shadow: -2px 0 12px rgba(0,0,0,0.08);
   font-size: 14px;
 }
 .chat[hidden] { display: none; }
+/* 8d-2c: left-edge drag handle. Body margin (single mode) is driven by JS as an
+   inline style, so the compare grid stays 1fr|1fr (challenge R9). */
+.chat-resizer {
+  position: absolute; left: -3px; top: 0; width: 7px; height: 100%;
+  cursor: ew-resize; z-index: 31; touch-action: none;
+}
+.chat-resizer:hover { background: var(--accent); opacity: 0.25; }
+.pane--reflow { transition: margin-right 0.08s linear; }
 .chat-status {
   padding: 0.6em 0.9em; border-bottom: 1px solid var(--border);
   color: var(--accent); font-weight: 600;
