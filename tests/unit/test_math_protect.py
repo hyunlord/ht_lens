@@ -24,7 +24,7 @@ def _roundtrip(text: str) -> str:
 def test_inline_protected_and_restored_byte_identical() -> None:
     src = "Pythagoras: $a^2 + b^2 = c^2$ holds."
     protected, store = protect_math(src)
-    assert "$" not in protected and "⟦MATH0⟧" in protected
+    assert "$" not in protected and "[[MATH0]]" in protected
     assert store == ["$a^2 + b^2 = c^2$"]
     assert _roundtrip(src) == src
 
@@ -46,7 +46,7 @@ def test_multiple_inline_and_display_mixed() -> None:
     src = r"$a$ text $$B$$ more $c_1$ end."
     protected, store = protect_math(src)
     assert len(store) == 3
-    assert protected.count("⟦MATH") == 3
+    assert protected.count("[[MATH") == 3
     assert _roundtrip(src) == src
 
 
@@ -58,7 +58,7 @@ def test_korean_text_with_math() -> None:
 def test_missing_placeholder_is_reported() -> None:
     _, store = protect_math("$x$ and $y$")
     # Simulate an LLM that dropped the second placeholder.
-    restored, missing = restore_math("⟦MATH0⟧ and (gone)", store)
+    restored, missing = restore_math("[[MATH0]] and (gone)", store)
     assert missing == [1]
     assert "$x$" in restored  # the surviving one is restored
 
@@ -87,8 +87,24 @@ def test_escaped_dollar_roundtrip_safe() -> None:
 
 
 def test_source_placeholder_collision_detected() -> None:
-    assert source_has_placeholder_collision("text with ⟦MATH0⟧ already")
+    assert source_has_placeholder_collision("text with [[MATH0]] already")
     assert not source_has_placeholder_collision("normal text $x$")
+    # The ⟦⟧-era token is no longer the sentinel, so it must NOT trip the guard.
+    assert not source_has_placeholder_collision("legacy ⟦MATH0⟧ token")
+
+
+def test_phase8e1_sentinel_is_ascii_brackets() -> None:
+    # R-A lock: qwen mangled the exotic ⟦⟧; the sentinel is now ASCII [[MATHi]].
+    # The brackets are regex metachars, so the collision guard must still work.
+    from ht_lens.translate.math_protect import PH_CLOSE, PH_OPEN
+
+    assert PH_OPEN == "[[" and PH_CLOSE == "]]"
+    protected, _store = protect_math("see $x$ and $$Y$$")
+    assert "[[MATH0]]" in protected and "[[MATH1]]" in protected
+    assert "⟦" not in protected and "⟧" not in protected
+    # collision guard handles the metachar brackets (no regex blow-up)
+    assert source_has_placeholder_collision("a [[MATH3]] b")
+    assert not source_has_placeholder_collision("array a[[i]] index")
 
 
 def test_has_math() -> None:

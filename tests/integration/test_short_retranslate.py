@@ -246,7 +246,7 @@ async def test_short_retranslate_empty_or_lost_placeholder_preserves_existing(ap
 
     class _DropMathMock(MockLLMClient):
         async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
-            return "번역됨"  # drops the ⟦MATH0⟧ placeholder entirely
+            return "번역됨"  # drops the [[MATH0]] placeholder entirely
 
     # The math case is forced via chunk_ids because the auto-selector EXCLUDES
     # math-dense chunks — the placeholder-loss path is only reachable when a

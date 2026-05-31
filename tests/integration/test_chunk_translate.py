@@ -1,8 +1,9 @@
 """Phase 8b — chunk translation pipeline integration tests.
 
 MockLLMClient.translate returns ``"[KO] <text>"`` and preserves its input
-(so ⟦MATHi⟧ placeholders survive → restore is byte-identical). Custom
-mocks below cover the math-lost-failed path and cache-dedup counting.
+(so [[MATHi]] placeholders survive → restore is byte-identical). Custom
+mocks below cover the math-lost-failed path, the 8e-1 math-loss retry /
+caption all-or-nothing, and cache-dedup counting.
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ async def test_text_translated_with_math_preserved(api_db_path) -> None:  # type
             tr = (await s.execute(select(ChunkTranslation))).scalar_one()
         # Math byte-identical, no leftover placeholder, KO prefix from mock.
         assert r"$p(z)=\operatorname*{Dir}(z|\alpha)$" in tr.translated_text
-        assert "⟦MATH" not in tr.translated_text
+        assert "[[MATH" not in tr.translated_text
         assert tr.translated_text.startswith("[KO]")
         assert tr.status == "translated"
     finally:
@@ -178,10 +179,11 @@ async def test_cache_dedup_one_llm_call_for_identical_content(api_db_path) -> No
 async def test_math_lost_marks_chunk_failed(api_db_path) -> None:  # type: ignore[no-untyped-def]
     class DroppingMock(MockLLMClient):
         async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
-            # Strip placeholders to simulate an LLM that drops them.
+            # Strip placeholders to simulate an LLM that drops them (every call,
+            # so the 8e-1 math-loss retry exhausts → still failed).
             import re
 
-            return "[KO] " + re.sub(r"⟦MATH\d+⟧", "", text)
+            return "[KO] " + re.sub(r"\[\[MATH\d+\]\]", "", text)
 
     engine, factory = await _factory(api_db_path)
     try:
@@ -292,21 +294,21 @@ async def test_collision_with_real_math_still_protected(api_db_path) -> None:  #
 
     class DroppingMock(MockLLMClient):
         async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
-            # Drop ONLY the default-format placeholder ⟦MATH<digit>⟧, to
+            # Drop ONLY the default-format placeholder [[MATH<digit>]], to
             # prove the pipeline used a nonce prefix (so real math survives).
             import re
 
-            return "[KO] " + re.sub(r"⟦MATH\d+⟧", "DROPPED", text)
+            return "[KO] " + re.sub(r"\[\[MATH\d+\]\]", "DROPPED", text)
 
     engine, factory = await _factory(api_db_path)
     try:
         doc_id = await _make_doc(
             factory,
-            [{"type": "text", "content": "Copied ⟦MATH0⟧ token and real $x^2+y^2$ math."}],
+            [{"type": "text", "content": "Copied [[MATH0]] token and real $x^2+y^2$ math."}],
         )
         async with factory() as s:
             stats = await translate_chunks(doc_id, s, DroppingMock())
-        # The real math used a nonce sentinel (not ⟦MATH0⟧), so it survives.
+        # The real math used a nonce sentinel (not [[MATH0]]), so it survives.
         assert stats.translated == 1 and stats.failed == 0
         async with factory() as s:
             from sqlalchemy import select
@@ -408,5 +410,146 @@ async def test_1x_translations_untouched(api_db_path) -> None:  # type: ignore[n
         async with factory() as s:
             tr = await s.get(Translation, blk_id)
             assert tr is not None and tr.translated_text == "안녕"  # 1.x intact
+    finally:
+        await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Phase 8e-1 — math-loss retry (R-C) + caption all-or-nothing (R-E)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_math_loss_retries_until_placeholder_restored(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """R-C / Codex §5.1: a transiently dropped placeholder recovers on the
+    math-loss retry (provider nondeterminism) instead of English fallback."""
+    import re
+
+    class DropOnceMock(MockLLMClient):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 1:
+                return "[KO] " + re.sub(r"\[\[MATH\d+\]\]", "", text)  # drop first
+            return "[KO] " + text  # retry preserves
+
+    engine, factory = await _factory(api_db_path)
+    try:
+        m = DropOnceMock()
+        doc_id = await _make_doc(factory, [{"type": "text", "content": "Has $x^2$ math."}])
+        async with factory() as s:
+            stats = await translate_chunks(doc_id, s, m)
+        assert stats.translated == 1 and stats.failed == 0
+        assert m.calls == 2  # one drop + one successful retry (bounded)
+        async with factory() as s:
+            from sqlalchemy import select
+
+            tr = (await s.execute(select(ChunkTranslation))).scalar_one()
+        assert tr.status == "translated" and "$x^2$" in tr.translated_text
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_math_loss_retry_exhaustion_fails_with_no_cache(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """Codex §5.2: persistent loss → failed, empty text, cache_key NULL (no
+    reusable translated row), after exactly _MATH_LOSS_RETRIES+1 attempts."""
+    import re
+
+    class AlwaysDropMock(MockLLMClient):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            return "[KO] " + re.sub(r"\[\[MATH\d+\]\]", "", text)
+
+    engine, factory = await _factory(api_db_path)
+    try:
+        m = AlwaysDropMock()
+        doc_id = await _make_doc(factory, [{"type": "text", "content": "Has $x^2$ math."}])
+        async with factory() as s:
+            stats = await translate_chunks(doc_id, s, m)
+        assert stats.failed == 1 and stats.translated == 0
+        assert m.calls == 2  # 2 attempts (1 retry), then give up
+        async with factory() as s:
+            from sqlalchemy import select
+
+            tr = (await s.execute(select(ChunkTranslation))).scalar_one()
+        assert tr.status == "failed" and tr.translated_text == "" and tr.cache_key is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_math_loss_retry_dedups_duplicate_chunks(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """Codex §5.3: two identical chunks share the owner's recovered future —
+    one fresh + one cached, retry happens once (no per-waiter retry storm)."""
+    import re
+
+    class DropOnceMock(MockLLMClient):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 1:
+                return "[KO] " + re.sub(r"\[\[MATH\d+\]\]", "", text)
+            return "[KO] " + text
+
+    engine, factory = await _factory(api_db_path)
+    try:
+        m = DropOnceMock()
+        doc_id = await _make_doc(
+            factory,
+            [
+                {"type": "text", "content": "Identical $x$ chunk."},
+                {"type": "text", "content": "Identical $x$ chunk."},
+            ],
+        )
+        async with factory() as s:
+            stats = await translate_chunks(doc_id, s, m)
+        assert m.calls == 2, f"expected 2 calls (no per-waiter storm), got {m.calls}"
+        assert stats.translated == 1 and stats.cached == 1 and stats.failed == 0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_caption_math_loss_discards_body_all_or_nothing(api_db_path) -> None:  # type: ignore[no-untyped-def]
+    """R-E / Codex §5.4: body translates fine but caption loses math → the
+    WHOLE chunk is failed and the good body is discarded (the reflow API
+    suppresses failed rows, so a half-row with broken math is worse)."""
+    import re
+
+    class CaptionMathDropMock(MockLLMClient):
+        async def translate(self, text, src, tgt, *, context=None):  # type: ignore[no-untyped-def]
+            if "[[MATH" in text:  # only the caption carries protected math
+                return "[KO] " + re.sub(r"\[\[MATH\d+\]\]", "", text)
+            return "[KO] " + text
+
+    engine, factory = await _factory(api_db_path)
+    try:
+        doc_id = await _make_doc(
+            factory,
+            [
+                {
+                    "type": "image",
+                    "content": "A chart of cluster assignments.",
+                    "caption": r"The axis shows $\theta$.",
+                }
+            ],
+        )
+        async with factory() as s:
+            stats = await translate_chunks(doc_id, s, CaptionMathDropMock())
+        assert stats.failed == 1 and stats.translated == 0
+        async with factory() as s:
+            from sqlalchemy import select
+
+            tr = (await s.execute(select(ChunkTranslation))).scalar_one()
+        assert tr.status == "failed"
+        assert tr.translated_text == ""  # good body discarded (all-or-nothing)
     finally:
         await engine.dispose()
