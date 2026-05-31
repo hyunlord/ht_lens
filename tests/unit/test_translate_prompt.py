@@ -153,19 +153,25 @@ def test_empty_or_none_lang_codes_fall_through_to_generic() -> None:
 
 def test_en_to_ko_prompt_has_placeholder_preservation_rule() -> None:
     """8e-1 R-B: live qwen mangled/hallucinated over the ⟦⟧ sentinel. The
-    en→ko prompt now instructs the model to copy ``[[MATHn]]`` tokens verbatim
+    en→ko prompt now instructs the model to copy ``[[MATH...]]`` tokens verbatim
     and emit no LaTeX in their place — the difference-maker that recovered the
     6 doc7 failures (chunk 67: 0/6 → 6/6 with this rule + the ASCII sentinel)."""
     p = _prompt("en", "ko")
     assert "[[MATH" in p, "missing placeholder-preservation rule (en→ko)"
     assert "그대로 복사" in p
+    # verify-cross R1 §4#2: the rule must be GENERAL ([[MATH...]] → ]]), not
+    # only the literal [[MATH0]] forms, so the collision-path hashed sentinel
+    # [[MATH<hash>n]] is covered too.
+    assert "로 시작" in p and "]]`로 끝나는" in p
 
 
 def test_generic_prompt_has_placeholder_preservation_rule() -> None:
-    """The generic branch carries the same rule (English wording)."""
+    """The generic branch carries the same rule (English wording), generalized
+    to any ``[[MATH...]]`` token (covers the hashed collision sentinel)."""
     p = _prompt("ko", "en")
-    assert "[[MATHn]]" in p
+    assert "[[MATH" in p
     assert "verbatim" in p.lower()
+    assert "starting with [[MATH and ending with ]]" in p
 
 
 # ---------------------------------------------------------------------------
