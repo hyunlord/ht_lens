@@ -1,7 +1,7 @@
 # Phase 8d-2b — Summary (chunk RAG 머신 + within-section top-K + cross-doc RAG + figure 채팅)
 
 ## Status
-**ESCALATE_TO_PLANNER** — cross-verify Round 2 = DOWNGRADE(~86), 2-round cap 도달. CLAUDE.md escalate. **Push 보류.** R1 REJECT 실 결함 2개 fix 확인(R2), R2 잔여는 follow-up 테스트/설계 lock(새 functional 결함 아님 — Codex "not another broad RE-CODE, not fundamentally broken").
+**PASS_CANDIDATE** — cross-verify R2 DOWNGRADE(~86) → **Planner-directed micro-fix 완료** → push (R3 없음). R1 REJECT 실 결함 2개 fix(R2 확인) + R2 follow-up gap 4개(budget continue·figure/section cross-doc·cross-lingual) 폐쇄(verify v3, 736 green). Codex R2 "not fundamentally broken, not another broad RE-CODE". 처리: "R2 micro-fix resolution" 절.
 
 ## Score
 - Self (verify v2): **88 / 100**
@@ -60,13 +60,18 @@ R2 잔여 (**follow-up gap, functional 결함 아님**):
 3. cross-lingual @llm(fast 제외), router 라인 coverage TestClient, get_or_encode source_hash-only(mixed-model 후속), brute-force(≤50K).
 4. neighbor 재번역 + resize = 8d-2c. cross-doc live = 8e. 볼드/영어fallback = 8e.
 
-## Recommended next (Planner 결정)
-- **Worker 권고: micro-fix** (8c/8d-2a 선례 — concrete-cheap, **test-mostly → R3 불필요**, verify v3 → push). 묶음(~20분):
-  - (a) build_section_context_topk: oversized top-hit 시 `break`→`continue`(작은 관련 hit 패킹) + 테스트(R2 #1).
-  - (b) figure cross-doc end-to-end: image anchor + 2-doc + embedding → related_chunks (R2 #2).
-  - (c) section cross-doc 계약 테스트(heading 벡터로 다른 doc ref) (R2 #3).
-- **대안: PASS** (8d-1 선례 — 새 functional 결함 0; Codex "not fundamentally broken"). 단 4개 gap이 기록에 남음.
-- **broad RE-CODE/RE-PLAN: 불필요** (Codex 명시).
+## R2 micro-fix resolution (Planner-directed, verify v3 `394e369`)
+| R2 항목 | 처리 | Evidence |
+| --- | --- | --- |
+| #1 budget-cap break→heading-only | `break`→`continue`(큰 hit skip, 작은 관련 hit pack — 큰 섹션 답 품질) | test_within_section_topk_packs_smaller_hit_when_top_oversized |
+| #2 figure cross-doc 미테스트 | image anchor + 2-doc + embedding → related_chunks | test_figure_cross_doc_refs_end_to_end |
+| #3 section cross-doc 계약 | section anchor + 2-doc → 다른 doc ref(heading 벡터) | test_section_cross_doc_refs_use_heading_vector |
+| #4 cross-lingual @llm | 설계상(fast 제외); 기재 | (불변) |
+- (a)는 1-line production 로직 개선 + 2 cross-doc 테스트. 733→**736** green. R3 cross-verify 없음(Planner, Codex broad RE-CODE 불요).
+
+## Recommended next
+- **8d-2b 완료**(R2 micro-fix 반영, push). 8d 시리즈 잔여: **8d-2c**(neighbor 재번역 --short-only + 사이드탭 resize).
+- **8e**: 7-doc 마이그레이션 + 실 볼드(재추출) + cross-doc RAG live + jsdom CI provisioning + cutover.
 
 ## Push 정책
-**보류** — R2 DOWNGRADE, Planner escalate. 결정(PASS / micro-fix) 후 진행.
+**Push 진행** — R2 DOWNGRADE escalate → Planner micro-fix 지시 → 처리 완료(R1 실 결함 fix + R2 gap 폐쇄, R3 없음, cap 준수). verify v3 self 88, **736 green**, 1.x 무손상.
