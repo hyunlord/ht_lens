@@ -1,31 +1,36 @@
-# Phase 8e-2 — BLOCKER (Stage 4, extraction)
+# Phase 8e-2 — BLOCKER #2 (Stage 4, Aggarwal translation)
 
 ## 막힌 지점
-첫 문서(sample_mixed 6p) `extract-mineru` 실행 시 MinerU 3.2.1이 즉시 실패:
+Aggarwal(doc 5, 3338 chunk) 번역 중 **qwen 엔드포인트(`localhost:8081`)가 다운**.
+- 결과: translated 530 + passthrough 411 + cached 5 = **946 성공**, **2392 failed**.
+- 번역이 ~20분만에 끝남(2330 text chunk엔 너무 빠름) → 중간부터 전부 즉시 실패.
 
-```
-cannot import name 'find_pruneable_heads_and_indices'
-from 'transformers.pytorch_utils'
-```
+## 원인 (확정 진단 — 코드/math 문제 아님)
+- **엔드포인트 사망 시그니처**: order_idx band별 성공/실패 —
+  - 0–799: 583 성공 / 217 실패 (초반 정상)
+  - 800–1599: 111 / 689
+  - 1600–2399: 119 / 681
+  - 2400+: 133 / 805
+  - → 초반은 잘 되다 ~800부터 실패 폭증 = 서버가 중간에 죽음.
+- **health_check 2회 연속 실패**: `LLMHealthCheckFailed: Connection error` (`localhost:8081`).
+- 8e-1 math 강건화는 정상: 4 small doc(501 chunk) 0 실패 + Aggarwal 초반 583 성공. failed row는 전부 empty text(fail-preserve, 무손상).
+- 추정: 518p 교과서(2330 text chunk) 연속 부하로 vLLM/qwen 서버 OOM/crash.
 
-## 원인 (확정 진단)
-- `~/mineru_test/venv`의 **transformers == 5.9.0**. 이 심볼은 transformers 5.x에서 제거됨(4.x에는 존재).
-- MinerU 3.2.1 모델 로딩(pipeline backend)이 이 심볼에 의존 → import 실패 → 추출 0건.
-- 타임라인: doc7 추출 = 2026-05-29 02:55(성공). transformers 재설치 = 2026-05-29 22:37(이후). → 그 사이 transformers가 5.9.0으로 업그레이드되며 MinerU가 깨짐.
-- ht_lens repo 코드/PDF 문제 아님. **MinerU 샌드박스 venv의 의존성 회귀**.
+## 영향 (안전 — 손실 0)
+- doc 1–4 완료(501 chunk, 0 failed) 불변.
+- doc 5: **946 성공분은 cache 보존** → 재시도 시 cache hit(재호출 안 함). **2392만 재번역** 필요.
+- prod 1.x 무손상. v2 DB 백업 보관.
 
-## 영향 범위
-- **8e-1(math 강건화)는 완료·push(`f60b338`), 영향 없음.** prod 1.x 무손상.
-- 8e-2의 **추출 단계만 차단**. ingest/translate/embed는 추출 산출물이 있어야 진행 가능.
-- DB 미변경(추출이 ingest 전에 실패). v2 DB 백업 `data/ht_lens_v2.db.pre8e2.bak` 보관 중.
-
-## Human 필요 (택1)
-1. **(권장) MinerU venv의 transformers 다운그레이드**: `~/mineru_test/venv`에서 MinerU 3.2.1 호환 버전으로
-   - 예: `~/mineru_test/venv/bin/pip install 'transformers<5'` (정확 핀은 MinerU 3.2.1 테스트 버전; 4.4x~4.5x대 권장)
-   - 다운그레이드 후 `~/mineru_test/venv/bin/mineru -p tests/fixtures/sample_mixed.pdf -o /tmp/t` 1회 성공 확인되면 알려주세요 → 배치 재개.
-2. MinerU venv 재생성(3.2.1 pinned deps대로).
-3. 다른 MinerU 설치/바이너리 경로 제공(`HT_LENS_MINERU_BIN`).
+## Human 필요 (LLM 서버는 사용자 인프라)
+1. **qwen 서버(`localhost:8081`) 재시작.** (OOM이면 동시성↓ 고려.)
+2. 재시작 후 health 확인되면 알려주세요 → 제가 즉시 재개:
+   ```
+   uv run python -m ht_lens.cli translate-chunks --doc-id 5 --retry-failed --db data/ht_lens_v2.db
+   ```
+   - `--retry-failed`는 **status='failed' 2392개만** 재처리. 946 성공분은 건드리지 않음.
+   - 대용량 재시도라 OOM 재발 막으려면 `--concurrency 3` 정도로 낮춰 재개 가능(원하시면).
+3. (대안) Aggarwal을 이번 배치에서 빼고 4-doc로 8e-2 마무리 → Aggarwal은 cutover 후 follow-up. (4-doc도 cross-doc RAG·multi-doc 입증 충분.)
 
 ## 비고
-- 이 venv는 repo 밖 사용자 환경이라 제가 임의로 의존성 변경하지 않았습니다(다른 용도로 transformers 5.9.0을 의도적으로 올렸을 수 있어 위험).
-- 해결되면 8e-2 Stage 4(extract→ingest→translate(+neighbor)→embed, smallest-first + manifest + doc별 verify)를 즉시 재개합니다.
+- `localhost:8081`은 제가 통제하지 않는 사용자 LLM 서버라 재시작은 Human이 해야 합니다.
+- 재개는 idempotent(`--retry-failed` + cache)이라 안전하게 여러 번 가능.
