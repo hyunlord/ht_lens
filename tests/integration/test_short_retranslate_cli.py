@@ -237,3 +237,68 @@ def test_chunk_id_unknown_exit_2(tmp_path: Path) -> None:
         extra_env={"TRANSLATE_LLM_PROVIDER": "mock"},
     )
     assert proc.returncode == 2, (proc.stdout, proc.stderr)
+
+
+def _seed_chunk_doc_at_version(tmp_path: Path, version: str) -> tuple[Path, int]:
+    """Like _seed_chunk_doc but stamps a chosen alembic_version (for the
+    schema-mismatch contract). Returns (db_path, doc_id)."""
+    db_path = tmp_path / f"chunks_{version}.db"
+    holder: dict[str, int] = {}
+
+    async def _seed() -> None:
+        engine = make_engine(db_path)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL)"
+                )
+            )
+            await conn.execute(text(f"INSERT INTO alembic_version VALUES ('{version}')"))
+        factory = make_session_factory(engine)
+        async with factory() as s:
+            doc = Document(
+                filename="m.pdf",
+                src_lang="en",
+                tgt_lang="ko",
+                status="translated",
+                created_at=datetime.now(UTC),
+                extractor="mineru",
+            )
+            s.add(doc)
+            await s.flush()
+            s.add(
+                Chunk(
+                    doc_id=doc.id,
+                    page_idx=0,
+                    order_idx=0,
+                    type="text",
+                    bbox_json="[0,0,1,1]",
+                    content="where",
+                )
+            )
+            await s.commit()
+            holder["doc"] = doc.id
+        await engine.dispose()
+
+    asyncio.run(_seed())
+    return db_path, holder["doc"]
+
+
+def test_short_only_schema_mismatch_precedes_llm_health(tmp_path: Path) -> None:
+    """verify-cross 8e-3 §2: on a stale (0004) DB AND an unreachable LLM, the
+    schema check must win → exit 3 (SchemaVersionMismatch), NOT exit 4 (health).
+    The 8e-3 reorder runs require_schema_head before from_env_translate/health."""
+    db_path, doc_id = _seed_chunk_doc_at_version(tmp_path, "0004")
+    proc = _run(
+        "--doc-id",
+        str(doc_id),
+        "--short-only",
+        db_path=db_path,
+        extra_env={
+            "TRANSLATE_LLM_PROVIDER": "openai_compat",
+            "TRANSLATE_LLM_BASE_URL": "http://localhost:1",  # unreachable → would be exit 4
+            "TRANSLATE_LLM_MODEL": "test-model",
+        },
+    )
+    assert proc.returncode == 3, (proc.stdout, proc.stderr)
