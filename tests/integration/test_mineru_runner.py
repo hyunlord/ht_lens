@@ -145,6 +145,53 @@ def test_run_mineru_sets_cpu_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert (tmp_path / "cuda.txt").read_text().strip() == "cuda=[]"
 
 
+def test_run_mineru_threads_timeout_to_mineru_internal_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Phase 8e-2 verify-cross R1 §4#1: timeout_s must cover MinerU's INTERNAL
+    task-result wait, not only the parent subprocess. The 518p Aggarwal run died
+    at MinerU's default 3600s internal limit despite a larger --timeout; the
+    runner now exports MINERU_TASK_RESULT_TIMEOUT_SECONDS=timeout_s."""
+    pdf = tmp_path / "in.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    out = tmp_path / "out"
+    fake = tmp_path / "mineru"
+    _write_script(
+        fake,
+        f'echo "task=[$MINERU_TASK_RESULT_TIMEOUT_SECONDS]" > "{tmp_path}/t.txt"\n'
+        f'echo "startup=[$MINERU_LOCAL_API_STARTUP_TIMEOUT_SECONDS]" >> "{tmp_path}/t.txt"\n'
+        f'mkdir -p "{out}/in/auto"\n'
+        f'printf "[]" > "{out}/in/auto/in_content_list.json"\n',
+    )
+    monkeypatch.setenv("HT_LENS_MINERU_BIN", str(fake))
+    monkeypatch.delenv("MINERU_TASK_RESULT_TIMEOUT_SECONDS", raising=False)
+    monkeypatch.delenv("MINERU_LOCAL_API_STARTUP_TIMEOUT_SECONDS", raising=False)
+    run_mineru(pdf, out, timeout_s=14400)
+    body = (tmp_path / "t.txt").read_text()
+    assert "task=[14400]" in body  # internal wait gets the full budget
+    assert "startup=[600]" in body  # startup capped at 600s
+
+
+def test_run_mineru_internal_timeout_respects_operator_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An operator-set MINERU_TASK_RESULT_TIMEOUT_SECONDS wins (setdefault)."""
+    pdf = tmp_path / "in.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    out = tmp_path / "out"
+    fake = tmp_path / "mineru"
+    _write_script(
+        fake,
+        f'echo "task=[$MINERU_TASK_RESULT_TIMEOUT_SECONDS]" > "{tmp_path}/t.txt"\n'
+        f'mkdir -p "{out}/in/auto"\n'
+        f'printf "[]" > "{out}/in/auto/in_content_list.json"\n',
+    )
+    monkeypatch.setenv("HT_LENS_MINERU_BIN", str(fake))
+    monkeypatch.setenv("MINERU_TASK_RESULT_TIMEOUT_SECONDS", "9999")
+    run_mineru(pdf, out, timeout_s=14400)
+    assert "task=[9999]" in (tmp_path / "t.txt").read_text()  # operator value preserved
+
+
 def test_run_mineru_missing_pdf_raises(tmp_path: Path) -> None:
     with pytest.raises(MineruError, match="PDF not found"):
         run_mineru(tmp_path / "nope.pdf", tmp_path / "out")

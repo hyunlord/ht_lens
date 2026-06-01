@@ -110,6 +110,14 @@ def run_mineru(
     env = {**os.environ}
     if cpu:
         env["CUDA_VISIBLE_DEVICES"] = ""
+    # Phase 8e-2 (verify-cross R1 §4#1): ``timeout_s`` must cover MinerU's
+    # INTERNAL FastAPI task-result wait too, not just our parent subprocess.
+    # MinerU's local pipeline defaults to MINERU_TASK_RESULT_TIMEOUT_SECONDS=3600,
+    # so a 500+ page CPU extraction dies at 1h even with a larger --timeout. Thread
+    # the same budget into MinerU's internal timeout (and a generous startup wait),
+    # but let an operator-set env var win.
+    env.setdefault("MINERU_TASK_RESULT_TIMEOUT_SECONDS", str(timeout_s))
+    env.setdefault("MINERU_LOCAL_API_STARTUP_TIMEOUT_SECONDS", str(min(timeout_s, 600)))
 
     _log.info("running MinerU: %s", " ".join(cmd))
     try:
