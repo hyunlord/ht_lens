@@ -46,14 +46,12 @@ from ht_lens.llm.factory import from_env_chat, from_env_translate
 
 _DEFAULT_DB = Path("data/ht_lens.db")
 _DEFAULT_UPLOADS_DIR = Path("data/uploads")
-
-# Phase 8e-3 cutover window: the API serves the 2.0 head (0007) by default, but
-# must also START against the 1.x prod DB (0004) so an env-flip rollback
-# (HT_LENS_DB_URL → ht_lens.db) actually works instead of crashing at startup.
-# On 0004 the 1.x routers (blocks/pages/documents) work and the 2.0 routers
-# (reflow/chunk_chat) simply have no chunk tables. An UNKNOWN version is still
-# rejected. After 1.x deprecation, drop "0004" from this set.
-_SUPPORTED_SCHEMA_VERSIONS = {ALEMBIC_HEAD, "0004"}
+# Phase 8e-3: the API requires the 2.0 head. An env-flip to a real 1.x (0004) DB
+# is NOT a valid rollback for 2.0 code — the 2.0 ``Document`` model queries
+# columns (extractor, markdown_path) absent at 0004, so routes 500 even though
+# startup could pass. Rollback is therefore "revert the main merge" (1.x code,
+# 0004-compatible) + HT_LENS_DB_URL→ht_lens.db, not env-flip alone. So the guard
+# stays strict on the head (verify-cross 8e-3 live finding).
 _STATIC_DIR = Path(__file__).parent / "static"
 
 _log = logging.getLogger("ht_lens.api")
@@ -113,11 +111,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async with factory() as session:
         version = await current_schema_version(session)
-    if version not in _SUPPORTED_SCHEMA_VERSIONS:
+    if version != ALEMBIC_HEAD:
         await engine.dispose()
         raise SchemaVersionMismatch(
-            f"alembic_version={version!r} not in supported {sorted(_SUPPORTED_SCHEMA_VERSIONS)!r} "
-            f"(2.0 head={ALEMBIC_HEAD!r}); run `alembic upgrade head` before starting the API"
+            f"alembic_version={version!r} but head={ALEMBIC_HEAD!r}; "
+            "run `alembic upgrade head` before starting the API"
         )
 
     # Phase 6e: build two LLM clients — translate path and chat path —

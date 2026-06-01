@@ -1,9 +1,10 @@
-"""Phase 8e-3 — cutover guards: root redirect, schema allow-list, malformed env.
+"""Phase 8e-3 — cutover guards: root redirect, strict schema head, malformed env.
 
 Locks the prod-cutover contract:
 - ``/`` redirects to the 2.0 document list (default landing).
-- the API STARTS against a 1.x (0004) DB so an env-flip rollback works, but
-  rejects an UNKNOWN schema version (allow-list {0004, 0007}).
+- the API requires the 2.0 head and rejects any other version (incl. a real 1.x
+  0004 DB) — the live finding showed 2.0 code can't serve 0004 (2.0-only columns),
+  so rollback is "revert the main merge" + env, NOT env-flip alone.
 - a malformed ``HT_LENS_DB_URL`` fails loud instead of silently serving 1.x.
 - the shared schema_guard raises on a non-head DB.
 """
@@ -54,23 +55,16 @@ def test_root_redirects_to_document_list(api_db_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Schema allow-list {0004, 0007} (env-flip rollback to 1.x must start)
+# Strict schema head (rollback is git-revert, not env-flip — see module docstring)
 # --------------------------------------------------------------------------- #
-def test_api_starts_on_1x_0004_db_for_rollback(tmp_path: Path) -> None:
-    """verify-cross 8e-3 §2 (CRITICAL): an env flip back to the 1.x prod DB
-    (alembic 0004) must START, not crash — otherwise '즉시 롤백' is false."""
-    db = _make_db_at_version(tmp_path, "0004", "rollback_1x.db")
-    with make_test_client(db) as client:
-        # a 1.x route is reachable (startup succeeded); empty list is fine.
-        r = client.get("/documents")
-        assert r.status_code == 200
-
-
-def test_api_rejects_unknown_schema_version(tmp_path: Path) -> None:
-    """An UNKNOWN version (not in the cutover allow-list) is still rejected."""
-    db = _make_db_at_version(tmp_path, "0003", "unknown.db")
-    with pytest.raises(SchemaVersionMismatch), make_test_client(db):
-        pass
+def test_api_rejects_non_head_db(tmp_path: Path) -> None:
+    """The guard is strict on the 2.0 head: a non-head DB (incl. a real 1.x 0004)
+    is rejected at startup. Env-flip to 1.x is NOT a valid 2.0-code rollback (2.0
+    queries columns absent at 0004); rollback = revert the main merge + env."""
+    for version in ("0004", "0003"):
+        db = _make_db_at_version(tmp_path, version, f"v{version}.db")
+        with pytest.raises(SchemaVersionMismatch), make_test_client(db):
+            pass
 
 
 def test_api_starts_on_2x_head(tmp_path: Path) -> None:
