@@ -1,41 +1,45 @@
 ## 1. Verification of automated checks
 
-The evidence is partly credible but incomplete. `verify.md` was committed at HEAD `8a282ad` after the only code/test commit `3fda1a8`, and `git diff 3fda1a8..HEAD` shows only phase artifacts, so the self-verify is not stale for code. Current untracked `.claude/phases/phase-8e-2/verify-cross.md` is only the generated placeholder, not a prior round.
+The v2 verify is not stale for code: current HEAD is `f0051a0`, and the only post-R1 code commit is `bbdc529`; `f0051a0` updates only `.claude/phases/phase-8e-2/verify.md`. Current worktree has untracked `.claude/phases/phase-8e-2/summary.md` and `.claude/scheduled_tasks.lock`, but no tracked code drift.
 
-Their 5-A table omits the required format check: `uv run ruff format --check .` is in `WORKFLOW.md` but absent from `verify.md:5-14`. Coverage is also not reported as a distinct result, despite the required lint/format/type/test/coverage/CI set.
+The lint/format/type/test evidence in `verify.md:7-17` is credible and now includes the R1-missing format check. The test count increase is consistent with the RE-CODE diff: `tests/integration/test_mineru_runner.py:148` and `:175` add the two internal-timeout tests.
 
-The lint/type/test evidence is plausible and matches the repo delta: `src/ht_lens/cli.py:268-284` adds `--timeout`, and `tests/integration/test_cli_mineru.py:166-190` adds one locking test. CI is honestly marked N/A, but calling local 769 tests “CI-equivalent” in `verify.md:12` overstates it because CI environment, dependency cache, and workflow wiring are not exercised.
+Coverage evidence is weaker than the other checks because `verify.md:14` reports only `extract_mineru/runner.py` at 91% without the exact coverage command or full suite coverage target. Still, `pyproject.toml` configures pytest-cov by default, so this is not a blocking gap.
+
+CI is honestly marked N/A in `verify.md:15`; they no longer overstate local tests as CI-equivalent. That is acceptable for this subphase, but 8e-3 cutover should require actual GitHub Actions evidence.
 
 ## 2. Verification of functional checks
 
-The DB count claims are credible: current `data/ht_lens_v2.db` matches `verify.md:18-26` with 5 docs, 3839 chunks, 3830 translated, 9 failed, and 2840 embeddings. The 1.x rollback check also matches `verify.md:43-47`: prod DB has alembic `0004`, 49,850 blocks, and no v2 chunk tables.
+R1’s internal timeout issue is fixed, not merely reworded. `src/ht_lens/extract_mineru/runner.py:119-120` exports `MINERU_TASK_RESULT_TIMEOUT_SECONDS` and `MINERU_LOCAL_API_STARTUP_TIMEOUT_SECONDS`, and `tests/integration/test_mineru_runner.py:148-192` verifies both default propagation and operator-env precedence.
 
-The functional verification does not actually prove “reflow viewer에서 전체 읽기” from `ROADMAP.md:260-263`. `verify.md` provides counts and says failed rows are suppressed, but it does not show per-doc `/v2/documents/{id}/reflow` API 200 results, UI load evidence, page image/cache checks, or a realistic full-reading pass across the 518-page doc.
+The DB count claims match the live SQLite DB: five documents, 3839 chunks, 3830 translated, 9 failed, and all `documents.src_pdf_sha256` values NULL. The 1.x rollback check also matches: prod DB alembic `0004`, 49,850 blocks, and zero chunk tables.
 
-Literal Roadmap DoD says “7 docs 2.0 DB 완료” (`ROADMAP.md:254-262`), while this phase verifies a consciously reduced 5-doc scope (`challenge.md:12`, `manifest.md:14-25`). That may be an accepted Planner deviation, but it should be scored as a subphase completion, not full Phase 8e DoD completion.
+The reflow functional evidence improved materially over R1. `verify.md:32-44` gives doc1-5 `/v2/documents/{id}/reflow` HTTP 200 counts, and the API behavior is consistent with `src/ht_lens/api/routers/reflow.py:109-112`, which suppresses failed translations while keeping original fallback content.
 
-The debate point about `--short-only` was handled reasonably: challenge moved it to verification-driven use (`challenge.md:7-9`), and verify records no need for doc2/3 (`verify.md:40-41`). Cross-doc RAG live was also explicitly moved to 8e-3 (`challenge.md:7`, `verify.md:37-38`), so I would not penalize that as an 8e-2 miss.
+Remaining limitation: this proves API-level reading content, not a browser-level “viewer” pass. `src/ht_lens/api/static/js/reflow.js:147-190` would build the reading pane from that API, so the risk is low, but 8e-3 should still exercise the actual page for cutover. Compare-mode page images are explicitly not covered, and `verify.md:44` says page-image 404 is expected.
+
+The 5-doc vs 7-doc deviation is now disclosed as a subphase in `verify.md:26` and `:74`, rather than claimed as literal ROADMAP completion. That resolves the R1 framing problem, assuming Planner accepted the superseded scope.
 
 ## 3. Score audit
 
-독창성 / 15: 11 is mostly justified. This is operational migration, not new architecture, but the manifest, go/no-go, and retry-drain practice are useful. I would keep 10-11/15; the timeout fix is simple and only partially solves the real timeout blocker.
+독창성 / 15: 11/15 is justified. This is mostly operational migration, but the manifest, go/no-go handling, idempotent drain, isolated MinerU venv, and internal-timeout fix are real phase-specific work.
 
-완결성 / 35: 31 is too high against the literal DoD. The 5-doc DB is real, but `ROADMAP.md:261` still says 7 docs, book2 full is deferred (`verify.md:75`), and reflow reading is asserted without per-doc viewer/API evidence. Fair score: 27-29/35.
+완결성 / 35: 30/35 is defensible only as “8e-2 subphase” completion. Literal `ROADMAP.md:254-263` still says 7 docs and cutover, while this phase has five docs and defers book2 full/cutover. I would keep 29-30/35, not lower, because the deviation is explicit and the 5-doc data evidence is strong.
 
-안정성 / 30: 28 is high. The test suite evidence is good, and failed translations are fail-preserved via `get_reflow` status gating (`src/ht_lens/api/routers/reflow.py:109-112`, tested at `tests/integration/test_reflow_api.py:82-93`). But the actual large-doc run required out-of-band env tuning and qwen concurrency reduction (`verify.md:54-56`), and format/CI were not run. Fair score: 25-26/30.
+안정성 / 30: 27/30 is justified. The RE-CODE path has targeted tests, the 771-test run is plausible, failed translations are fail-preserved, and 1.x DB isolation was verified. The remaining deductions for qwen OOM/concurrency tuning and lack of CI are appropriate.
 
-확장성 / 20: 18 is optimistic. `extract-mineru --timeout` only threads `timeout_s` to `subprocess.run` (`src/ht_lens/extract_mineru/runner.py:116-122`); the reported blocker was MinerU’s internal `MINERU_TASK_RESULT_TIMEOUT_SECONDS` (`manifest.md:23`), which is not modeled by the CLI option or test. Fair score: 15-16/20.
+확장성 / 20: 17/20 is fair. The R1 blocker is fixed at the right layer (`run_mineru` env propagation), and retries are documented, but the large-doc path still depends on operational tuning and a specific MinerU environment.
+
+Total: 85/100 is credible. I would not downgrade below 85; at most the score is a point high if you require browser-level reflow evidence in this phase.
 
 ## 4. Issues missed (new this round)
 
-The new `--timeout` path does not fully encode the real large-PDF requirement. `src/ht_lens/cli.py:268-284` passes `timeout_s` to `run_mineru`, but `run_mineru` only applies it to Python’s parent `subprocess.run` timeout (`runner.py:116-125`). The successful Aggarwal extraction also required `MINERU_TASK_RESULT_TIMEOUT_SECONDS=14400` inside MinerU (`verify.md:56`, `manifest.md:23`), so `extract-mineru --timeout 14400` alone can still fail at MinerU’s internal 3600s limit.
+No significant new RE-CODE regression found. The new identifiers introduced by `bbdc529` are explicitly locked in tests: `MINERU_TASK_RESULT_TIMEOUT_SECONDS` appears in `tests/integration/test_mineru_runner.py:161`, `:167`, `:185`, and `:190`; the operator precedence branch is covered by `test_run_mineru_internal_timeout_respects_operator_env`.
 
-The new test locks only kwarg threading, not the real process environment behavior. `tests/integration/test_cli_mineru.py:166-190` mocks `run_mineru`, so it cannot catch the internal timeout gap above, nor does it assert any environment propagation or documented command recipe for large PDFs.
+Minor workflow gap: `WORKFLOW.md` asks RE-CODE verify reports to include a “Regression check” table mapping each new path to tests. `verify.md` does not have that exact section/table, but `verify.md:19-28` provides the same substance for the only RE-CODE change. This is format debt, not a code defect.
 
-The accepted challenge item “translated text chunk ≥ 임계(doc 규모 대비)” was not actually evidenced. `challenge.md:20-22` promised stronger text/embedding eligibility thresholds, but `verify.md:18-38` reports only total chunks/translations/embeddings. A 518-page doc with 3338 chunks and 2543 embeddings is probably healthy, but the promised threshold check is absent.
-
-The manifest’s source traceability is only partial. `manifest.md:6-12` stores 16-character SHA prefixes, and doc1 has no SHA at all; the live DB has `src_pdf_sha256` nullable and all five rows are NULL. That matches the deliberate “in-DB sha 미주장” decision, but it weakens cutover auditability and should weigh against completeness/rollback confidence.
+The challenge promised eligible embedding-ratio evidence in `.claude/phases/phase-8e-2/challenge.md:22`, but `verify.md:46-58` reports only raw embedding counts. Since cross-doc live verification moved to 8e-3, this is acceptable as carry-forward evidence debt, not a reason to recode 8e-2.
 
 ## 5. Verdict
 
-**DOWNGRADE** — The self-report is mostly honest and the migrated DB evidence is real, but the score should be lower than 88 because required automated checks are incomplete, reflow “전체 읽기” is asserted rather than demonstrated, the phase only satisfies a reduced 5-doc interpretation of a 7-doc Roadmap DoD, and the new timeout flag does not cover the MinerU internal timeout that actually blocked Aggarwal. A fair score is about **80-82**: no RE-CODE is mandatory for the batch data itself, but 8e-3 should not rely on `--timeout` alone for large PDFs and should provide explicit reflow/load evidence before cutover.
+**CONFIRM_PASS** — R1’s concrete defects were addressed: the MinerU internal timeout is fixed and tested, format/coverage/CI wording improved, and reflow API evidence now exists for all five migrated docs. The self-score of 85 is appropriately conservative for a reduced 5-doc subphase with known carry-forward debt. No further RE-CODE is warranted for Phase 8e-2; 8e-3 should focus on actual cutover, browser-level reflow smoke, CI, and the remaining auditability gaps.
