@@ -21,6 +21,7 @@ MOD = REPO / "src" / "ht_lens" / "api" / "static" / "js" / "utils" / "enrich_inl
 
 def _find_jsdom() -> str | None:
     for p in (
+        Path(__file__).resolve().parents[2] / "node_modules" / "jsdom",  # repo-local (CI npm ci)
         Path.home() / "github" / "WorldFork" / "frontend" / "node_modules" / "jsdom",
         Path.home() / "node_modules" / "jsdom",
         Path("/usr/lib/node_modules/jsdom"),

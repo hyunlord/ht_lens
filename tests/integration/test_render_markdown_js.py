@@ -27,6 +27,7 @@ RENDER_MD = REPO / "src" / "ht_lens" / "api" / "static" / "js" / "utils" / "rend
 def _find_jsdom() -> str | None:
     """Locate a jsdom install on the host. Returns the JS module path or None."""
     candidates = [
+        Path(__file__).resolve().parents[2] / "node_modules" / "jsdom",  # repo-local (CI npm ci)
         Path.home() / "github" / "WorldFork" / "frontend" / "node_modules" / "jsdom",
         Path.home() / "node_modules" / "jsdom",
         Path("/usr/lib/node_modules/jsdom"),

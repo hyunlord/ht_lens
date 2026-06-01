@@ -26,12 +26,17 @@ jobs:
         run: uv python install 3.11
 
       - name: Set up Node 22
-        # font_fit_js runs the JS algorithm via node subprocess. ubuntu-latest
-        # already ships node 20+; this step pins it explicitly so the JS test
-        # never silently skips in CI.
+        # The viewer JS tests run the real modules via node subprocess.
+        # ubuntu-latest ships node 20+; pin it so the JS tests never silently skip.
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Install jsdom (Phase 8e-3)
+        # The 11 jsdom-based viewer tests resolve jsdom via _find_jsdom(), whose
+        # first candidate is the repo-local node_modules/jsdom. Without this the
+        # tests skip on a clean runner (the host-path fallbacks don't exist in CI).
+        run: npm ci
 
       - name: Sync dependencies
         run: uv sync --all-extras

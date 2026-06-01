@@ -56,3 +56,6 @@ docs/phases/phase-*/screenshots/
 !docs/phases/phase-6b/screenshots/
 !docs/phases/phase-6c/screenshots/
 !docs/phases/phase-6d/screenshots/
+
+# Phase 8e-3: npm (jsdom for JS tests in CI)
+node_modules/
