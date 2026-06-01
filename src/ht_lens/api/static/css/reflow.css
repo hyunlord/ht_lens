@@ -1,0 +1,182 @@
+/* ht_lens 2.0 reflow reading view (Phase 8c) — seeded from the validated
+   ~/mineru_test/result_v2.html prototype. */
+:root {
+  --fg: #1a1a1a;
+  --muted: #6b6b6b;
+  --accent: #2a4d8a;
+  --border: #e3e3e3;
+  --bg: #fdfdfd;
+  --eq-bg: #fafafa;
+  --fig-bg: #f3f6fb;
+  --fig-border: #b9c5db;
+  --hl: #fff3bf;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo",
+    "Pretendard", "Noto Sans CJK KR", "Segoe UI", sans-serif;
+  line-height: 1.9;
+  font-size: 18px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.top {
+  position: sticky; top: 0; z-index: 20;
+  background: #f7f7f7; border-bottom: 1px solid var(--border);
+  padding: 0.6em 1.2em; display: flex; gap: 1em; align-items: baseline;
+  font-size: 14px;
+}
+.top h1 { font-size: 1.05em; margin: 0; font-weight: 600; }
+.top .meta { color: var(--muted); }
+.top .modes { margin-left: auto; }
+.top label { color: var(--muted); cursor: pointer; }
+
+/* layout: single (reading only) or compare (PDF | reflow) */
+.layout { display: grid; }
+.layout[data-mode="single"] { grid-template-columns: 1fr; }
+.layout[data-mode="compare"] { grid-template-columns: 1fr 1fr; }
+
+.pane--pdf {
+  background: #f7f7f7; border-right: 1px solid var(--border);
+  overflow: auto; height: calc(100vh - 3.2em); padding: 1em;
+}
+.layout[data-mode="single"] .pane--pdf { display: none; }
+.pane--pdf .pdf-page { margin: 0 auto 1em; max-width: 100%; }
+.pane--pdf .pdf-page img {
+  display: block; max-width: 100%; box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  border: 2px solid transparent;
+}
+.pane--pdf .pdf-page.hl img { border-color: var(--accent); }
+.pane--pdf .pdf-page .lbl { text-align: center; color: var(--muted); font-size: 12px; }
+
+.pane--reflow { overflow: auto; height: calc(100vh - 3.2em); }
+article { max-width: 760px; margin: 0 auto; padding: 2.5rem 2rem 6rem; }
+
+.chunk { scroll-margin-top: 4em; }
+.chunk.active { background: var(--hl); border-radius: 3px; }
+.layout[data-mode="compare"] .chunk { cursor: pointer; }
+
+h2.rf-heading { font-size: 1.5em; font-weight: 700; margin: 1.8em 0 0.4em; letter-spacing: -0.01em; }
+h3.rf-heading { font-size: 1.2em; font-weight: 700; margin: 1.5em 0 0.4em; color: var(--accent); }
+p.rf-text { margin: 1em 0; text-align: justify; word-break: keep-all; overflow-wrap: anywhere; }
+.rf-text--empty { color: var(--muted); font-style: italic; }
+
+.katex { font-size: 1em; }
+.katex-display {
+  margin: 1.2em 0; padding: 0.6em 1em; background: var(--eq-bg);
+  border-left: 3px solid var(--accent); border-radius: 2px; overflow-x: auto;
+}
+.katex-error { color: #b00020; }
+
+.rf-figure { margin: 1.5em 0; }
+.rf-figure img {
+  display: block; max-width: 100%; margin: 0 auto;
+  border: 1px solid var(--border); border-radius: 4px;
+}
+.rf-figure .fig-missing {
+  display: block; padding: 1.2em; text-align: center; color: var(--muted);
+  background: var(--fig-bg); border: 1px dashed var(--fig-border); border-radius: 4px;
+}
+.figure-box {
+  margin: 0.5em auto 0; max-width: 100%; padding: 0.8em 1em;
+  background: var(--fig-bg); border: 1px solid var(--fig-border); border-radius: 6px;
+  font-size: 0.95em;
+}
+.figure-box .fb-cap { font-weight: 600; }
+.figure-box .fb-en { color: var(--muted); font-size: 0.82em; font-style: italic; margin-top: 0.4em; }
+
+.rf-table { margin: 1.2em 0; overflow-x: auto; }
+.rf-table pre {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.85em;
+  background: #f4f4f4; padding: 0.8em; border-radius: 4px; white-space: pre-wrap;
+}
+
+.status, .err { color: var(--muted); padding: 2em; text-align: center; }
+.err { color: #b00020; }
+
+/* --- Phase 8d-1: inline enrichment + section TOC --- */
+.rf-cite { color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rf-ref {
+  color: var(--accent); cursor: pointer; text-decoration: none;
+  border-bottom: 1px dashed var(--accent); white-space: nowrap;
+}
+.rf-ref:hover { background: var(--hl); }
+.chunk.rf-flash { animation: rf-flash 1.4s ease-out; }
+@keyframes rf-flash { from { background: var(--hl); } to { background: transparent; } }
+.chunk.section-selected { background: #eef4ff; box-shadow: inset 3px 0 0 var(--accent); border-radius: 3px; }
+
+.toc-toggle {
+  font: inherit; font-size: 13px; cursor: pointer; color: var(--accent);
+  background: none; border: 1px solid var(--border); border-radius: 4px; padding: 0.15em 0.6em;
+}
+/* Drawer is position:fixed, OUTSIDE .layout — single/compare grids unchanged. */
+.toc {
+  position: fixed; top: 3.2em; left: 0; z-index: 30;
+  width: 320px; max-width: 80vw; height: calc(100vh - 3.2em); overflow: auto;
+  background: #fff; border-right: 1px solid var(--border);
+  box-shadow: 2px 0 12px rgba(0,0,0,0.08); padding: 1em 0.6em 3em;
+  font-size: 14px; line-height: 1.5;
+}
+.toc[hidden] { display: none; }
+.toc ul { list-style: none; margin: 0; padding-left: 0.8em; }
+.toc > ul { padding-left: 0.2em; }
+.toc li { margin: 0.15em 0; display: flex; align-items: baseline; gap: 0.3em; flex-wrap: wrap; }
+.toc li > ul { flex-basis: 100%; }
+.toc .toc-link { flex: 1; color: var(--fg); text-decoration: none; cursor: pointer; }
+.toc .toc-link:hover { color: var(--accent); text-decoration: underline; }
+.toc .toc-select {
+  font: inherit; font-size: 11px; cursor: pointer; color: var(--muted);
+  background: none; border: 1px solid var(--border); border-radius: 3px; padding: 0 0.4em;
+}
+.toc .toc-select:hover { color: var(--accent); border-color: var(--accent); }
+
+/* --- Phase 8d-2a: chat panel (fixed drawer, right; outside .layout grid) --- */
+.chat {
+  position: fixed; top: 3.2em; right: 0; z-index: 30;
+  width: var(--chat-w, 380px); max-width: 90vw; height: calc(100vh - 3.2em);
+  display: flex; flex-direction: column; background: #fff;
+  border-left: 1px solid var(--border); box-shadow: -2px 0 12px rgba(0,0,0,0.08);
+  font-size: 14px;
+}
+.chat[hidden] { display: none; }
+/* 8d-2c: left-edge drag handle. Body margin (single mode) is driven by JS as an
+   inline style, so the compare grid stays 1fr|1fr (challenge R9). */
+.chat-resizer {
+  position: absolute; left: -3px; top: 0; width: 7px; height: 100%;
+  cursor: ew-resize; z-index: 31; touch-action: none;
+}
+.chat-resizer:hover { background: var(--accent); opacity: 0.25; }
+.pane--reflow { transition: margin-right 0.08s linear; }
+.chat-status {
+  padding: 0.6em 0.9em; border-bottom: 1px solid var(--border);
+  color: var(--accent); font-weight: 600;
+}
+.chat-messages {
+  flex: 1; overflow: auto; padding: 0.9em; display: flex;
+  flex-direction: column; gap: 0.7em;
+}
+.chat .msg { padding: 0.5em 0.7em; border-radius: 8px; line-height: 1.6; max-width: 92%; }
+.chat .msg--user { align-self: flex-end; background: #eef4ff; }
+.chat .msg--assistant { align-self: flex-start; background: #f5f5f5; }
+.chat .msg--err { align-self: stretch; color: #b00020; font-size: 0.9em; }
+.chat .msg p { margin: 0.3em 0; }
+.chat-form { display: flex; gap: 0.4em; padding: 0.6em; border-top: 1px solid var(--border); }
+.chat-form input {
+  flex: 1; padding: 0.45em 0.6em; border: 1px solid var(--border);
+  border-radius: 6px; font: inherit;
+}
+.chat-form button {
+  font: inherit; cursor: pointer; color: #fff; background: var(--accent);
+  border: none; border-radius: 6px; padding: 0.45em 0.8em;
+}
+.chat-actions { padding: 0 0.6em 0.5em; }
+.chat-actions button {
+  font: inherit; cursor: pointer; color: var(--accent); background: none;
+  border: 1px solid var(--border); border-radius: 6px; padding: 0.4em 0.8em;
+}
+.chat-pins { padding: 0 0.9em 1em; display: flex; flex-direction: column; gap: 0.25em; }
+.chat-pins .pin-link {
+  color: var(--muted); cursor: pointer; text-decoration: none; font-size: 13px;
+}
+.chat-pins .pin-link:hover { color: var(--accent); }

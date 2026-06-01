@@ -13,18 +13,21 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
 from ht_lens.api.deps import get_chat_concurrency
 from ht_lens.api.routers import (
     blocks,
+    chunk_chat,
     documents,
     jobs,
     messages,
     pages,
+    reflow,
     search,
     threads,
     uploads,
@@ -43,6 +46,12 @@ from ht_lens.llm.factory import from_env_chat, from_env_translate
 
 _DEFAULT_DB = Path("data/ht_lens.db")
 _DEFAULT_UPLOADS_DIR = Path("data/uploads")
+# Phase 8e-3: the API requires the 2.0 head. An env-flip to a real 1.x (0004) DB
+# is NOT a valid rollback for 2.0 code — the 2.0 ``Document`` model queries
+# columns (extractor, markdown_path) absent at 0004, so routes 500 even though
+# startup could pass. Rollback is therefore "revert the main merge" (1.x code,
+# 0004-compatible) + HT_LENS_DB_URL→ht_lens.db, not env-flip alone. So the guard
+# stays strict on the head (verify-cross 8e-3 live finding).
 _STATIC_DIR = Path(__file__).parent / "static"
 
 _log = logging.getLogger("ht_lens.api")
@@ -76,9 +85,14 @@ class _RevalidatingStatic(StaticFiles):
 
 def _db_path_from_env() -> Path:
     url = os.environ.get("HT_LENS_DB_URL", "")
+    if not url:
+        return _DEFAULT_DB
     if url.startswith("sqlite+aiosqlite:///"):
         return Path(url.removeprefix("sqlite+aiosqlite:///"))
-    return _DEFAULT_DB
+    # Phase 8e-3 §2: a non-empty but malformed value (e.g. 'sqlite:///...',
+    # missing slash, quoted/spaced systemd value) used to fall back silently to
+    # the 1.x _DEFAULT_DB — during cutover that would serve the wrong DB. Fail loud.
+    raise ValueError(f"HT_LENS_DB_URL must be 'sqlite+aiosqlite:///<path>' or unset; got {url!r}")
 
 
 def _skip_llm_check() -> bool:
@@ -217,6 +231,17 @@ def create_app() -> FastAPI:
     app.include_router(blocks.router)
     app.include_router(uploads.router)
     app.include_router(jobs.router)
+    app.include_router(reflow.router)
+    app.include_router(chunk_chat.router)
+
+    # Phase 8e-3 cutover: the default landing is the 2.0 document list (reflow
+    # reading needs ?doc=<id>, so redirecting straight to reflow.html would be a
+    # broken empty state — verify-cross §3). root_path-aware so it works behind a
+    # reverse-proxy prefix. viewer.html/reflow.html stay directly reachable
+    # (1.x rollback access).
+    @app.get("/", include_in_schema=False)
+    async def _root(request: Request) -> RedirectResponse:
+        return RedirectResponse(url=f"{request.scope.get('root_path', '')}/static/index.html")
 
     return app
 

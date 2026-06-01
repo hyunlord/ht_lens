@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-ALEMBIC_HEAD = "0004"
+ALEMBIC_HEAD = "0007"
 """Current head revision for `alembic_version`. Bumped whenever a new migration is added."""
 
 

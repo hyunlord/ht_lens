@@ -215,9 +215,107 @@ class RetranslateResponse(BaseModel):
     translation: TranslationRead
 
 
+# --- Phase 8d-2a: chunk chat (ht_lens 2.0) ---
+
+ChunkAnchorType = Literal["chunk", "section"]
+
+
+class ChunkThreadCreate(BaseModel):
+    """Create a 2.0 chat thread. ``anchor_type='chunk'`` → paragraph Q&A;
+    ``anchor_type='section'`` → ``chunk_id`` is the section's HEADING chunk
+    (challenge R1)."""
+
+    doc_id: int
+    anchor_type: ChunkAnchorType
+    chunk_id: int
+    title: str | None = None
+
+
+class ChunkMessageCreate(BaseModel):
+    content: str = Field(..., min_length=1)
+
+    @field_validator("content")
+    @classmethod
+    def _non_whitespace(cls, value: str) -> str:
+        if value.strip() == "":
+            raise ValueError("content must not be empty or whitespace-only")
+        return value
+
+
+class ChunkRelatedRef(BaseModel):
+    """Phase 8d-2b — one cross-doc chunk surfaced into chat (mirrors
+    RelatedBlock; challenge R3). Returned in the API response, not only the
+    system prompt, so UI + tests can verify it."""
+
+    chunk_id: int
+    doc_id: int
+    doc_filename: str
+    page_idx: int
+    score: float
+    original_preview: str
+    translated_preview: str | None = None
+
+
+class ChunkMessageRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    role: MessageRole
+    content: str
+    model: str | None = None
+    created_at: datetime
+    # Phase 8d-2b: cross-doc chunk refs the LLM saw (empty when RAG disabled,
+    # embedding client unavailable, or no hit — dev DB has only doc7).
+    related_chunks: list[ChunkRelatedRef] = []
+
+
+class ChunkThreadRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    doc_id: int
+    anchor_type: ChunkAnchorType
+    chunk_id: int
+    title: str
+    created_at: datetime
+
+
+class ChunkThreadSummary(BaseModel):
+    id: int
+    doc_id: int
+    anchor_type: ChunkAnchorType
+    chunk_id: int
+    title: str
+    message_count: int
+    created_at: datetime
+
+
+class ChunkPinCreate(BaseModel):
+    doc_id: int
+    chunk_id: int
+
+
+class ChunkPinRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    doc_id: int
+    chunk_id: int
+    created_at: datetime
+
+
 __all__ = [
     "BlockRead",
     "BlockType",
+    "ChunkAnchorType",
+    "ChunkMessageCreate",
+    "ChunkMessageRead",
+    "ChunkPinCreate",
+    "ChunkPinRead",
+    "ChunkRelatedRef",
+    "ChunkThreadCreate",
+    "ChunkThreadRead",
+    "ChunkThreadSummary",
     "DocumentRead",
     "JobRead",
     "MessageCreate",

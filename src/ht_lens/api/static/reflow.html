@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ht_lens — reflow reading view</title>
+    <!-- Vendored KaTeX (Phase 6i, offline-first). reflow.js reuses applyMath. -->
+    <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+    <link rel="stylesheet" href="css/reflow.css" />
+  </head>
+  <body>
+    <header class="top">
+      <h1>ht_lens · reflow</h1>
+      <button type="button" id="toc-toggle" class="toc-toggle" aria-expanded="false">목차</button>
+      <button type="button" id="chat-toggle" class="toc-toggle" aria-expanded="false">💬 채팅</button>
+      <span class="meta" id="meta">로딩 중…</span>
+      <span class="modes">
+        <label><input type="radio" name="mode" value="single" checked /> 읽기</label>
+        <label><input type="radio" name="mode" value="compare" /> 원문 비교</label>
+      </span>
+    </header>
+    <!-- Section TOC: fixed drawer, outside .layout so the compare grid is unaffected. -->
+    <nav class="toc" id="toc" aria-label="목차" hidden></nav>
+    <!-- Chat panel: fixed drawer, outside .layout (same reason). -->
+    <aside class="chat" id="chat" aria-label="채팅" hidden>
+      <div class="chat-resizer" aria-hidden="true" title="너비 조절"></div>
+      <div class="chat-status" id="chat-status">선택된 항목 없음</div>
+      <div class="chat-messages" id="chat-messages"></div>
+      <form class="chat-form" id="chat-form">
+        <input id="chat-input" type="text" placeholder="이 문단/섹션에 대해 질문…" autocomplete="off" />
+        <button type="submit">질문</button>
+      </form>
+      <div class="chat-actions"><button type="button" id="chat-pin">📌 핀</button></div>
+      <div class="chat-pins" id="chat-pins"></div>
+    </aside>
+    <div class="layout" id="layout" data-mode="single">
+      <aside class="pane--pdf" id="pane-pdf"></aside>
+      <main class="pane--reflow">
+        <article id="content"><div class="status">로딩 중…</div></article>
+      </main>
+    </div>
+    <script type="module" src="js/reflow.js"></script>
+  </body>
+</html>

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ht_lens.db.models import BlockEmbedding
+from ht_lens.db.models import BlockEmbedding, ChunkEmbedding
 
 
 def vector_to_bytes(vec: np.ndarray) -> bytes:
@@ -102,9 +102,74 @@ async def get_source_hash(session: AsyncSession, block_id: int) -> str | None:
     return row.source_hash if row else None
 
 
+# --- chunk parallel (Phase 8b) — reuses the serialization helpers above;
+# a thin per-table upsert rather than a second embedding subsystem
+# (challenge §1/§4). The 1.x block functions are untouched. ---
+
+
+async def upsert_chunk_embedding(
+    session: AsyncSession,
+    *,
+    chunk_id: int,
+    vector: np.ndarray,
+    model: str,
+    dim: int,
+    source_hash: str,
+) -> None:
+    """Insert or replace the embedding row for ``chunk_id``."""
+    stmt = sqlite_insert(ChunkEmbedding).values(
+        chunk_id=chunk_id,
+        model=model,
+        dim=dim,
+        vector=vector_to_bytes(vector),
+        source_hash=source_hash,
+        updated_at=datetime.now(UTC),
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[ChunkEmbedding.chunk_id],
+        set_={
+            "model": stmt.excluded.model,
+            "dim": stmt.excluded.dim,
+            "vector": stmt.excluded.vector,
+            "source_hash": stmt.excluded.source_hash,
+            "updated_at": stmt.excluded.updated_at,
+        },
+    )
+    await session.execute(stmt)
+
+
+async def load_all_chunks(session: AsyncSession) -> tuple[list[int], np.ndarray, list[str]]:
+    """Load every stored chunk embedding into one matrix (Phase 8d-2b).
+
+    Mirrors :func:`load_all` for ``chunk_embeddings``: returns
+    ``(chunk_ids, matrix, models)`` with the matrix ``(N, dim)`` float32,
+    rows kept only for the majority dim so ``ids[idx]`` stays aligned with
+    ``np.argsort`` in chunk_search (the desync bug that bit block search).
+    Empty corpus → ``([], (0, 0), [])``.
+    """
+    rows = (await session.execute(select(ChunkEmbedding))).scalars().all()
+    if not rows:
+        return [], np.zeros((0, 0), dtype=np.float32), []
+    dim_counts: dict[int, int] = {}
+    for row in rows:
+        dim_counts[row.dim] = dim_counts.get(row.dim, 0) + 1
+    target_dim = max(dim_counts, key=lambda d: dim_counts[d])
+    kept_rows = [r for r in rows if r.dim == target_dim]
+    matrix = np.zeros((len(kept_rows), target_dim), dtype=np.float32)
+    ids: list[int] = []
+    models: list[str] = []
+    for i, row in enumerate(kept_rows):
+        matrix[i] = vector_from_bytes(row.vector, target_dim)
+        ids.append(row.chunk_id)
+        models.append(row.model)
+    return ids, matrix, models
+
+
 __all__ = [
     "get_source_hash",
     "load_all",
+    "load_all_chunks",
+    "upsert_chunk_embedding",
     "upsert_embedding",
     "vector_from_bytes",
     "vector_to_bytes",

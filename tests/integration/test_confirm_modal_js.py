@@ -20,6 +20,7 @@ CONFIRM = REPO / "src" / "ht_lens" / "api" / "static" / "js" / "components" / "c
 
 def _find_jsdom() -> str | None:
     candidates = [
+        Path(__file__).resolve().parents[2] / "node_modules" / "jsdom",  # repo-local (CI npm ci)
         Path.home() / "github" / "WorldFork" / "frontend" / "node_modules" / "jsdom",
         Path.home() / "node_modules" / "jsdom",
         Path("/usr/lib/node_modules/jsdom"),

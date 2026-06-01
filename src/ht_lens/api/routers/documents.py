@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ht_lens.api.deps import get_chat_llm_client, get_session
 from ht_lens.api.export_markdown import build_questions_markdown
 from ht_lens.api.schemas import DocumentRead
-from ht_lens.db.models import Document, Page
+from ht_lens.db.models import Chunk, Document, Page
 from ht_lens.llm.client import ChatLLMClient
 from ht_lens.summarize.pipeline import SummarizeEmptyError, summarize_document
 
@@ -31,7 +31,19 @@ async def _document_with_page_count(
     count_row = await session.execute(
         select(func.count()).select_from(Page).where(Page.doc_id == doc_id)
     )
-    return doc, int(count_row.scalar_one())
+    num_pages = int(count_row.scalar_one())
+    if num_pages == 0:
+        # Phase 8e-3 cutover: 2.0 (MinerU) docs have no Page rows; derive the
+        # page count from the chunks' 0-based page_idx so the document list
+        # doesn't show every 2.0 doc as "0 pages" (verify-cross §4#1). Use
+        # max(page_idx)+1 (total pages spanned), not distinct — so a doc with a
+        # blank middle page still counts it (verify-cross R2 sparse-page edge).
+        max_row = await session.execute(
+            select(func.max(Chunk.page_idx)).where(Chunk.doc_id == doc_id)
+        )
+        top = max_row.scalar_one()
+        num_pages = int(top) + 1 if top is not None else 0
+    return doc, num_pages
 
 
 @router.get("", response_model=list[DocumentRead])
@@ -53,6 +65,18 @@ async def list_documents(
         select(Page.doc_id, func.count()).where(Page.doc_id.in_(doc_ids)).group_by(Page.doc_id)
     )
     counts: dict[int, int] = {doc_id: int(c) for doc_id, c in count_rows.all()}
+    # Phase 8e-3 cutover (verify-cross §4#1): 2.0 docs have no Page rows — derive
+    # their page count from distinct chunk.page_idx so the default 2.0 landing
+    # (document list) doesn't render every migrated doc as "0 pages".
+    missing = [d.id for d in docs if counts.get(d.id, 0) == 0]
+    if missing:
+        chunk_rows = await session.execute(
+            select(Chunk.doc_id, func.max(Chunk.page_idx))
+            .where(Chunk.doc_id.in_(missing))
+            .group_by(Chunk.doc_id)
+        )
+        for doc_id, top in chunk_rows.all():
+            counts[doc_id] = int(top) + 1 if top is not None else 0
     return [
         DocumentRead(
             id=d.id,
