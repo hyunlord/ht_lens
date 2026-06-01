@@ -1,10 +1,11 @@
-"""Shared DB schema-version guards (Phase 8e-3).
+"""Shared DB schema-version guard (Phase 8e-3).
 
-Before 8e-3 the head check lived as a private ``_require_schema_head`` inside
-``translate.chunk_pipeline``; the 8d-2c ``retranslate_short`` path skipped it
-(verify-cross debt), and the CLI ran it after the LLM health check. This module
-centralises the contract so every write path (translate, retranslate, ingest)
-fails the same clean way — ``SchemaVersionMismatch`` — on a stale DB.
+The head check lives as a private ``_require_schema_head`` in several write
+pipelines (translate, ingest). The 8d-2c ``retranslate_short`` path skipped it
+(verify-cross debt) and the CLI ran it after the LLM health check. This module
+provides the canonical, reusable guard now adopted by ``retranslate_short`` and
+the ``translate-chunks`` CLI; the pre-existing private copies are left in place
+(not a runtime issue) and can migrate to this helper in a later cleanup.
 """
 
 from __future__ import annotations

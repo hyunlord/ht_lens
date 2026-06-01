@@ -123,3 +123,53 @@ async def test_require_schema_head_raises_on_stale(tmp_path: Path) -> None:
                 await require_schema_head(session)
     finally:
         await engine.dispose()
+
+
+# --------------------------------------------------------------------------- #
+# Document list page count for 2.0 docs (verify-cross §4#1)
+# --------------------------------------------------------------------------- #
+def test_2x_doc_page_count_from_chunks_not_zero(api_db_path: Path) -> None:
+    """A 2.0 (MinerU) doc has no Page rows; the document list must derive its
+    page count from distinct chunk.page_idx, not render '0 pages' (§4#1)."""
+    from datetime import UTC, datetime
+
+    from ht_lens.db.models import Chunk, Document
+
+    async def _seed() -> int:
+        engine = make_engine(api_db_path)
+        factory = make_session_factory(engine)
+        async with factory() as s:
+            doc = Document(
+                filename="twopage.pdf",
+                src_lang="en",
+                tgt_lang="ko",
+                status="translated",
+                created_at=datetime.now(UTC),
+                extractor="mineru",
+            )
+            s.add(doc)
+            await s.flush()
+            for i, pidx in enumerate((0, 0, 1, 2)):  # 3 distinct page_idx, 0 Page rows
+                s.add(
+                    Chunk(
+                        doc_id=doc.id,
+                        page_idx=pidx,
+                        order_idx=i,
+                        type="text",
+                        bbox_json="[0,0,1,1]",
+                        content=f"c{i}",
+                    )
+                )
+            await s.commit()
+            did = doc.id
+        await engine.dispose()
+        return did
+
+    import asyncio as _asyncio
+
+    doc_id = _asyncio.run(_seed())
+    with make_test_client(api_db_path) as client:
+        listed = {d["id"]: d for d in client.get("/documents").json()}
+        assert listed[doc_id]["num_pages"] == 3  # from chunk.page_idx, not 0
+        single = client.get(f"/documents/{doc_id}").json()
+        assert single["num_pages"] == 3
