@@ -28,6 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ht_lens.db.models import Chunk, ChunkTranslation, Document
+from ht_lens.db.schema_guard import require_schema_head
 from ht_lens.llm.client import TranslateLLMClient
 from ht_lens.translate import math_protect
 
@@ -136,6 +137,11 @@ async def retranslate_short(
     """Re-translate short low-context chunks (or explicit ``chunk_ids``) with
     neighbour context. ``dry_run`` collects before/after without writing. Each
     written row uses ``cache_key=NULL`` (challenge R1)."""
+    # Phase 8e-3: this path used to skip the schema-head check that
+    # ``translate_chunks`` enforces — pointing --short-only at a stale/1.x DB
+    # gave a raw OperationalError instead of a clean SchemaVersionMismatch
+    # (verify-cross 8d-2c debt). Guard here too via the shared helper.
+    await require_schema_head(session)
     chunks = list(
         (
             await session.execute(

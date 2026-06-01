@@ -29,9 +29,13 @@ _DEFAULT_DB = Path("data/ht_lens.db")
 
 def _db_path_from_env() -> Path:
     url = os.environ.get("HT_LENS_DB_URL", "")
+    if not url:
+        return _DEFAULT_DB
     if url.startswith("sqlite+aiosqlite:///"):
         return Path(url.removeprefix("sqlite+aiosqlite:///"))
-    return _DEFAULT_DB
+    # Phase 8e-3 §2: fail loud on a malformed value instead of silently falling
+    # back to the 1.x _DEFAULT_DB (would serve the wrong DB during cutover).
+    raise ValueError(f"HT_LENS_DB_URL must be 'sqlite+aiosqlite:///<path>' or unset; got {url!r}")
 
 
 app.command("translate")(translate_command)
@@ -415,6 +419,7 @@ def translate_chunks_command(
     from ht_lens.dotenv_loader import load_repo_dotenv
 
     load_repo_dotenv()
+    from ht_lens.db.schema_guard import require_schema_head
     from ht_lens.db.session import make_engine, make_session_factory
     from ht_lens.llm.factory import from_env_translate
 
@@ -430,15 +435,20 @@ def translate_chunks_command(
                 "--dry-run requires --short-only or --chunk-id "
                 "(the full translate-chunks path has no dry-run and would write)"
             )
-        llm = from_env_translate()
-        # Verify endpoint health before starting (fail-fast, mirrors the 1.x
-        # `translate` command). Without this the LLMHealthCheckFailed branch
-        # below is unreachable since per-chunk errors become failed rows
-        # (verify-cross R2).
-        await llm.health_check()
         engine = make_engine(db_path)
         factory = make_session_factory(engine)
         try:
+            # Schema-head BEFORE the LLM (verify-cross 8e-3 §2): a stale/1.x DB
+            # gets a clean SchemaVersionMismatch (exit 3), not an LLM health
+            # exit 4. Makes the contract hold for the --short-only path too.
+            async with factory() as session:
+                await require_schema_head(session)
+            llm = from_env_translate()
+            # Verify endpoint health before starting (fail-fast, mirrors the 1.x
+            # `translate` command). Without this the LLMHealthCheckFailed branch
+            # below is unreachable since per-chunk errors become failed rows
+            # (verify-cross R2).
+            await llm.health_check()
             async with factory() as session:
                 # --short-only / --chunk-id: neighbour-context re-translation
                 # (Phase 8d-2c). Bypasses the content cache and writes

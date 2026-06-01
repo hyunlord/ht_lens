@@ -59,7 +59,9 @@ function summaryPreview(text) {
 function renderCard(doc) {
   const a = document.createElement("a");
   a.className = "doc-card";
-  a.href = `viewer.html?doc=${doc.id}&page=1`;
+  // Phase 8e-3 cutover: the document list now opens the 2.0 reflow reading view.
+  // (On a 1.x-rollback DB, open viewer.html?doc=<id> directly instead.)
+  a.href = `reflow.html?doc=${doc.id}`;
   const filename = document.createElement("div");
   filename.className = "filename";
   filename.textContent = doc.filename;

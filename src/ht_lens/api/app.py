@@ -13,8 +13,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 
@@ -45,6 +46,14 @@ from ht_lens.llm.factory import from_env_chat, from_env_translate
 
 _DEFAULT_DB = Path("data/ht_lens.db")
 _DEFAULT_UPLOADS_DIR = Path("data/uploads")
+
+# Phase 8e-3 cutover window: the API serves the 2.0 head (0007) by default, but
+# must also START against the 1.x prod DB (0004) so an env-flip rollback
+# (HT_LENS_DB_URL → ht_lens.db) actually works instead of crashing at startup.
+# On 0004 the 1.x routers (blocks/pages/documents) work and the 2.0 routers
+# (reflow/chunk_chat) simply have no chunk tables. An UNKNOWN version is still
+# rejected. After 1.x deprecation, drop "0004" from this set.
+_SUPPORTED_SCHEMA_VERSIONS = {ALEMBIC_HEAD, "0004"}
 _STATIC_DIR = Path(__file__).parent / "static"
 
 _log = logging.getLogger("ht_lens.api")
@@ -78,9 +87,14 @@ class _RevalidatingStatic(StaticFiles):
 
 def _db_path_from_env() -> Path:
     url = os.environ.get("HT_LENS_DB_URL", "")
+    if not url:
+        return _DEFAULT_DB
     if url.startswith("sqlite+aiosqlite:///"):
         return Path(url.removeprefix("sqlite+aiosqlite:///"))
-    return _DEFAULT_DB
+    # Phase 8e-3 §2: a non-empty but malformed value (e.g. 'sqlite:///...',
+    # missing slash, quoted/spaced systemd value) used to fall back silently to
+    # the 1.x _DEFAULT_DB — during cutover that would serve the wrong DB. Fail loud.
+    raise ValueError(f"HT_LENS_DB_URL must be 'sqlite+aiosqlite:///<path>' or unset; got {url!r}")
 
 
 def _skip_llm_check() -> bool:
@@ -99,11 +113,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     async with factory() as session:
         version = await current_schema_version(session)
-    if version != ALEMBIC_HEAD:
+    if version not in _SUPPORTED_SCHEMA_VERSIONS:
         await engine.dispose()
         raise SchemaVersionMismatch(
-            f"alembic_version={version!r} but head={ALEMBIC_HEAD!r}; "
-            "run `alembic upgrade head` before starting the API"
+            f"alembic_version={version!r} not in supported {sorted(_SUPPORTED_SCHEMA_VERSIONS)!r} "
+            f"(2.0 head={ALEMBIC_HEAD!r}); run `alembic upgrade head` before starting the API"
         )
 
     # Phase 6e: build two LLM clients — translate path and chat path —
@@ -221,6 +235,15 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router)
     app.include_router(reflow.router)
     app.include_router(chunk_chat.router)
+
+    # Phase 8e-3 cutover: the default landing is the 2.0 document list (reflow
+    # reading needs ?doc=<id>, so redirecting straight to reflow.html would be a
+    # broken empty state — verify-cross §3). root_path-aware so it works behind a
+    # reverse-proxy prefix. viewer.html/reflow.html stay directly reachable
+    # (1.x rollback access).
+    @app.get("/", include_in_schema=False)
+    async def _root(request: Request) -> RedirectResponse:
+        return RedirectResponse(url=f"{request.scope.get('root_path', '')}/static/index.html")
 
     return app
 
