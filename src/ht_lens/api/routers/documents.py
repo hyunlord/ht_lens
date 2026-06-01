@@ -35,11 +35,14 @@ async def _document_with_page_count(
     if num_pages == 0:
         # Phase 8e-3 cutover: 2.0 (MinerU) docs have no Page rows; derive the
         # page count from the chunks' 0-based page_idx so the document list
-        # doesn't show every 2.0 doc as "0 pages" (verify-cross §4#1).
-        chunk_row = await session.execute(
-            select(func.count(func.distinct(Chunk.page_idx))).where(Chunk.doc_id == doc_id)
+        # doesn't show every 2.0 doc as "0 pages" (verify-cross §4#1). Use
+        # max(page_idx)+1 (total pages spanned), not distinct — so a doc with a
+        # blank middle page still counts it (verify-cross R2 sparse-page edge).
+        max_row = await session.execute(
+            select(func.max(Chunk.page_idx)).where(Chunk.doc_id == doc_id)
         )
-        num_pages = int(chunk_row.scalar_one())
+        top = max_row.scalar_one()
+        num_pages = int(top) + 1 if top is not None else 0
     return doc, num_pages
 
 
@@ -68,12 +71,12 @@ async def list_documents(
     missing = [d.id for d in docs if counts.get(d.id, 0) == 0]
     if missing:
         chunk_rows = await session.execute(
-            select(Chunk.doc_id, func.count(func.distinct(Chunk.page_idx)))
+            select(Chunk.doc_id, func.max(Chunk.page_idx))
             .where(Chunk.doc_id.in_(missing))
             .group_by(Chunk.doc_id)
         )
-        for doc_id, c in chunk_rows.all():
-            counts[doc_id] = int(c)
+        for doc_id, top in chunk_rows.all():
+            counts[doc_id] = int(top) + 1 if top is not None else 0
     return [
         DocumentRead(
             id=d.id,

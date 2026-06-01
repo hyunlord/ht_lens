@@ -129,8 +129,9 @@ async def test_require_schema_head_raises_on_stale(tmp_path: Path) -> None:
 # Document list page count for 2.0 docs (verify-cross §4#1)
 # --------------------------------------------------------------------------- #
 def test_2x_doc_page_count_from_chunks_not_zero(api_db_path: Path) -> None:
-    """A 2.0 (MinerU) doc has no Page rows; the document list must derive its
-    page count from distinct chunk.page_idx, not render '0 pages' (§4#1)."""
+    """A 2.0 (MinerU) doc has no Page rows; the document list derives its page
+    count from max(chunk.page_idx)+1 (total pages spanned) — including a blank
+    middle page with no chunks (verify-cross R2 sparse edge), not '0 pages' (§4#1)."""
     from datetime import UTC, datetime
 
     from ht_lens.db.models import Chunk, Document
@@ -149,7 +150,7 @@ def test_2x_doc_page_count_from_chunks_not_zero(api_db_path: Path) -> None:
             )
             s.add(doc)
             await s.flush()
-            for i, pidx in enumerate((0, 0, 1, 2)):  # 3 distinct page_idx, 0 Page rows
+            for i, pidx in enumerate((0, 0, 2)):  # page 1 blank (no chunk) → max+1 = 3 pages
                 s.add(
                     Chunk(
                         doc_id=doc.id,
