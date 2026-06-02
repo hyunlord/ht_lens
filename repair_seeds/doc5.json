@@ -1,0 +1,95 @@
+{
+  "doc_filename": "aggarwal_textbook.pdf",
+  "note": "Phase F1 (8e-5 follow-up) DRAFT — doc5 multi-image caption reassignment (defect-2, vertical mis-pairing). Captions only; image files untouched. image_allowlist empty = repair no images. PENDING PLANNER APPROVAL (GATE 1). Apply: ht-lens repair-images --doc-id 5 --seed repair_seeds/doc5.json --apply",
+  "image_allowlist": [],
+  "captions": [
+    {
+      "page_idx": 223,
+      "orig_basename": "005d3e57805e020183051f5aa629ba5347da140c7d587e05e871b9cd4f8aa010.jpg",
+      "bbox": [
+        160.0,
+        95.0,
+        839.0,
+        272.0
+      ],
+      "caption": "(a) Parallel design"
+    },
+    {
+      "page_idx": 223,
+      "orig_basename": "890e3a3936d7bf03766d7c92a4def84a59cffc7f05569c4da108dd39d21e4279.jpg",
+      "bbox": [
+        142.0,
+        299.0,
+        861.0,
+        477.0
+      ],
+      "caption": "(b) Sequential design. Figure 6.2: Parallel and sequential ensembles"
+    },
+    {
+      "page_idx": 257,
+      "orig_basename": "9581154cbb38068929c28e2e95831bc5de1ff0f6162704b83848396e9a53682f.jpg",
+      "bbox": [
+        319.0,
+        95.0,
+        666.0,
+        248.0
+      ],
+      "caption": "(a) Proportional division of ratings"
+    },
+    {
+      "page_idx": 257,
+      "orig_basename": "b634ae08505ddf41bc5546dee69703de67a0fc6bf2d1e313fd40150ff47840ab.jpg",
+      "bbox": [
+        178.0,
+        276.0,
+        825.0,
+        496.0
+      ],
+      "caption": "(b) Division in Netflix Prize data set (not drawn to scale). Figure 7.1: Partitioning a ratings matrix for evaluation design"
+    },
+    {
+      "page_idx": 339,
+      "orig_basename": "f0739a495e753290d58b217761a8067b650b9e6cccf03a1889a77ba76c9314f0.jpg",
+      "bbox": [
+        380.0,
+        97.0,
+        607.0,
+        375.0
+      ],
+      "caption": "(a) Ratings matrix"
+    },
+    {
+      "page_idx": 339,
+      "orig_basename": "baefdb257554b978d89c118160566f8682d218cf53b52d41ba6f874671f4541b.jpg",
+      "bbox": [
+        174.0,
+        396.0,
+        468.0,
+        490.0
+      ],
+      "caption": "(b) Un-normalized correlation graph"
+    },
+    {
+      "page_idx": 109,
+      "orig_basename": "529bbcbdf348af3b86a3e48ac5adeedc59f5641c099c53dfc3954c7a52958b19.jpg",
+      "bbox": [
+        134.0,
+        353.0,
+        476.0,
+        561.0
+      ],
+      "caption": "(a) Perceptron"
+    },
+    {
+      "page_idx": 109,
+      "orig_basename": "45533473b74549f08fb5d1a3ebdb97330497658ad938155e9d95be7c7072f8a5.jpg",
+      "bbox": [
+        496.0,
+        349.0,
+        865.0,
+        563.0
+      ],
+      "caption": "(b) Multilayer. Figure 3.3: Single and multilayer neural networks"
+    }
+  ]
+}
