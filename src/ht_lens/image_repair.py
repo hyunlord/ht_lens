@@ -207,18 +207,128 @@ def match_caption_override(
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Page-clip render + backfill (defect 1 repair). Source = MinerU ``*_origin.pdf``
+# (challenge R3: direct PDF clip beats cropping the cached page PNG — sharper,
+# DPI-independent, geometry-aware). Backfill is manifest-first with dry-run.
+# --------------------------------------------------------------------------- #
+def clip_render_figure(
+    pdf_path: str | Path,
+    page_idx: int,
+    bbox_norm: list[float] | None,
+    dest: str | Path,
+    *,
+    dpi: int = 300,
+    pad: float = 6.0,
+) -> bool:
+    """Clip-render the figure region from the source PDF to ``dest`` (PNG).
+
+    Returns ``True`` on success, ``False`` (no write) when skipped: page out of
+    range, **rotated page** (don't silently mis-crop — challenge R4), or invalid
+    bbox. The clip rect is derived from ``page.rect`` so the 1000-normalization
+    is re-validated per page, not trusted blindly."""
+    import fitz  # type: ignore[import-untyped]
+
+    doc = fitz.open(str(pdf_path))
+    try:
+        if page_idx < 0 or page_idx >= doc.page_count:
+            return False
+        page = doc[page_idx]
+        if page.rotation:
+            return False  # rotated → skip + caller logs (no silent mis-crop)
+        rect = normalized_bbox_to_page_rect(bbox_norm, page.rect.width, page.rect.height, pad)
+        if rect is None:
+            return False
+        clip = fitz.Rect(*rect) & page.rect
+        if clip.is_empty or clip.width <= 0 or clip.height <= 0:
+            return False
+        pix = page.get_pixmap(clip=clip, dpi=dpi)
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        pix.save(str(dest))
+        return True
+    finally:
+        doc.close()
+
+
+@dataclass
+class BackfillCandidate:
+    page_idx: int
+    orig_basename: str
+    bbox: list[float] | None
+    black_frac: float
+    detected: bool  # black_bg over threshold
+    in_allowlist: bool
+    written: bool
+    skip_reason: str | None
+
+
+def run_image_backfill(
+    *,
+    chunks: list[tuple[int, str | None, list[float] | None]],
+    pdf_path: str | Path,
+    dest_root: Path,
+    allowlist_basenames: set[str] | None = None,
+    frac_thresh: float = 0.6,
+    dpi: int = 300,
+    dry_run: bool = True,
+) -> tuple[list[ImageOverride], list[BackfillCandidate]]:
+    """Detect degraded image chunks and (unless ``dry_run``) clip-render fixes.
+
+    ``chunks``: ``(page_idx, img_path, bbox_norm)`` for image chunks. Repairs
+    only chunks whose original is black-bg degraded (``>frac_thresh``) AND, when
+    ``allowlist_basenames`` is given, in the reviewed allowlist (challenge R1).
+    Returns ``(image_overrides, candidates)``; ``dry_run`` writes no files and
+    returns empty overrides (manifest-first review gate — challenge §8)."""
+    fixed_dir = Path(dest_root) / IMAGES_FIXED_DIR
+    overrides: list[ImageOverride] = []
+    report: list[BackfillCandidate] = []
+    for page_idx, img_path, bbox in chunks:
+        base = _basename(img_path)
+        if base is None:
+            continue
+        frac = black_bg_fraction(img_path) if img_path and os.path.exists(img_path) else 0.0
+        detected = frac > frac_thresh
+        in_allow = allowlist_basenames is None or base in allowlist_basenames
+        cand = BackfillCandidate(
+            page_idx, base, bbox, round(frac, 3), detected, in_allow, False, None
+        )
+        if not (detected and in_allow):
+            cand.skip_reason = "not detected" if not detected else "not in allowlist"
+            report.append(cand)
+            continue
+        fixed_basename = f"{Path(base).stem}.png"
+        if dry_run:
+            # Manifest-first: report the candidate, write nothing (challenge §8).
+            report.append(cand)
+            continue
+        ok = clip_render_figure(pdf_path, page_idx, bbox, fixed_dir / fixed_basename, dpi=dpi)
+        if not ok:
+            cand.skip_reason = "clip skipped (rotation/invalid bbox/page range)"
+            report.append(cand)
+            continue
+        cand.written = True
+        if bbox is not None:
+            overrides.append(ImageOverride(page_idx, base, list(bbox), fixed_basename))
+        report.append(cand)
+    return overrides, report
+
+
 __all__ = [
     "IMAGES_FIXED_DIR",
     "OVERRIDES_FILENAME",
+    "BackfillCandidate",
     "CaptionOverride",
     "ImageOverride",
     "Overrides",
     "black_bg_fraction",
+    "clip_render_figure",
     "is_degraded_candidate",
     "load_overrides",
     "match_caption_override",
     "match_image_override",
     "normalized_bbox_to_page_rect",
     "overrides_path",
+    "run_image_backfill",
     "save_overrides",
 ]
