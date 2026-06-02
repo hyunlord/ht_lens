@@ -233,14 +233,22 @@ function initCompareSync({ contentEl, panePdf: pdfPane, layout: layoutEl }) {
 
   paneEl.addEventListener("scroll", onScroll, { passive: true });
   window.addEventListener("resize", invalidate);
+  // ``load`` AND ``error``: a failed image is replaced by a .fig-missing span
+  // (renderChunk), which also shifts later page offsets (verify-cross R2 §4#2).
   const imgs = contentEl.querySelectorAll("img");
-  for (const img of imgs) img.addEventListener("load", invalidate);
+  for (const img of imgs) {
+    img.addEventListener("load", invalidate);
+    img.addEventListener("error", invalidate);
+  }
   recompute();
 
   function teardown() {
     paneEl.removeEventListener("scroll", onScroll);
     window.removeEventListener("resize", invalidate);
-    for (const img of imgs) img.removeEventListener("load", invalidate);
+    for (const img of imgs) {
+      img.removeEventListener("load", invalidate);
+      img.removeEventListener("error", invalidate);
+    }
     if (raf) cancelAnimationFrame(raf);
   }
 
