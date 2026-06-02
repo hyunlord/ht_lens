@@ -422,7 +422,7 @@ class BackfillCandidate:
 
 def run_image_backfill(
     *,
-    chunks: list[tuple[int, str | None, list[float] | None]],
+    chunks: list[tuple[int, int, str | None, list[float] | None]],
     pdf_path: str | Path,
     dest_root: Path,
     allowlist_basenames: set[str] | None = None,
@@ -432,15 +432,16 @@ def run_image_backfill(
 ) -> tuple[list[ImageOverride], list[BackfillCandidate]]:
     """Detect degraded image chunks and (unless ``dry_run``) clip-render fixes.
 
-    ``chunks``: ``(page_idx, img_path, bbox_norm)`` for image chunks. Repairs
-    only chunks whose original is black-bg degraded (``>frac_thresh``) AND, when
-    ``allowlist_basenames`` is given, in the reviewed allowlist (challenge R1).
-    Returns ``(image_overrides, candidates)``; ``dry_run`` writes no files and
-    returns empty overrides (manifest-first review gate — challenge §8)."""
+    ``chunks``: ``(page_idx, order_idx, img_path, bbox_norm)`` for image chunks.
+    Repairs only chunks whose original is black-bg degraded (``>frac_thresh``)
+    AND, when ``allowlist_basenames`` is given, in the reviewed allowlist
+    (challenge R1). The fixed PNG is named ``p{page}_o{order}_{stem}`` so two
+    chunks sharing a basename on one page never collide (verify-cross R2 §4#1).
+    Returns ``(image_overrides, candidates)``; ``dry_run`` writes no files."""
     fixed_dir = Path(dest_root) / IMAGES_FIXED_DIR
     overrides: list[ImageOverride] = []
     report: list[BackfillCandidate] = []
-    for page_idx, img_path, bbox in chunks:
+    for page_idx, order_idx, img_path, bbox in chunks:
         base = _basename(img_path)
         if base is None:
             continue
@@ -454,9 +455,8 @@ def run_image_backfill(
             cand.skip_reason = "not detected" if not detected else "not in allowlist"
             report.append(cand)
             continue
-        # Include page_idx so two chunks sharing an original basename in one doc
-        # don't overwrite each other's fixed PNG (verify-cross R1 §4#4).
-        fixed_basename = f"p{page_idx:04d}_{Path(base).stem}.png"
+        # page+order identity → same-basename siblings never overwrite (R2 §4#1).
+        fixed_basename = f"p{page_idx:04d}_o{order_idx:04d}_{Path(base).stem}.png"
         if dry_run:
             # Manifest-first: report the candidate, write nothing (challenge §8).
             report.append(cand)
@@ -475,7 +475,7 @@ def run_image_backfill(
 
 def build_and_save_overrides(
     *,
-    chunks: list[tuple[int, str | None, list[float] | None]],
+    chunks: list[tuple[int, int, str | None, list[float] | None]],
     pdf_path: str | Path,
     dest_root: Path,
     caption_overrides: list[CaptionOverride],

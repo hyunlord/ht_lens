@@ -359,3 +359,41 @@ def test_detect_repairs_default_out_does_not_touch_repo(
     res = runner.invoke(app, ["detect-repairs", "--doc-id", str(doc_id), "--db", str(api_db_path)])
     assert res.exit_code == 0, res.output
     assert (ev2 / str(doc_id) / "repair_draft.detected.json").is_file()  # gitignored location
+
+
+def test_detect_repairs_skipped_records_identity_on_rotated_page(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """verify-cross R2 §4#3: a degraded image on a ROTATED page can't be clipped;
+    the _skipped entry must carry page_idx/order_idx/bbox/reason (no opaque skip)."""
+    import fitz
+
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    auto = tmp_path / "auto"
+    auto.mkdir()
+    rot = fitz.open()
+    page = rot.new_page(width=576, height=648)
+    page.set_rotation(90)
+    rot.save(str(auto / "book_origin.pdf"))
+    rot.close()
+    deg = tmp_path / "deg.jpg"
+    _black_png(deg)
+    doc_id = asyncio.run(
+        _seed_doc_images(
+            api_db_path,
+            md_path=str(auto / "x.md"),
+            images=[{"page_idx": 0, "order_idx": 7, "img_path": str(deg)}],
+        )
+    )
+    out = tmp_path / "draft.json"
+    res = runner.invoke(
+        app,
+        ["detect-repairs", "--doc-id", str(doc_id), "--db", str(api_db_path), "--out", str(out)],
+    )
+    assert res.exit_code == 0, res.output
+    draft = json.loads(out.read_text())
+    assert draft["image_allowlist"] == []  # rotated → not repairable
+    assert len(draft["_skipped"]) == 1
+    sk = draft["_skipped"][0]
+    assert sk["page_idx"] == 0 and sk["order_idx"] == 7 and "bbox" in sk and sk["reason"]

@@ -450,8 +450,8 @@ def repair_images_command(
                         .order_by(Chunk.order_idx)
                     )
                 ).scalars()
-                chunks: list[tuple[int, str | None, list[float] | None]] = [
-                    (c.page_idx, c.img_path, c.bbox) for c in rows
+                chunks: list[tuple[int, int, str | None, list[float] | None]] = [
+                    (c.page_idx, c.order_idx, c.img_path, c.bbox) for c in rows
                 ]
             ov, report = build_and_save_overrides(
                 chunks=chunks,
@@ -484,16 +484,17 @@ def detect_repairs_command(
     out: Path = typer.Option(  # noqa: B008
         None,
         "--out",
-        help="Draft seed path. Default: repair_seeds/<doc_filename_stem>.detected.json.",
+        help="Draft seed path. Default: gitignored <extracts>/<doc_id>/repair_draft.detected.json.",
     ),
     db: Path = typer.Option(  # noqa: B008
         None, "--db", resolve_path=True, help="SQLite DB (default HT_LENS_DB_URL/data/ht_lens.db)."
     ),
 ) -> None:
     """Phase 8e-6 — read-only repair audit: emit a degraded-image + caption-mispair
-    report and a DRAFT ``repair_seeds`` (image_allowlist + previews). Writes NO
-    overrides — a human reviews previews, edits captions, then runs
-    ``repair-images --apply`` (the sole overrides writer). DB is never mutated."""
+    report and a DRAFT seed (image_allowlist + previews) under the gitignored
+    extracts dir. Writes NO overrides — a human reviews previews, edits captions
+    into a repair_seeds/<doc>.json, then runs ``repair-images --apply`` (the sole
+    overrides writer). DB is never mutated."""
     import hashlib
     import json
 

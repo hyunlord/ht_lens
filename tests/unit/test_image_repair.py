@@ -223,7 +223,7 @@ def test_backfill_dry_run_writes_nothing(tmp_path: Path) -> None:
     black = tmp_path / "fig.jpg"
     _png(black, (0, 0, 0))
     ov, report = run_image_backfill(
-        chunks=[(0, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=tmp_path / "doc",
         dry_run=True,
@@ -241,16 +241,16 @@ def test_backfill_apply_writes_only_detected(tmp_path: Path) -> None:
     white = tmp_path / "ok.jpg"
     _png(white, (255, 255, 255))
     ov, _report = run_image_backfill(
-        chunks=[(0, str(black), [100, 100, 500, 500]), (0, str(white), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500]), (0, 1, str(white), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=tmp_path / "doc",
         dry_run=False,
     )
     assert len(ov) == 1 and ov[0].orig_basename == "deg.jpg"
-    assert ov[0].fixed_basename == "p0000_deg.png"
-    assert (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_deg.png").is_file()
+    assert ov[0].fixed_basename == "p0000_o0000_deg.png"
+    assert (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_o0000_deg.png").is_file()
     # the white (normal) image is not repaired
-    assert not (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_ok.png").exists()
+    assert not (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_o0001_ok.png").exists()
 
 
 def test_backfill_allowlist_filters(tmp_path: Path) -> None:
@@ -259,7 +259,7 @@ def test_backfill_allowlist_filters(tmp_path: Path) -> None:
     black = tmp_path / "deg.jpg"
     _png(black, (0, 0, 0))
     ov, report = run_image_backfill(
-        chunks=[(0, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=tmp_path / "doc",
         allowlist_basenames={"someone_else.jpg"},
@@ -325,7 +325,7 @@ def test_backfill_same_basename_distinct_pages_no_collision(tmp_path: Path) -> N
     _png(black, (0, 0, 0))
     # same original basename appears on two pages → distinct fixed files (R1 §4#4)
     ov, _ = run_image_backfill(
-        chunks=[(0, str(black), [100, 100, 500, 500]), (1, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500]), (1, 1, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=tmp_path / "doc",
         dry_run=False,
@@ -345,7 +345,7 @@ def test_build_and_save_overrides_apply_and_dry_run(tmp_path: Path) -> None:
     root = tmp_path / "doc"
     # dry-run: nothing written
     build_and_save_overrides(
-        chunks=[(0, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=root,
         caption_overrides=caps,
@@ -354,7 +354,7 @@ def test_build_and_save_overrides_apply_and_dry_run(tmp_path: Path) -> None:
     assert not (root / "overrides.json").exists()
     # apply: manifest with image override + merged captions persisted
     build_and_save_overrides(
-        chunks=[(0, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=root,
         caption_overrides=caps,
@@ -453,3 +453,27 @@ def test_detect_caption_mispairs_excludes_nested_dedup_drop() -> None:
         _ci(2, 0, None, [50, 50, 200, 200], "panel.jpg"),  # nested → excluded
     ]
     assert detect_caption_mispairs(chunks) == []
+
+
+def test_detect_caption_mispairs_prose_parens_no_fp() -> None:
+    """verify-cross R2 §4#4: detection is structural (captionless coexistence),
+    not prose-parsing — a fully-captioned page whose captions contain '(a)/(b)'
+    prose must NOT be flagged (no review-overload FP)."""
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    chunks = [
+        _ci(
+            1, 0, "We compare (a) the encoder and (b) the decoder. Figure 5.", [0, 0, 4, 4], "a.jpg"
+        ),
+        _ci(2, 0, "(b) Results (a)-(c) summarized. Figure 6.", [5, 0, 9, 4], "b.jpg"),
+    ]
+    assert detect_caption_mispairs(chunks) == []
+
+
+def test_detect_caption_mispairs_is_image_chunk_only() -> None:
+    """Caption text emitted as a separate (non-image) chunk is out of scope by
+    design: the detector only inspects image chunks. A lone captionless image
+    (its caption living elsewhere as text) is not flagged (single image)."""
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    assert detect_caption_mispairs([_ci(1, 0, None, [0, 0, 100, 100], "only.jpg")]) == []
