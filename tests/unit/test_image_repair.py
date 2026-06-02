@@ -363,3 +363,79 @@ def test_build_and_save_overrides_apply_and_dry_run(tmp_path: Path) -> None:
     loaded = load_overrides(root)
     assert len(loaded.images) == 1 and len(loaded.captions) == 1
     assert loaded.captions[0].caption == "Figure X"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 8e-6 detectors (read-only audit)
+# --------------------------------------------------------------------------- #
+def test_detect_degraded_images(tmp_path: Path) -> None:
+    from ht_lens.image_repair import detect_degraded_images
+
+    black = tmp_path / "deg.jpg"
+    _png(black, (0, 0, 0))
+    white = tmp_path / "ok.jpg"
+    _png(white, (255, 255, 255))
+    out = detect_degraded_images(
+        [
+            (0, str(black), [100, 100, 500, 500]),
+            (1, str(white), [100, 100, 500, 500]),
+            (2, str(black), [1, 2, 3]),  # degraded but malformed bbox (len 3)
+            (3, None, None),  # no path → skipped
+            (4, str(tmp_path / "gone.jpg"), [0, 0, 1, 1]),  # missing → skipped
+        ]
+    )
+    by = {c.page_idx: c for c in out}
+    assert 0 in by and by[0].black_frac > 0.6 and by[0].bbox_valid is True
+    assert all(c.black_frac > 0.6 for c in out)
+    assert not any(c.page_idx == 1 for c in out)  # white not degraded
+    # malformed bbox degraded one is flagged but marked clip-impossible (reported)
+    assert by[2].bbox_valid is False
+    assert len(out) == 2  # deg(p0) + malformed(p2); white/none/missing excluded
+
+
+def _ci(cid, pg, cap, bbox, base):
+    from ht_lens.image_repair import ImageChunkInfo
+
+    return ImageChunkInfo(cid, pg, cap, bbox, f"/x/{base}")
+
+
+def test_detect_caption_mispairs_flags_captionless_coexist() -> None:
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    # doc5-style: page with a captionless image + a captioned sibling
+    chunks = [
+        _ci(1, 0, None, [160, 95, 839, 272], "a.jpg"),  # captionless (top)
+        _ci(2, 0, "(a) Parallel (b) Sequential Figure 6.2", [142, 299, 861, 477], "b.jpg"),
+    ]
+    pages = detect_caption_mispairs(chunks)
+    assert len(pages) == 1 and pages[0].page_idx == 0
+    assert {im.has_caption for im in pages[0].images} == {True, False}
+
+
+def test_detect_caption_mispairs_no_fp_all_captioned() -> None:
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    # normal multi-panel: every image has its (a)/(b) label → NOT flagged
+    chunks = [
+        _ci(1, 0, "(a) Ordered ratings", [0, 0, 400, 400], "a.jpg"),
+        _ci(2, 0, "(b) Unary ratings Figure 1.3", [400, 0, 800, 400], "b.jpg"),
+    ]
+    assert detect_caption_mispairs(chunks) == []
+
+
+def test_detect_caption_mispairs_single_image_page_ignored() -> None:
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    assert detect_caption_mispairs([_ci(1, 0, None, [0, 0, 100, 100], "a.jpg")]) == []
+
+
+def test_detect_caption_mispairs_excludes_nested_dedup_drop() -> None:
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    # captioned full crop contains a captionless panel (8e-4 dedup drops it) +
+    # nothing else captionless → must NOT be flagged as a caption mispair.
+    chunks = [
+        _ci(1, 0, "Figure X full", [0, 0, 500, 500], "full.jpg"),
+        _ci(2, 0, None, [50, 50, 200, 200], "panel.jpg"),  # nested → excluded
+    ]
+    assert detect_caption_mispairs(chunks) == []

@@ -102,6 +102,121 @@ def is_degraded_candidate(path: str | Path, frac_thresh: float = 0.6) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Phase 8e-6 detectors (read-only audit — surface candidates for a human-edited
+# seed; NEVER auto-apply). A detector flag is a *candidate*, not a decision.
+# --------------------------------------------------------------------------- #
+@dataclass
+class ImageChunkInfo:
+    chunk_id: int
+    page_idx: int
+    caption: str | None
+    bbox: list[float] | None
+    img_path: str | None
+
+
+@dataclass
+class DegradedCandidate:
+    page_idx: int
+    basename: str
+    bbox: list[float] | None
+    black_frac: float
+    bbox_valid: bool  # False → page-clip impossible (reported, not silently skipped)
+
+
+@dataclass
+class CaptionMispairImage:
+    chunk_id: int
+    basename: str | None
+    bbox: list[float] | None
+    caption: str | None
+    has_caption: bool
+
+
+@dataclass
+class CaptionMispairPage:
+    page_idx: int
+    images: list[CaptionMispairImage]
+
+
+def _contains(a: list[float] | None, b: list[float] | None, tol: float = 2.0) -> bool:
+    """a strictly encloses b (same basis). Used only to exclude dedup-dropped
+    nested panels from caption candidates (mirrors reflow._strict_contains)."""
+    if not _valid_bbox(a) or not _valid_bbox(b):
+        return False
+    ax0, ay0, ax1, ay1 = a  # type: ignore[misc]
+    bx0, by0, bx1, by1 = b  # type: ignore[misc]
+    if ax1 < ax0 or ay1 < ay0 or bx1 < bx0 or by1 < by0:
+        return False
+    enc = ax0 - tol <= bx0 and ay0 - tol <= by0 and ax1 + tol >= bx1 and ay1 + tol >= by1
+    return enc and (ax1 - ax0) * (ay1 - ay0) > (bx1 - bx0) * (by1 - by0)
+
+
+def detect_degraded_images(
+    images: list[tuple[int, str | None, list[float] | None]],
+    *,
+    frac_thresh: float = 0.6,
+) -> list[DegradedCandidate]:
+    """Flag black-background degraded image candidates (defect 1). ``images`` =
+    ``(page_idx, img_path, bbox)``. Pure read of the image files; clip
+    feasibility (rotation) is determined later by the CLI from the source PDF."""
+    out: list[DegradedCandidate] = []
+    for page_idx, img_path, bbox in images:
+        base = _basename(img_path)
+        if base is None or not (img_path and os.path.exists(img_path)):
+            continue
+        try:
+            frac = black_bg_fraction(img_path)
+        except (OSError, ValueError):
+            continue
+        if frac > frac_thresh:
+            out.append(DegradedCandidate(page_idx, base, bbox, round(frac, 3), _valid_bbox(bbox)))
+    return out
+
+
+def detect_caption_mispairs(chunks: list[ImageChunkInfo]) -> list[CaptionMispairPage]:
+    """Flag multi-image pages where a caption may be mis-paired (defect 2):
+    a captionless image coexists with a captioned sibling on the same page (the
+    doc1/doc5 vertical-merge signature). **Report only** — the (a)/(b)→image
+    assignment is left to a human-edited seed (challenge R2; no brittle spatial
+    heuristic). Captionless panels that serving would dedup-drop (strictly inside
+    a captioned sibling) are excluded so the review queue holds no dead work."""
+    by_page: dict[int, list[ImageChunkInfo]] = {}
+    for c in chunks:
+        by_page.setdefault(c.page_idx, []).append(c)
+    pages: list[CaptionMispairPage] = []
+    for page_idx in sorted(by_page):
+        imgs = by_page[page_idx]
+        if len(imgs) < 2:
+            continue
+        captioned = [c for c in imgs if (c.caption or "").strip()]
+        # drop nested captionless panels (handled by 8e-4 dedup, not caption repair)
+        considered = [
+            c
+            for c in imgs
+            if (c.caption or "").strip() or not any(_contains(p.bbox, c.bbox) for p in captioned)
+        ]
+        has_uncaptioned = any(not (c.caption or "").strip() for c in considered)
+        has_captioned = any((c.caption or "").strip() for c in considered)
+        if has_uncaptioned and has_captioned:
+            pages.append(
+                CaptionMispairPage(
+                    page_idx,
+                    [
+                        CaptionMispairImage(
+                            c.chunk_id,
+                            _basename(c.img_path),
+                            c.bbox,
+                            c.caption,
+                            bool((c.caption or "").strip()),
+                        )
+                        for c in considered
+                    ],
+                )
+            )
+    return pages
+
+
+# --------------------------------------------------------------------------- #
 # Manifest model
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
@@ -385,12 +500,18 @@ __all__ = [
     "IMAGES_FIXED_DIR",
     "OVERRIDES_FILENAME",
     "BackfillCandidate",
+    "CaptionMispairImage",
+    "CaptionMispairPage",
     "CaptionOverride",
+    "DegradedCandidate",
+    "ImageChunkInfo",
     "ImageOverride",
     "Overrides",
     "black_bg_fraction",
     "build_and_save_overrides",
     "clip_render_figure",
+    "detect_caption_mispairs",
+    "detect_degraded_images",
     "is_degraded_candidate",
     "is_safe_basename",
     "load_overrides",
