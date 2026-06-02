@@ -473,6 +473,147 @@ def repair_images_command(
     )
 
 
+@app.command("detect-repairs")
+def detect_repairs_command(
+    doc_id: int = typer.Option(..., "--doc-id", help="2.0 (MinerU) document id to audit."),
+    pdf: Path = typer.Option(  # noqa: B008
+        None,
+        "--pdf",
+        help="Source PDF (preferred). Falls back to *_origin.pdf in the doc's MinerU dir.",
+    ),
+    out: Path = typer.Option(  # noqa: B008
+        None,
+        "--out",
+        help="Draft seed path. Default: repair_seeds/<doc_filename_stem>.detected.json.",
+    ),
+    db: Path = typer.Option(  # noqa: B008
+        None, "--db", resolve_path=True, help="SQLite DB (default HT_LENS_DB_URL/data/ht_lens.db)."
+    ),
+) -> None:
+    """Phase 8e-6 — read-only repair audit: emit a degraded-image + caption-mispair
+    report and a DRAFT ``repair_seeds`` (image_allowlist + previews). Writes NO
+    overrides — a human reviews previews, edits captions, then runs
+    ``repair-images --apply`` (the sole overrides writer). DB is never mutated."""
+    import hashlib
+    import json
+
+    from sqlalchemy import select
+
+    from ht_lens.db.models import Chunk, Document
+    from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.image_repair import (
+        ImageChunkInfo,
+        clip_render_figure,
+        detect_caption_mispairs,
+        detect_degraded_images,
+    )
+
+    extracts_root = Path(os.environ.get("HT_LENS_EXTRACTS_V2_DIR", "data/extracts_v2"))
+    db_path = db if db is not None else _db_path_from_env()
+    preview_dir = extracts_root / str(doc_id) / "repair_preview"
+
+    async def _run() -> dict[str, object]:
+        engine = make_engine(db_path)
+        factory = make_session_factory(engine)
+        try:
+            async with factory() as session:
+                doc = await session.get(Document, doc_id)
+                if doc is None:
+                    raise typer.BadParameter(f"document {doc_id} not found")
+                pdf_path = pdf
+                if pdf_path is None and doc.markdown_path:
+                    cands = sorted(Path(doc.markdown_path).parent.glob("*_origin.pdf"))
+                    pdf_path = cands[0] if cands else None
+                if pdf_path is None or not Path(pdf_path).is_file():
+                    raise typer.BadParameter(
+                        "source PDF not found — pass --pdf (markdown autodiscovery failed)"
+                    )
+                rows = (
+                    (
+                        await session.execute(
+                            select(Chunk)
+                            .where(Chunk.doc_id == doc_id, Chunk.type == "image")
+                            .order_by(Chunk.order_idx)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                doc_filename = doc.filename
+                imgs: list[tuple[int, str | None, list[float] | None]] = [
+                    (c.page_idx, c.img_path, c.bbox) for c in rows
+                ]
+                infos = [
+                    ImageChunkInfo(c.id, c.page_idx, c.caption, c.bbox, c.img_path) for c in rows
+                ]
+                order_by_base = {os.path.basename(c.img_path or ""): c.order_idx for c in rows}
+            sha = hashlib.sha256(Path(pdf_path).read_bytes()).hexdigest()
+            degraded = detect_degraded_images(imgs)
+            mispairs = detect_caption_mispairs(infos)
+            # Generate previews + record clip skip reasons (rotation/invalid bbox).
+            allowlist: list[str] = []
+            skipped: list[dict[str, str]] = []
+            for cand in degraded:
+                order_idx = order_by_base.get(cand.basename, 0)
+                stem = Path(cand.basename).stem
+                dest = preview_dir / f"p{cand.page_idx:04d}_o{order_idx:04d}_{stem}.png"
+                ok = clip_render_figure(pdf_path, cand.page_idx, cand.bbox, dest)
+                if ok:
+                    allowlist.append(cand.basename)
+                else:
+                    reason = "invalid bbox" if not cand.bbox_valid else "rotated/clip-failed"
+                    skipped.append({"basename": cand.basename, "reason": reason})
+            return {
+                "doc_filename": doc_filename,
+                "note": (
+                    "DRAFT from detect-repairs (Phase 8e-6). Review previews in "
+                    f"{preview_dir}; edit captions from _caption_mispair_candidates; then: "
+                    "ht-lens repair-images --doc-id <id> --seed <this> --apply"
+                ),
+                "origin_pdf": {"path": str(pdf_path), "sha256": sha},
+                "image_allowlist": allowlist,
+                "captions": [],
+                "_caption_mispair_candidates": [
+                    {
+                        "page_idx": p.page_idx,
+                        "images": [
+                            {
+                                "chunk_id": im.chunk_id,
+                                "basename": im.basename,
+                                "bbox": im.bbox,
+                                "caption": im.caption,
+                                "has_caption": im.has_caption,
+                            }
+                            for im in p.images
+                        ],
+                    }
+                    for p in mispairs
+                ],
+                "_skipped": skipped,
+            }
+        finally:
+            await engine.dispose()
+
+    draft = asyncio.run(_run())
+
+    def _n(key: str) -> int:
+        v = draft.get(key)
+        return len(v) if isinstance(v, list) else 0
+
+    if out is not None:
+        out_path = out
+    else:
+        stem = Path(str(draft["doc_filename"])).stem
+        out_path = Path("repair_seeds") / f"{stem}.detected.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(draft, indent=2, ensure_ascii=False))
+    typer.echo(
+        f"ok: degraded={_n('image_allowlist')} (previews in {preview_dir}), "
+        f"skipped={_n('_skipped')}, caption-mispair pages={_n('_caption_mispair_candidates')} "
+        f"-> draft {out_path}"
+    )
+
+
 @app.command("translate-chunks")
 def translate_chunks_command(
     doc_id: int = typer.Option(..., "--doc-id", help="2.0 (MinerU) document id to translate."),
