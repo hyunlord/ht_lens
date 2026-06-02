@@ -1,19 +1,20 @@
-# Phase 8e-6 — Verify (self) — v2 (post cross-verify R1)
+# Phase 8e-6 — Verify (self) — v3 (post cross-verify R2)
 
-Scope: F2 = 읽기 전용 `detect-repairs` audit CLI + 검출기(열화 / caption 오배치).
-신규 doc repair 발견 자동화, 적용은 사람 게이트(draft seed → `repair-images`가 유일
-overrides writer). **0 DB/schema/migration, ingest 무수정, 1.x 불변.**
+Scope: F2 = 읽기 전용 `detect-repairs` audit CLI + 검출기(열화 / caption 오배치). 신규
+doc repair 발견 자동화, 적용은 사람 게이트(draft seed → `repair-images`가 유일 overrides
+writer). **0 DB/schema/migration, ingest 무수정, 1.x 불변.**
 
-Round: v1 93(`f23b2d9`) → **R1 DOWNGRADE 88-90** (order 충돌·repo 오염·skip 증거·doc5
-증거) → RE-CODE(`84732b3`) → v2. HEAD `84732b3` 이후 작성, 추적 트리 clean.
+Round: v1 93(`f23b2d9`) → R1 DOWNGRADE 88-90 → RE-CODE(`84732b3`) → v2 95(`8ca80a7`) →
+**R2 DOWNGRADE 91-92** ("should not be rejected") → RE-CODE(`d6fc78a` + doc1 manifest
+재생성). R2 = 최종 cross-verify(cap=2). HEAD `d6fc78a`; 추적 트리 clean.
 
-## R1 findings → resolution
-| R1 issue | Resolution | Lock |
+## R2 findings → resolution
+| R2 issue | Resolution | Lock |
 | -------- | ---------- | ---- |
-| §4#1 same-basename 미리보기 충돌(order_by_base가 last로 collapse) | `DegradedCandidate.order_idx`; 미리보기명 = page+order(basename map 폐기) | `test_detect_degraded_images_same_basename_same_page_distinct_identity`, `test_detect_repairs_same_basename_same_page_distinct_previews` |
-| §4#2 기본 --out이 tracked repo 오염(`repair_seeds/book.detected.json`) | 기본 draft = gitignored `<extracts>/<doc>/repair_draft.detected.json`; 명시 --out만 verbatim. stray 삭제 | `test_detect_repairs_default_out_does_not_touch_repo` |
-| §4#3 `_skipped`가 basename만(식별 불가) | page_idx/order_idx/bbox 포함 | (CLI 코드 + 리뷰) |
-| §4#4 doc5 4-page 재탐지 증거 없음 | 라이브 detect-repairs doc5 → [109,223,257,339]; docs 2/3/4/5 degraded FP 0 | 아래 5-B |
+| §4#1 apply 경로(run_image_backfill)가 basename만 → same-page dup 충돌 | `run_image_backfill`/`build_and_save_overrides`에 order_idx; fixed PNG = `p<page>_o<order>_<stem>`(preview와 동일 식별). doc1 manifest 재생성 | `test_backfill_same_basename_distinct_pages_no_collision` + apply 테스트(`p0000_o0000_`) |
+| §4#3 `_skipped` 테스트 없음 | rotated 페이지 degraded → `_skipped`에 page/order/bbox/reason | `test_detect_repairs_skipped_records_identity_on_rotated_page` |
+| §4#3 CLI docstring stale(repair_seeds 기본) | help/docstring을 gitignored extracts 기본으로 수정 | (코드) |
+| §4#4 caption prose-FP/text-chunk 테스트 미착 | 구조적 검출(prose 무관) prose-FP 0 + image-chunk-only scope 테스트 | `test_detect_caption_mispairs_prose_parens_no_fp`, `..._is_image_chunk_only` |
 
 ## 5-A. Automated checks
 | Check    | Command | Result |
@@ -21,56 +22,49 @@ Round: v1 93(`f23b2d9`) → **R1 DOWNGRADE 88-90** (order 충돌·repo 오염·s
 | Lint     | `uv run ruff check src tests` | All checks passed! |
 | Format   | `uv run ruff format --check .` | clean |
 | Type     | `uv run mypy src/` | Success: no issues in **86** source files |
-| Test     | `uv run pytest -q` | **847 passed, 8 skipped, 0 failed** (751s); 3 snapshots |
-| Focused  | image_repair(36) + repair_cli(8) | 44 passed |
+| Test     | `uv run pytest -q` | **850 passed, 8 skipped, 0 failed** (747s); 3 snapshots |
+| Focused  | image_repair(38) + repair_cli(10) + reflow_api | 58+ passed |
 | CI       | GitHub Actions | pending push |
 
-847 = v1의 844 + 3 신규 R1 테스트.
+850 = v2의 847 + 3 신규 R2 테스트.
 
-## 5-B. Functional checks (live)
-### R1 §4#4 — doc5 재탐지 + FP 0 (detect-repairs, tmp extracts, prod 무영향)
+## 5-B. Functional checks
+### 식별 통일 (R2 §4#1) — detect와 apply 모두 page+order
+미리보기 `p<page>_o<order>_<stem>` + fixed PNG `p<page>_o<order>_<stem>` 동일 식별 →
+same-page 동일 basename 형제가 양 경로 어디서도 충돌/덮어쓰기 없음.
+
+### 라이브 (detect-repairs, R1에서 수집)
 | doc | degraded | caption-mispair pages |
 | --- | -------- | --------------------- |
-| 2 | 0 | 0 |
-| 3 | 0 | **2** (신규 후보 — 미리뷰; 게이트 필수 입증) |
-| 4 | 0 | 0 |
-| 5 | 0 | **[109, 223, 257, 339]** = F1 4페이지 정확 재탐지 |
-| (1) | **3** | [4] (8e-5/F1 기지 결함) |
+| 1 | 3 | [4] | 2/3/4 | 0 | (3=2 미리뷰 후보) | 5 | 0 | [109,223,257,339] = F1 정확 재탐지 |
+degraded FP 0(doc1만). doc1 manifest **재생성**(p<page>_o<order>_) → 라이브 ch1 = 200 image/png.
 
-- **degraded FP 0** (doc1만 3건). caption 탐지가 doc5 4페이지를 DB 기준 재탐지(F1은 manifest override라 DB caption 미변경 → 재탐지 정상). doc3 2건은 **미리뷰 후보**(report-only) — 자동 적용 0, 사람 검토 대상(게이트 가치 입증).
-
-### 설계 적합 (GATE 2 승인)
-| 결정 | 구현 |
-| ---- | ---- |
-| #1 caption report-only | `_caption_mispair_candidates` 리포트만; captions 사람 편집 |
-| #2 C′(migration 0) | origin.pdf page.rect; draft에 origin_pdf{path,sha256} |
-| #3 분리 read-only CLI | `detect-repairs`(ingest 무수정) |
-| #4 단일 writer | draft seed + 미리보기만; `repair-images`가 유일 overrides writer |
+### 설계 적합 (GATE 2 승인 4개) — #1 caption report-only / #2 C′(migration 0) / #3 분리 read-only CLI / #4 단일 writer. 전부 유지.
 
 ### 회귀 (8e-5/F1 불변)
-doc1 `/v2/chunks/1/image`=image/png(fixed clip); doc5 ch1947="(a) Parallel design"; `test_repair_seeds.py` doc1(3+3)/doc5(8) 유효; 1.x mtime 2026-05-28 불변; schema 0.
+doc1 ch1=image/png(재생성 clip), doc5 ch1947="(a) Parallel design"; `test_repair_seeds` doc1/doc5 유효; 1.x mtime 2026-05-28 불변; schema 0.
 
 ## 5-C. Regression check (RE-CODE 가드)
 | 신규/변경 경로 (grep) | 잠금 테스트 |
 | --------------------- | ----------- |
-| `DegradedCandidate.order_idx` / `detect_degraded_images` 입력 (page,order,path,bbox) | `test_detect_degraded_images`(order_idx), `..._same_basename_same_page_distinct_identity` |
-| `detect-repairs` 미리보기 page+order 명명 | `test_detect_repairs_same_basename_same_page_distinct_previews` |
-| 기본 --out gitignored | `test_detect_repairs_default_out_does_not_touch_repo` |
-| `_skipped` page/order/bbox | CLI 코드 |
-| `detect_caption_mispairs` | flag/no-FP/single/nested 단위 + 라이브 doc5 |
+| `run_image_backfill`/`build_and_save_overrides` order_idx + `p<page>_o<order>_` | apply/dup-page/build 테스트(8e-5 갱신) |
+| `_skipped` page/order/bbox | `test_detect_repairs_skipped_records_identity_on_rotated_page` |
+| `detect_caption_mispairs` prose/scope | prose-FP + image-chunk-only |
+| `DegradedCandidate.order_idx`/detect 식별 | 동일-basename 식별 단위 + 미리보기 CLI |
 
-기존 contract 무변경(`/v2`·1.x·기존 CLI). 8e-5/F1 manifest·서빙 불변. 44 focused / 847 full green.
+기존 contract 무변경(`/v2`·1.x·기존 CLI 동작). 8e-5/F1 manifest·서빙 불변(doc1 재생성은 동일 내용·새 파일명). 58+ focused / 850 full green.
 
-## 5-D. Scoring (100, self-assessment)
+## 5-D. Scoring (100, self-assessment — 정직)
 | Item       | Score / Max | Evidence |
 | ---------- | ----------- | -------- |
-| 독창성     |   14 / 15   | report-only audit + order_idx 식별 + C′ provenance + 단일 writer |
-| 완결성     |   33 / 35   | 4 설계 구현 + doc5 4페이지 재탐지 + FP 0 라이브; book2 실측은 F3 |
-| 안정성     |   29 / 30   | 847/0, mypy 86; order 충돌·repo 오염·skip 증거 해소; 0 DB/ingest/1.x; −1 CI pending |
-| 확장성     |   19 / 20   | order 식별로 book2 대규모 안전; 단일 manifest lifecycle; 검출기 순수 |
-| **Total**  | **95 / 100**|          |
+| 독창성     |   14 / 15   | report-only audit + page+order 통일 식별 + C′ provenance + 단일 writer |
+| 완결성     |   33 / 35   | 4 설계 + doc5 재탐지 + FP 0 + R2 잔여(apply/skip/docstring/caption-FP) 전부 착지; book2 실측은 F3 |
+| 안정성     |   29 / 30   | 850/0, mypy 86; detect+apply 식별 통일, _skipped 테스트, 0 DB/ingest/1.x; −1 CI pending |
+| 확장성     |   18 / 20   | book2 대규모 dup-basename 안전(양 경로); allowlist는 여전히 basename-set(동일-content 가정, 문서화) |
+| **Total**  | **94 / 100**|          |
 
 ## 5-E. Self verdict
-- [x] **PASS_CANDIDATE (≥95)** — R1 4건 전부 해소+테스트/라이브 잠금(doc5 재탐지·FP 0·order 식별·repo 무오염). cross-verify Round 2(final) 진행.
-- [ ] FAIL → RE-CODE
+- [ ] PASS_CANDIDATE (≥95)
+- [x] **BELOW THRESHOLD (94) → escalate to Planner (GATE 3).** R1+R2 기능/robustness gap 전부 해소+테스트 잠금(apply-path 식별 통일 포함). ≥95 잔여 = pre-push CI + book2 실측(F3) + allowlist basename-set(동일-content 가정). cross-verify cap(R2 final)·R2-DOWNGRADE 정책상 자율 merge 안 함 — GATE 3에서 Planner 승인.
+- [ ] FAIL → RE-CODE (Codex R2: "should not be rejected")
 - [ ] FAIL → RE-PLAN
