@@ -297,3 +297,222 @@ async def test_page_image_success_serves_cached_png(
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/png"
     assert "no-cache" in r.headers.get("cache-control", "").lower()
+
+
+# --------------------------------------------------------------------------- #
+# Phase 8e-5 — image/caption override serving (hermetic: tmp extracts + manifest)
+# --------------------------------------------------------------------------- #
+def _write_png(path: Path, color: tuple[int, int, int] = (10, 20, 30)) -> None:
+    from PIL import Image
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (40, 40), color).save(path)
+
+
+def _write_manifest(ev2: Path, doc_id: int, *, images=None, captions=None) -> None:
+    import json
+
+    root = ev2 / str(doc_id)
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "overrides.json").write_text(
+        json.dumps({"images": images or [], "captions": captions or []})
+    )
+
+
+@pytest.mark.asyncio
+async def test_image_override_served_when_manifest_matches(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """8e-5 defect 1: a matching image override serves the fixed page-clip (PNG),
+    not the degraded original."""
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    orig = tmp_path / "deg.jpg"
+    orig.write_bytes(b"\xff\xd8\xff\xe0deg")
+    doc_id = await _seed(
+        api_db_path,
+        [{"type": "image", "page_idx": 0, "img_path": str(orig), "bbox_json": "[100,100,400,400]"}],
+    )
+    fixed = ev2 / str(doc_id) / "images_fixed" / "deg.png"
+    _write_png(fixed)
+    _write_manifest(
+        ev2,
+        doc_id,
+        images=[
+            {
+                "page_idx": 0,
+                "orig_basename": "deg.jpg",
+                "bbox": [100, 100, 400, 400],
+                "fixed_basename": "deg.png",
+            }
+        ],
+    )
+    with make_test_client(api_db_path) as client:
+        cid = client.get(f"/v2/documents/{doc_id}/reflow").json()["chunks"][0]["id"]
+        r = client.get(f"/v2/chunks/{cid}/image")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"  # served the fixed clip, not the .jpg
+
+
+@pytest.mark.asyncio
+async def test_image_override_stale_evidence_falls_back_to_original(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Manifest bbox no longer matches the chunk (re-ingest drift) → original served."""
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    orig = tmp_path / "fig.jpg"
+    orig.write_bytes(b"\xff\xd8\xff\xe0jpg")
+    doc_id = await _seed(
+        api_db_path,
+        [{"type": "image", "page_idx": 0, "img_path": str(orig), "bbox_json": "[100,100,400,400]"}],
+    )
+    _write_png(ev2 / str(doc_id) / "images_fixed" / "fig.png")
+    _write_manifest(
+        ev2,
+        doc_id,
+        images=[
+            {
+                "page_idx": 0,
+                "orig_basename": "fig.jpg",
+                "bbox": [999, 999, 1000, 1000],  # drifted → no match
+                "fixed_basename": "fig.png",
+            }
+        ],
+    )
+    with make_test_client(api_db_path) as client:
+        cid = client.get(f"/v2/documents/{doc_id}/reflow").json()["chunks"][0]["id"]
+        r = client.get(f"/v2/chunks/{cid}/image")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/jpeg"  # fell back to the original .jpg
+
+
+@pytest.mark.asyncio
+async def test_image_override_traversal_basename_rejected(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manifest fixed_basename with a traversal segment must be refused (500),
+    never served — the override path goes through the same validator."""
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    orig = tmp_path / "fig.jpg"
+    orig.write_bytes(b"\xff\xd8\xff\xe0jpg")
+    doc_id = await _seed(
+        api_db_path,
+        [{"type": "image", "page_idx": 0, "img_path": str(orig), "bbox_json": "[100,100,400,400]"}],
+    )
+    # make the traversal target exist so only the validator can stop it
+    (ev2 / str(doc_id) / "images_fixed").mkdir(parents=True, exist_ok=True)
+    _write_manifest(
+        ev2,
+        doc_id,
+        images=[
+            {
+                "page_idx": 0,
+                "orig_basename": "fig.jpg",
+                "bbox": [100, 100, 400, 400],
+                "fixed_basename": "../../../../etc/passwd.png",
+            }
+        ],
+    )
+    with make_test_client(api_db_path) as client:
+        cid = client.get(f"/v2/documents/{doc_id}/reflow").json()["chunks"][0]["id"]
+        r = client.get(f"/v2/chunks/{cid}/image")
+    # traversal fixed file does not exist → override skipped → original .jpg served
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_caption_override_applied_and_dedup_intact(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """8e-5 defect 2: caption re-assignment is applied; the 8e-4 nested-panel
+    dedup still drops the captionless panel and keeps the rest (challenge R6)."""
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    container = tmp_path / "container.jpg"
+    container.write_bytes(b"\xff\xd8\xff\xe0c")
+    panel = tmp_path / "panel.jpg"
+    panel.write_bytes(b"\xff\xd8\xff\xe0p")
+    standalone = tmp_path / "stand.jpg"
+    standalone.write_bytes(b"\xff\xd8\xff\xe0s")
+    doc_id = await _seed(
+        api_db_path,
+        [
+            {
+                "type": "image",
+                "page_idx": 0,
+                "img_path": str(container),
+                "bbox_json": "[0,0,500,500]",
+                "caption": "Figure 1: container",
+            },
+            {
+                "type": "image",
+                "page_idx": 0,
+                "img_path": str(panel),
+                "bbox_json": "[50,50,200,200]",
+            },  # captionless nested → dedup drops
+            {
+                "type": "image",
+                "page_idx": 0,
+                "img_path": str(standalone),
+                "bbox_json": "[600,600,800,800]",
+            },  # captionless standalone → caption override
+        ],
+    )
+    _write_manifest(
+        ev2,
+        doc_id,
+        captions=[
+            {
+                "page_idx": 0,
+                "orig_basename": "stand.jpg",
+                "bbox": [600, 600, 800, 800],
+                "caption": "Figure 2: corrected standalone",
+            }
+        ],
+    )
+    with make_test_client(api_db_path) as client:
+        data = client.get(f"/v2/documents/{doc_id}/reflow").json()
+    imgs = [c for c in data["chunks"] if c["type"] == "image"]
+    caps = {c["caption"] for c in imgs}
+    # nested captionless panel dropped; container + (now-captioned) standalone kept
+    assert len(imgs) == 2
+    assert "Figure 2: corrected standalone" in caps  # override applied
+    assert "Figure 1: container" in caps
+
+
+@pytest.mark.asyncio
+async def test_image_override_absolute_fixed_basename_rejected(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """verify-cross R1 §4#2: an absolute fixed_basename pointing at an EXISTING
+    image outside the managed root must NOT be served (load drops unsafe
+    basenames; serve guards in depth) — the original is served instead."""
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    orig = tmp_path / "fig.jpg"
+    orig.write_bytes(b"\xff\xd8\xff\xe0jpg")
+    outside = tmp_path / "outside.png"  # exists, allowed suffix, but outside root
+    _write_png(outside)
+    doc_id = await _seed(
+        api_db_path,
+        [{"type": "image", "page_idx": 0, "img_path": str(orig), "bbox_json": "[100,100,400,400]"}],
+    )
+    _write_manifest(
+        ev2,
+        doc_id,
+        images=[
+            {
+                "page_idx": 0,
+                "orig_basename": "fig.jpg",
+                "bbox": [100, 100, 400, 400],
+                "fixed_basename": str(outside),  # absolute → must be refused
+            }
+        ],
+    )
+    with make_test_client(api_db_path) as client:
+        cid = client.get(f"/v2/documents/{doc_id}/reflow").json()["chunks"][0]["id"]
+        r = client.get(f"/v2/chunks/{cid}/image")
+    # original served, not outside.png
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"

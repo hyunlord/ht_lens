@@ -380,6 +380,99 @@ def ingest_mineru_command(
         raise typer.Exit(code=exc.exit_code) from exc
 
 
+@app.command("repair-images")
+def repair_images_command(
+    doc_id: int = typer.Option(..., "--doc-id", help="2.0 (MinerU) document id to repair."),
+    seed: Path = typer.Option(  # noqa: B008
+        ...,
+        "--seed",
+        exists=True,
+        readable=True,
+        help="Reviewed repair seed JSON (image_allowlist + captions), e.g. repair_seeds/doc1.json.",
+    ),
+    pdf: Path = typer.Option(  # noqa: B008
+        None, "--pdf", help="Source PDF. Defaults to *_origin.pdf in the doc's MinerU output dir."
+    ),
+    apply: bool = typer.Option(
+        False, "--apply/--dry-run", help="Write manifest + clip-rendered images (default dry-run)."
+    ),
+    db: Path = typer.Option(  # noqa: B008
+        None, "--db", resolve_path=True, help="SQLite DB (default HT_LENS_DB_URL/data/ht_lens.db)."
+    ),
+) -> None:
+    """Phase 8e-5 — regenerate a doc's non-destructive image/caption overrides.
+
+    Deterministic + re-ingest-safe: clip-renders degraded figures from the
+    source PDF and merges the reviewed caption corrections from ``seed`` into
+    ``<extracts>/<doc_id>/overrides.json``. DB is never mutated."""
+    import json
+
+    from sqlalchemy import select
+
+    from ht_lens.db.models import Chunk, Document
+    from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.image_repair import CaptionOverride, build_and_save_overrides
+
+    try:
+        seed_data = json.loads(seed.read_text())
+        # Always a concrete set (never None): an empty/absent allowlist means
+        # "repair nothing" — the reviewed-allowlist policy must not silently
+        # degrade into "repair every detected dark image" (verify-cross R2 §4#3).
+        allowlist = set(seed_data["image_allowlist"]) if "image_allowlist" in seed_data else set()
+        captions = [
+            CaptionOverride(c["page_idx"], c["orig_basename"], c["bbox"], c["caption"])
+            for c in seed_data.get("captions", [])
+        ]
+    except (ValueError, TypeError, KeyError) as exc:
+        typer.echo(f"error: invalid seed file: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    extracts_root = Path(os.environ.get("HT_LENS_EXTRACTS_V2_DIR", "data/extracts_v2"))
+    db_path = db if db is not None else _db_path_from_env()
+
+    async def _run() -> tuple[list[str], int]:
+        engine = make_engine(db_path)
+        factory = make_session_factory(engine)
+        try:
+            async with factory() as session:
+                doc = await session.get(Document, doc_id)
+                if doc is None:
+                    raise typer.BadParameter(f"document {doc_id} not found")
+                pdf_path = pdf
+                if pdf_path is None and doc.markdown_path:
+                    cands = sorted(Path(doc.markdown_path).parent.glob("*_origin.pdf"))
+                    pdf_path = cands[0] if cands else None
+                if pdf_path is None or not Path(pdf_path).is_file():
+                    raise typer.BadParameter("source PDF not found (pass --pdf)")
+                rows = (
+                    await session.execute(
+                        select(Chunk)
+                        .where(Chunk.doc_id == doc_id, Chunk.type == "image")
+                        .order_by(Chunk.order_idx)
+                    )
+                ).scalars()
+                chunks: list[tuple[int, str | None, list[float] | None]] = [
+                    (c.page_idx, c.img_path, c.bbox) for c in rows
+                ]
+            ov, report = build_and_save_overrides(
+                chunks=chunks,
+                pdf_path=pdf_path,
+                dest_root=extracts_root / str(doc_id),
+                caption_overrides=captions,
+                allowlist_basenames=allowlist,
+                dry_run=not apply,
+            )
+            return [o.fixed_basename for o in ov.images], sum(1 for c in report if c.detected)
+        finally:
+            await engine.dispose()
+
+    fixed, detected = asyncio.run(_run())
+    mode = "applied" if apply else "dry-run"
+    typer.echo(
+        f"ok ({mode}): detected={detected} images, written={len(fixed)}, "
+        f"captions={len(captions)} -> {extracts_root / str(doc_id) / 'overrides.json'}"
+    )
+
+
 @app.command("translate-chunks")
 def translate_chunks_command(
     doc_id: int = typer.Option(..., "--doc-id", help="2.0 (MinerU) document id to translate."),
