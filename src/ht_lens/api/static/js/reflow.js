@@ -180,6 +180,12 @@ function initCompareSync({ contentEl, panePdf: pdfPane, layout: layoutEl }) {
   let boundaries = [];
   let lastPage = null;
   let raf = 0;
+  // Offsets are a snapshot of getBoundingClientRect; lazy figure images load
+  // (no width/height attrs) and window resizes shift later pages, so a cached
+  // boundary can select the wrong PDF page (verify-cross R1 §4#1). ``dirty``
+  // forces a lazy recompute on the next sync; ``invalidate`` also schedules one
+  // so the left pane self-corrects without waiting for a user scroll.
+  let dirty = true;
 
   function recompute() {
     boundaries = [];
@@ -193,11 +199,12 @@ function initCompareSync({ contentEl, panePdf: pdfPane, layout: layoutEl }) {
     }
     boundaries.sort((a, b) => a.offset - b.offset);
     lastPage = null;
+    dirty = false;
   }
 
   function syncNow() {
     if (layoutEl.dataset.mode !== "compare") return;
-    if (!boundaries.length) recompute();
+    if (dirty || !boundaries.length) recompute();
     const p = pickCurrentPage(boundaries, paneEl.scrollTop);
     if (p === null || p === lastPage) return;
     lastPage = p;
@@ -217,11 +224,23 @@ function initCompareSync({ contentEl, panePdf: pdfPane, layout: layoutEl }) {
     });
   }
 
+  // Mark offsets stale and schedule a recompute+sync (compare mode only acts;
+  // single mode keeps dirty=true until the next compare toggle recomputes).
+  function invalidate() {
+    dirty = true;
+    onScroll();
+  }
+
   paneEl.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", invalidate);
+  const imgs = contentEl.querySelectorAll("img");
+  for (const img of imgs) img.addEventListener("load", invalidate);
   recompute();
 
   function teardown() {
     paneEl.removeEventListener("scroll", onScroll);
+    window.removeEventListener("resize", invalidate);
+    for (const img of imgs) img.removeEventListener("load", invalidate);
     if (raf) cancelAnimationFrame(raf);
   }
 
