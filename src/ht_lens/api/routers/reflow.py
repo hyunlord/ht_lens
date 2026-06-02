@@ -34,6 +34,12 @@ from ht_lens.api.deps import get_session
 from ht_lens.db.models import Chunk, Document
 from ht_lens.extract._fitz import open_pdf
 from ht_lens.extract.render import render_page_png
+from ht_lens.image_repair import (
+    IMAGES_FIXED_DIR,
+    load_overrides,
+    match_caption_override,
+    match_image_override,
+)
 
 router = APIRouter(prefix="/v2", tags=["reflow"])
 
@@ -103,13 +109,25 @@ async def get_reflow(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="no chunks for document (not a 2.0/MinerU doc, or not ingested)",
         )
+    # Phase 8e-5: non-destructive caption re-assignment (defect 2 — MinerU paired
+    # a "Figure N.M" caption to the wrong image on a multi-image page). Applied
+    # BEFORE dedup so the corrected captions drive containment (challenge R6).
+    overrides = load_overrides(_cache_root() / str(doc_id))
     out: list[ReflowChunk] = []
     for c in chunks:
         tr = c.translation
         # Only surface a translation that actually succeeded; a failed row
         # must not masquerade as content (challenge §5).
         translated = tr.translated_text if (tr and tr.status == "translated") else None
+        caption = c.caption
         caption_tr = tr.caption_translated if (tr and tr.status == "translated") else None
+        bbox = _bbox_or_none(c.bbox_json)
+        cap_ov = match_caption_override(overrides, c.page_idx, c.img_path, bbox)
+        if cap_ov is not None:
+            # The stored translation is for the OLD (wrong) caption — drop it so
+            # the corrected English caption shows without a stale KO mismatch.
+            caption = cap_ov.caption
+            caption_tr = None
         out.append(
             ReflowChunk(
                 id=c.id,
@@ -118,10 +136,10 @@ async def get_reflow(
                 page_idx=c.page_idx,
                 original=c.content,
                 translated=translated,
-                caption=c.caption,
+                caption=caption,
                 caption_translated=caption_tr,
                 img_url=f"/v2/chunks/{c.id}/image" if c.img_path else None,
-                bbox=_bbox_or_none(c.bbox_json),
+                bbox=bbox,
             )
         )
     out = _drop_captionless_images_contained_by_captioned(out)
@@ -200,6 +218,20 @@ async def chunk_image(
     chunk = await session.get(Chunk, chunk_id)
     if chunk is None or not chunk.img_path:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="chunk image not found")
+    # Phase 8e-5: serve the page-clip override (defect 1 — MinerU emitted a
+    # degraded black-bg crop) when the manifest matches this chunk by stable
+    # evidence. Falls back to the original MinerU file otherwise.
+    overrides = load_overrides(_cache_root() / str(chunk.doc_id))
+    img_ov = match_image_override(
+        overrides, chunk.page_idx, chunk.img_path, _bbox_or_none(chunk.bbox_json)
+    )
+    if img_ov is not None:
+        fixed = _cache_root() / str(chunk.doc_id) / IMAGES_FIXED_DIR / img_ov.fixed_basename
+        if fixed.is_file():
+            path = _validate_v2_image(str(fixed))
+            return FileResponse(
+                path, media_type=_MEDIA[path.suffix.lower()], headers={"Cache-Control": "no-cache"}
+            )
     path = _validate_v2_image(chunk.img_path)
     return FileResponse(
         path, media_type=_MEDIA[path.suffix.lower()], headers={"Cache-Control": "no-cache"}
