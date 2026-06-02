@@ -117,6 +117,7 @@ class ImageChunkInfo:
 @dataclass
 class DegradedCandidate:
     page_idx: int
+    order_idx: int  # chunk identity — distinguishes same-basename siblings (R1 §4#1)
     basename: str
     bbox: list[float] | None
     black_frac: float
@@ -152,15 +153,16 @@ def _contains(a: list[float] | None, b: list[float] | None, tol: float = 2.0) ->
 
 
 def detect_degraded_images(
-    images: list[tuple[int, str | None, list[float] | None]],
+    images: list[tuple[int, int, str | None, list[float] | None]],
     *,
     frac_thresh: float = 0.6,
 ) -> list[DegradedCandidate]:
     """Flag black-background degraded image candidates (defect 1). ``images`` =
-    ``(page_idx, img_path, bbox)``. Pure read of the image files; clip
-    feasibility (rotation) is determined later by the CLI from the source PDF."""
+    ``(page_idx, order_idx, img_path, bbox)`` — ``order_idx`` carries chunk
+    identity so same-basename siblings stay distinct (R1 §4#1). Pure read of the
+    image files; clip feasibility (rotation) is determined later by the CLI."""
     out: list[DegradedCandidate] = []
-    for page_idx, img_path, bbox in images:
+    for page_idx, order_idx, img_path, bbox in images:
         base = _basename(img_path)
         if base is None or not (img_path and os.path.exists(img_path)):
             continue
@@ -169,7 +171,11 @@ def detect_degraded_images(
         except (OSError, ValueError):
             continue
         if frac > frac_thresh:
-            out.append(DegradedCandidate(page_idx, base, bbox, round(frac, 3), _valid_bbox(bbox)))
+            out.append(
+                DegradedCandidate(
+                    page_idx, order_idx, base, bbox, round(frac, 3), _valid_bbox(bbox)
+                )
+            )
     return out
 
 

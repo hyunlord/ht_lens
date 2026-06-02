@@ -377,20 +377,34 @@ def test_detect_degraded_images(tmp_path: Path) -> None:
     _png(white, (255, 255, 255))
     out = detect_degraded_images(
         [
-            (0, str(black), [100, 100, 500, 500]),
-            (1, str(white), [100, 100, 500, 500]),
-            (2, str(black), [1, 2, 3]),  # degraded but malformed bbox (len 3)
-            (3, None, None),  # no path → skipped
-            (4, str(tmp_path / "gone.jpg"), [0, 0, 1, 1]),  # missing → skipped
+            (0, 0, str(black), [100, 100, 500, 500]),
+            (1, 1, str(white), [100, 100, 500, 500]),
+            (2, 2, str(black), [1, 2, 3]),  # degraded but malformed bbox (len 3)
+            (3, 3, None, None),  # no path → skipped
+            (4, 4, str(tmp_path / "gone.jpg"), [0, 0, 1, 1]),  # missing → skipped
         ]
     )
     by = {c.page_idx: c for c in out}
     assert 0 in by and by[0].black_frac > 0.6 and by[0].bbox_valid is True
+    assert by[0].order_idx == 0
     assert all(c.black_frac > 0.6 for c in out)
     assert not any(c.page_idx == 1 for c in out)  # white not degraded
     # malformed bbox degraded one is flagged but marked clip-impossible (reported)
     assert by[2].bbox_valid is False
     assert len(out) == 2  # deg(p0) + malformed(p2); white/none/missing excluded
+
+
+def test_detect_degraded_images_same_basename_same_page_distinct_identity(tmp_path: Path) -> None:
+    from ht_lens.image_repair import detect_degraded_images
+
+    black = tmp_path / "dup.jpg"
+    _png(black, (0, 0, 0))
+    # two chunks, same page + same basename, different order_idx → kept distinct
+    out = detect_degraded_images(
+        [(0, 5, str(black), [0, 0, 400, 400]), (0, 6, str(black), [0, 0, 400, 400])]
+    )
+    assert len(out) == 2
+    assert {c.order_idx for c in out} == {5, 6}  # identity preserved (R1 §4#1)
 
 
 def _ci(cid, pg, cap, bbox, base):

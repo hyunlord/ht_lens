@@ -540,29 +540,37 @@ def detect_repairs_command(
                     .all()
                 )
                 doc_filename = doc.filename
-                imgs: list[tuple[int, str | None, list[float] | None]] = [
-                    (c.page_idx, c.img_path, c.bbox) for c in rows
+                imgs: list[tuple[int, int, str | None, list[float] | None]] = [
+                    (c.page_idx, c.order_idx, c.img_path, c.bbox) for c in rows
                 ]
                 infos = [
                     ImageChunkInfo(c.id, c.page_idx, c.caption, c.bbox, c.img_path) for c in rows
                 ]
-                order_by_base = {os.path.basename(c.img_path or ""): c.order_idx for c in rows}
             sha = hashlib.sha256(Path(pdf_path).read_bytes()).hexdigest()
             degraded = detect_degraded_images(imgs)
             mispairs = detect_caption_mispairs(infos)
             # Generate previews + record clip skip reasons (rotation/invalid bbox).
+            # Identity = (page_idx, order_idx) so same-basename siblings never
+            # collide on a preview filename or lose identity (R1 §4#1/#3).
             allowlist: list[str] = []
-            skipped: list[dict[str, str]] = []
+            skipped: list[dict[str, object]] = []
             for cand in degraded:
-                order_idx = order_by_base.get(cand.basename, 0)
                 stem = Path(cand.basename).stem
-                dest = preview_dir / f"p{cand.page_idx:04d}_o{order_idx:04d}_{stem}.png"
+                dest = preview_dir / f"p{cand.page_idx:04d}_o{cand.order_idx:04d}_{stem}.png"
                 ok = clip_render_figure(pdf_path, cand.page_idx, cand.bbox, dest)
                 if ok:
                     allowlist.append(cand.basename)
                 else:
                     reason = "invalid bbox" if not cand.bbox_valid else "rotated/clip-failed"
-                    skipped.append({"basename": cand.basename, "reason": reason})
+                    skipped.append(
+                        {
+                            "basename": cand.basename,
+                            "page_idx": cand.page_idx,
+                            "order_idx": cand.order_idx,
+                            "bbox": cand.bbox,
+                            "reason": reason,
+                        }
+                    )
             return {
                 "doc_filename": doc_filename,
                 "note": (
@@ -600,11 +608,13 @@ def detect_repairs_command(
         v = draft.get(key)
         return len(v) if isinstance(v, list) else 0
 
+    # Default draft path lives under the gitignored extracts dir so detect-repairs
+    # never dirties the tracked repo (the human copies/edits it into repair_seeds/
+    # for repair-images). An explicit --out is honored verbatim (R1 §4#2).
     if out is not None:
         out_path = out
     else:
-        stem = Path(str(draft["doc_filename"])).stem
-        out_path = Path("repair_seeds") / f"{stem}.detected.json"
+        out_path = extracts_root / str(doc_id) / "repair_draft.detected.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(draft, indent=2, ensure_ascii=False))
     typer.echo(

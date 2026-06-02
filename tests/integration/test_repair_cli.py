@@ -292,3 +292,70 @@ def test_detect_repairs_draft_not_served_by_reflow(
         cid = client.get(f"/v2/documents/{doc_id}/reflow").json()["chunks"][0]["id"]
         r = client.get(f"/v2/chunks/{cid}/image")
     assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
+
+
+def test_detect_repairs_same_basename_same_page_distinct_previews(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """verify-cross R1 §4#1: two degraded chunks sharing a basename on one page
+    must produce DISTINCT preview files (identity = page+order, not basename)."""
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    auto = tmp_path / "auto"
+    auto.mkdir()
+    _origin_pdf(auto / "book_origin.pdf")
+    deg = tmp_path / "dup.jpg"
+    _black_png(deg)
+    doc_id = asyncio.run(
+        _seed_doc_images(
+            api_db_path,
+            md_path=str(auto / "x.md"),
+            images=[
+                {
+                    "page_idx": 0,
+                    "order_idx": 0,
+                    "img_path": str(deg),
+                    "bbox_json": "[10,10,400,400]",
+                },
+                {
+                    "page_idx": 0,
+                    "order_idx": 1,
+                    "img_path": str(deg),
+                    "bbox_json": "[10,10,400,400]",
+                },
+            ],
+        )
+    )
+    out = tmp_path / "draft.json"
+    res = runner.invoke(
+        app,
+        ["detect-repairs", "--doc-id", str(doc_id), "--db", str(api_db_path), "--out", str(out)],
+    )
+    assert res.exit_code == 0, res.output
+    previews = sorted((ev2 / str(doc_id) / "repair_preview").glob("*.png"))
+    assert len(previews) == 2  # distinct files, no collision
+    assert previews[0].name != previews[1].name
+
+
+def test_detect_repairs_default_out_does_not_touch_repo(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1 §4#2: with no --out, the draft lands under the gitignored extracts dir,
+    never in the tracked repair_seeds/."""
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    auto = tmp_path / "auto"
+    auto.mkdir()
+    _origin_pdf(auto / "book_origin.pdf")
+    deg = tmp_path / "deg.jpg"
+    _black_png(deg)
+    doc_id = asyncio.run(
+        _seed_doc_images(
+            api_db_path,
+            md_path=str(auto / "x.md"),
+            images=[{"page_idx": 0, "order_idx": 0, "img_path": str(deg)}],
+        )
+    )
+    res = runner.invoke(app, ["detect-repairs", "--doc-id", str(doc_id), "--db", str(api_db_path)])
+    assert res.exit_code == 0, res.output
+    assert (ev2 / str(doc_id) / "repair_draft.detected.json").is_file()  # gitignored location
