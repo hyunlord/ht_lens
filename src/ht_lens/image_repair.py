@@ -138,10 +138,21 @@ class Overrides:
         }
 
 
+def _valid_bbox(v: object) -> bool:
+    """True iff ``v`` is a list/tuple of exactly 4 real numbers (a manifest
+    ``bbox`` of the wrong type/shape must be dropped, not crash serving)."""
+    return (
+        isinstance(v, (list, tuple))
+        and len(v) == 4
+        and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in v)
+    )
+
+
 def _bbox_close(a: list[float] | None, b: list[float] | None) -> bool:
-    if a is None or b is None or len(a) != 4 or len(b) != 4:
+    # Defensive: a manifest bbox that slipped through must never raise here.
+    if not _valid_bbox(a) or not _valid_bbox(b):
         return False
-    return all(abs(float(x) - float(y)) <= _BBOX_TOL for x, y in zip(a, b, strict=True))
+    return all(abs(float(x) - float(y)) <= _BBOX_TOL for x, y in zip(a, b, strict=True))  # type: ignore[arg-type]
 
 
 def overrides_path(doc_root: Path) -> Path:
@@ -164,17 +175,21 @@ def load_overrides(doc_root: Path) -> Overrides:
     # must never break serving — guard each item type + required keys, and drop
     # image entries whose fixed_basename could escape the managed root (R1 §4#3/#2).
     imgs = [
-        ImageOverride(o["page_idx"], o["orig_basename"], o["bbox"], o["fixed_basename"])
+        ImageOverride(o["page_idx"], o["orig_basename"], list(o["bbox"]), o["fixed_basename"])
         for o in raw.get("images", [])
         if isinstance(o, dict)
         and {"page_idx", "orig_basename", "bbox", "fixed_basename"} <= o.keys()
         and isinstance(o["fixed_basename"], str)
         and is_safe_basename(o["fixed_basename"])
+        and _valid_bbox(o["bbox"])
     ]
     caps = [
-        CaptionOverride(o["page_idx"], o["orig_basename"], o["bbox"], o["caption"])
+        CaptionOverride(o["page_idx"], o["orig_basename"], list(o["bbox"]), o["caption"])
         for o in raw.get("captions", [])
-        if isinstance(o, dict) and {"page_idx", "orig_basename", "bbox", "caption"} <= o.keys()
+        if isinstance(o, dict)
+        and {"page_idx", "orig_basename", "bbox", "caption"} <= o.keys()
+        and _valid_bbox(o["bbox"])
+        and isinstance(o["caption"], str)
     ]
     return Overrides(images=imgs, captions=caps)
 

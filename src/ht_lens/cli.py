@@ -413,12 +413,19 @@ def repair_images_command(
     from ht_lens.db.session import make_engine, make_session_factory
     from ht_lens.image_repair import CaptionOverride, build_and_save_overrides
 
-    seed_data = json.loads(seed.read_text())
-    allowlist = set(seed_data.get("image_allowlist") or []) or None
-    captions = [
-        CaptionOverride(c["page_idx"], c["orig_basename"], c["bbox"], c["caption"])
-        for c in seed_data.get("captions", [])
-    ]
+    try:
+        seed_data = json.loads(seed.read_text())
+        # Always a concrete set (never None): an empty/absent allowlist means
+        # "repair nothing" — the reviewed-allowlist policy must not silently
+        # degrade into "repair every detected dark image" (verify-cross R2 §4#3).
+        allowlist = set(seed_data["image_allowlist"]) if "image_allowlist" in seed_data else set()
+        captions = [
+            CaptionOverride(c["page_idx"], c["orig_basename"], c["bbox"], c["caption"])
+            for c in seed_data.get("captions", [])
+        ]
+    except (ValueError, TypeError, KeyError) as exc:
+        typer.echo(f"error: invalid seed file: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
     extracts_root = Path(os.environ.get("HT_LENS_EXTRACTS_V2_DIR", "data/extracts_v2"))
     db_path = db if db is not None else _db_path_from_env()
 
