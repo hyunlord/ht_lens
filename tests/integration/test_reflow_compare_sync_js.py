@@ -148,7 +148,9 @@ def test_sync_scrolls_left_pane_only_in_compare_mode(jsdom_url: str) -> None:
     assert out == {"single": None, "p1": "1", "p1Scrolled": "1", "p2": "2"}
 
 
-def test_teardown_detaches_scroll_handler(jsdom_url: str) -> None:
+def test_teardown_detaches_all_handlers(jsdom_url: str) -> None:
+    """verify-cross R2 §4#3: teardown must remove scroll, window resize, and
+    per-image load/error listeners — none may drive the left pane afterwards."""
     out = _run(
         """
         const layout = doc.getElementById("layout");
@@ -157,15 +159,63 @@ def test_teardown_detaches_scroll_handler(jsdom_url: str) -> None:
         layout.dataset.mode = "compare";
         const sync = initCompareSync({ contentEl: doc.getElementById("content"), panePdf, layout });
         sync.teardown();
-        // after teardown, a scroll event must NOT sync the left pane
-        pane.scrollTop = 350;
-        pane.dispatchEvent(new w.Event("scroll"));
+        const tick = () => new Promise((r) => setTimeout(r, 5));
+        // None of these events may sync after teardown.
+        pane.scrollTop = 350; pane.dispatchEvent(new w.Event("scroll"));
+        w.dispatchEvent(new w.Event("resize"));
+        doc.getElementById("fig0").dispatchEvent(new w.Event("load"));
+        doc.getElementById("fig0").dispatchEvent(new w.Event("error"));
+        await tick();
         const after = panePdf.querySelector(".pdf-page.hl")?.dataset.pageIdx ?? null;
         console.log(JSON.stringify({ after }));
         """,
         jsdom_url,
     )
     assert out == {"after": None}
+
+
+def test_resize_event_invalidates_stale_boundaries(jsdom_url: str) -> None:
+    """verify-cross R2 §4#1: a window resize shifts page offsets; the cached
+    boundary must be invalidated so the left pane picks the correct page."""
+    out = _run(
+        """
+        const layout = doc.getElementById("layout");
+        const pane = doc.getElementById("pane");
+        const panePdf = doc.getElementById("pane-pdf");
+        layout.dataset.mode = "compare";
+        const sync = initCompareSync({ contentEl: doc.getElementById("content"), panePdf, layout });
+        const tick = () => new Promise((r) => setTimeout(r, 5));
+        tops[2] = 600; pane.scrollTop = 400; // page 2 now starts at 600, not 300
+        w.dispatchEvent(new w.Event("resize")); // invalidate → recompute on next sync
+        await tick();
+        const after = panePdf.querySelector(".pdf-page.hl")?.dataset.pageIdx ?? null;
+        console.log(JSON.stringify({ after }));
+        """,
+        jsdom_url,
+    )
+    assert out == {"after": "1"}  # recomputed: 400 < 600 → page 1, not stale page 2
+
+
+def test_image_error_invalidates_stale_boundaries(jsdom_url: str) -> None:
+    """verify-cross R2 §4#2: a failed image (→ .fig-missing span) also shifts
+    offsets; the 'error' listener must invalidate the cached boundary."""
+    out = _run(
+        """
+        const layout = doc.getElementById("layout");
+        const pane = doc.getElementById("pane");
+        const panePdf = doc.getElementById("pane-pdf");
+        layout.dataset.mode = "compare";
+        const sync = initCompareSync({ contentEl: doc.getElementById("content"), panePdf, layout });
+        const tick = () => new Promise((r) => setTimeout(r, 5));
+        tops[2] = 600; pane.scrollTop = 400;
+        doc.getElementById("fig0").dispatchEvent(new w.Event("error"));
+        await tick();
+        const after = panePdf.querySelector(".pdf-page.hl")?.dataset.pageIdx ?? null;
+        console.log(JSON.stringify({ after }));
+        """,
+        jsdom_url,
+    )
+    assert out == {"after": "1"}
 
 
 def test_real_scroll_event_drives_sync_only_in_compare_mode(jsdom_url: str) -> None:
