@@ -55,7 +55,9 @@ _PRELUDE = """
     globalThis.Node = w.Node; globalThis.DocumentFragment = w.DocumentFragment;
     globalThis.location = w.location;
     w.Element.prototype.scrollIntoView = function () { this.dataset.scrolled = "1"; };
-    if (!w.requestAnimationFrame) w.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+    // reflow.js uses bare requestAnimationFrame/cancelAnimationFrame (→ globalThis).
+    globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0);
+    globalThis.cancelAnimationFrame = (id) => clearTimeout(id);
     const doc = w.document;
     const { pickCurrentPage, initCompareSync } = await import("%(reflow)s");
     // Now build the compare-mode DOM (auto-init already skipped above).
@@ -66,7 +68,7 @@ _PRELUDE = """
             <div class="chunk" data-page-idx="0"></div>
             <div class="chunk" data-page-idx="0"></div>
             <div class="chunk" data-page-idx="1"></div>
-            <div class="chunk" data-page-idx="2"></div>
+            <div class="chunk" data-page-idx="2"><img id="fig0"></div>
           </article>
         </main>
       </div>
@@ -164,3 +166,66 @@ def test_teardown_detaches_scroll_handler(jsdom_url: str) -> None:
         jsdom_url,
     )
     assert out == {"after": None}
+
+
+def test_real_scroll_event_drives_sync_only_in_compare_mode(jsdom_url: str) -> None:
+    """verify-cross R1 §4#2/§4#4: exercise the actual onScroll→rAF→syncNow
+    path (not a direct syncNow call). Single-mode scroll events stay inert;
+    compare-mode scroll events sync the left pane."""
+    out = _run(
+        """
+        const layout = doc.getElementById("layout");
+        const pane = doc.getElementById("pane");
+        const panePdf = doc.getElementById("pane-pdf");
+        const sync = initCompareSync({ contentEl: doc.getElementById("content"), panePdf, layout });
+        const hl = () => panePdf.querySelector(".pdf-page.hl")?.dataset.pageIdx ?? null;
+        const tick = () => new Promise((r) => setTimeout(r, 5)); // flush rAF (setTimeout stub)
+
+        // single mode: a real scroll event must NOT highlight the left pane
+        pane.scrollTop = 150; pane.dispatchEvent(new w.Event("scroll"));
+        await tick();
+        const single = hl();
+
+        // compare mode: the scroll event drives the sync through onScroll+rAF
+        layout.dataset.mode = "compare"; sync.recompute();
+        pane.scrollTop = 350; pane.dispatchEvent(new w.Event("scroll"));
+        await tick();
+        const compare = hl();
+
+        console.log(JSON.stringify({ single, compare }));
+        """,
+        jsdom_url,
+    )
+    assert out == {"single": None, "compare": "2"}
+
+
+def test_image_load_invalidates_stale_boundaries(jsdom_url: str) -> None:
+    """verify-cross R1 §4#1: a lazy figure image loading taller pushes later
+    pages down; the cached boundary must be invalidated so the left pane picks
+    the correct page. Without recompute-on-load this would pick page 2."""
+    out = _run(
+        """
+        const layout = doc.getElementById("layout");
+        const pane = doc.getElementById("pane");
+        const panePdf = doc.getElementById("pane-pdf");
+        layout.dataset.mode = "compare";
+        const sync = initCompareSync({ contentEl: doc.getElementById("content"), panePdf, layout });
+        const hl = () => panePdf.querySelector(".pdf-page.hl")?.dataset.pageIdx ?? null;
+        const tick = () => new Promise((r) => setTimeout(r, 5));
+
+        // Boundaries snapshotted at init: page2 starts at offset 300.
+        // Now a figure on page 2 loads taller → page 2 actually starts at 600.
+        tops[2] = 600;
+        pane.scrollTop = 400; // between old(300) and new(600) page-2 start
+
+        // Stale: pre-load this scrollTop would pick page 2 (300 <= 400).
+        const fig = doc.getElementById("fig0");
+        fig.dispatchEvent(new w.Event("load")); // invalidate → recompute on next sync
+        await tick();
+        const after = hl(); // recomputed: 400 < 600 → still page 1
+
+        console.log(JSON.stringify({ after }));
+        """,
+        jsdom_url,
+    )
+    assert out == {"after": "1"}
