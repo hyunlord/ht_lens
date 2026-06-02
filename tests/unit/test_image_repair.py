@@ -14,8 +14,10 @@ from ht_lens.image_repair import (
     ImageOverride,
     Overrides,
     black_bg_fraction,
+    build_and_save_overrides,
     clip_render_figure,
     is_degraded_candidate,
+    is_safe_basename,
     load_overrides,
     match_caption_override,
     match_image_override,
@@ -206,10 +208,10 @@ def test_backfill_apply_writes_only_detected(tmp_path: Path) -> None:
         dry_run=False,
     )
     assert len(ov) == 1 and ov[0].orig_basename == "deg.jpg"
-    assert ov[0].fixed_basename == "deg.png"
-    assert (tmp_path / "doc" / IMAGES_FIXED_DIR / "deg.png").is_file()
+    assert ov[0].fixed_basename == "p0000_deg.png"
+    assert (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_deg.png").is_file()
     # the white (normal) image is not repaired
-    assert not (tmp_path / "doc" / IMAGES_FIXED_DIR / "ok.png").exists()
+    assert not (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_ok.png").exists()
 
 
 def test_backfill_allowlist_filters(tmp_path: Path) -> None:
@@ -226,3 +228,99 @@ def test_backfill_allowlist_filters(tmp_path: Path) -> None:
     )
     assert ov == []  # detected but not in allowlist → not repaired
     assert report[0].detected is True and report[0].in_allowlist is False
+
+
+# --------------------------------------------------------------------------- #
+# RE-CODE (verify-cross R1): malformed-item / basename safety / collision /
+# build_and_save orchestration
+# --------------------------------------------------------------------------- #
+def test_is_safe_basename() -> None:
+    assert is_safe_basename("fig.png") is True
+    assert is_safe_basename("/abs/fig.png") is False
+    assert is_safe_basename("../fig.png") is False
+    assert is_safe_basename("a/b.png") is False
+    assert is_safe_basename("") is False
+
+
+def test_load_overrides_drops_malformed_and_unsafe(tmp_path: Path) -> None:
+    import json
+
+    (tmp_path / "overrides.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    "bad",  # not a dict
+                    {"page_idx": 0, "orig_basename": "x.jpg", "bbox": [0, 0, 1, 1]},  # missing key
+                    {  # unsafe fixed_basename → dropped (R1 §4#2)
+                        "page_idx": 0,
+                        "orig_basename": "x.jpg",
+                        "bbox": [0, 0, 1, 1],
+                        "fixed_basename": "../../etc/passwd.png",
+                    },
+                    {  # valid
+                        "page_idx": 1,
+                        "orig_basename": "ok.jpg",
+                        "bbox": [0, 0, 1, 1],
+                        "fixed_basename": "ok.png",
+                    },
+                ],
+                "captions": ["bad", {"page_idx": 1}],  # neither valid
+            }
+        )
+    )
+    ov = load_overrides(tmp_path)  # must not raise (R1 §4#3)
+    assert [o.fixed_basename for o in ov.images] == ["ok.png"]
+    assert ov.captions == []
+
+
+def test_load_overrides_non_dict_root_is_empty(tmp_path: Path) -> None:
+    (tmp_path / "overrides.json").write_text("[1, 2, 3]")
+    ov = load_overrides(tmp_path)
+    assert ov.images == [] and ov.captions == []
+
+
+def test_backfill_same_basename_distinct_pages_no_collision(tmp_path: Path) -> None:
+    pdf = tmp_path / "src.pdf"
+    _pdf(pdf, pages=2)
+    black = tmp_path / "dup.jpg"
+    _png(black, (0, 0, 0))
+    # same original basename appears on two pages → distinct fixed files (R1 §4#4)
+    ov, _ = run_image_backfill(
+        chunks=[(0, str(black), [100, 100, 500, 500]), (1, str(black), [100, 100, 500, 500])],
+        pdf_path=pdf,
+        dest_root=tmp_path / "doc",
+        dry_run=False,
+    )
+    fixed = sorted(o.fixed_basename for o in ov)
+    assert len(fixed) == 2 and fixed[0] != fixed[1]  # no overwrite
+    for fb in fixed:
+        assert (tmp_path / "doc" / IMAGES_FIXED_DIR / fb).is_file()
+
+
+def test_build_and_save_overrides_apply_and_dry_run(tmp_path: Path) -> None:
+    pdf = tmp_path / "src.pdf"
+    _pdf(pdf)
+    black = tmp_path / "deg.jpg"
+    _png(black, (0, 0, 0))
+    caps = [CaptionOverride(0, "deg.jpg", [100, 100, 500, 500], "Figure X")]
+    root = tmp_path / "doc"
+    # dry-run: nothing written
+    build_and_save_overrides(
+        chunks=[(0, str(black), [100, 100, 500, 500])],
+        pdf_path=pdf,
+        dest_root=root,
+        caption_overrides=caps,
+        dry_run=True,
+    )
+    assert not (root / "overrides.json").exists()
+    # apply: manifest with image override + merged captions persisted
+    build_and_save_overrides(
+        chunks=[(0, str(black), [100, 100, 500, 500])],
+        pdf_path=pdf,
+        dest_root=root,
+        caption_overrides=caps,
+        dry_run=False,
+    )
+    loaded = load_overrides(root)
+    assert len(loaded.images) == 1 and len(loaded.captions) == 1
+    assert loaded.captions[0].caption == "Figure X"

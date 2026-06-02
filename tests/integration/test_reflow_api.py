@@ -480,3 +480,39 @@ async def test_caption_override_applied_and_dedup_intact(
     assert len(imgs) == 2
     assert "Figure 2: corrected standalone" in caps  # override applied
     assert "Figure 1: container" in caps
+
+
+@pytest.mark.asyncio
+async def test_image_override_absolute_fixed_basename_rejected(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """verify-cross R1 §4#2: an absolute fixed_basename pointing at an EXISTING
+    image outside the managed root must NOT be served (load drops unsafe
+    basenames; serve guards in depth) — the original is served instead."""
+    ev2 = tmp_path / "ev2"
+    monkeypatch.setenv("HT_LENS_EXTRACTS_V2_DIR", str(ev2))
+    orig = tmp_path / "fig.jpg"
+    orig.write_bytes(b"\xff\xd8\xff\xe0jpg")
+    outside = tmp_path / "outside.png"  # exists, allowed suffix, but outside root
+    _write_png(outside)
+    doc_id = await _seed(
+        api_db_path,
+        [{"type": "image", "page_idx": 0, "img_path": str(orig), "bbox_json": "[100,100,400,400]"}],
+    )
+    _write_manifest(
+        ev2,
+        doc_id,
+        images=[
+            {
+                "page_idx": 0,
+                "orig_basename": "fig.jpg",
+                "bbox": [100, 100, 400, 400],
+                "fixed_basename": str(outside),  # absolute → must be refused
+            }
+        ],
+    )
+    with make_test_client(api_db_path) as client:
+        cid = client.get(f"/v2/documents/{doc_id}/reflow").json()["chunks"][0]["id"]
+        r = client.get(f"/v2/chunks/{cid}/image")
+    # original served, not outside.png
+    assert r.status_code == 200 and r.headers["content-type"] == "image/jpeg"
