@@ -36,6 +36,7 @@ from ht_lens.extract._fitz import open_pdf
 from ht_lens.extract.render import render_page_png
 from ht_lens.image_repair import (
     IMAGES_FIXED_DIR,
+    is_safe_basename,
     load_overrides,
     match_caption_override,
     match_image_override,
@@ -225,7 +226,9 @@ async def chunk_image(
     img_ov = match_image_override(
         overrides, chunk.page_idx, chunk.img_path, _bbox_or_none(chunk.bbox_json)
     )
-    if img_ov is not None:
+    if img_ov is not None and is_safe_basename(img_ov.fixed_basename):
+        # Defense in depth: load_overrides already drops unsafe basenames, but
+        # never join an attacker-controlled value that could escape the root.
         fixed = _cache_root() / str(chunk.doc_id) / IMAGES_FIXED_DIR / img_ov.fixed_basename
         if fixed.is_file():
             path = _validate_v2_image(str(fixed))

@@ -158,15 +158,23 @@ def load_overrides(doc_root: Path) -> Overrides:
         raw = json.loads(p.read_text())
     except (OSError, ValueError):
         return Overrides(images=[], captions=[])
+    if not isinstance(raw, dict):
+        return Overrides(images=[], captions=[])
+    # A syntactically valid but ill-formed manifest (e.g. {"images":["bad"]})
+    # must never break serving — guard each item type + required keys, and drop
+    # image entries whose fixed_basename could escape the managed root (R1 §4#3/#2).
     imgs = [
         ImageOverride(o["page_idx"], o["orig_basename"], o["bbox"], o["fixed_basename"])
         for o in raw.get("images", [])
-        if {"page_idx", "orig_basename", "bbox", "fixed_basename"} <= o.keys()
+        if isinstance(o, dict)
+        and {"page_idx", "orig_basename", "bbox", "fixed_basename"} <= o.keys()
+        and isinstance(o["fixed_basename"], str)
+        and is_safe_basename(o["fixed_basename"])
     ]
     caps = [
         CaptionOverride(o["page_idx"], o["orig_basename"], o["bbox"], o["caption"])
         for o in raw.get("captions", [])
-        if {"page_idx", "orig_basename", "bbox", "caption"} <= o.keys()
+        if isinstance(o, dict) and {"page_idx", "orig_basename", "bbox", "caption"} <= o.keys()
     ]
     return Overrides(images=imgs, captions=caps)
 
@@ -179,6 +187,19 @@ def save_overrides(doc_root: Path, ov: Overrides) -> None:
 
 def _basename(img_path: str | None) -> str | None:
     return os.path.basename(img_path) if img_path else None
+
+
+def is_safe_basename(name: str) -> bool:
+    """True iff ``name`` is a plain filename — no path separators, no parent
+    segments, not absolute. A manifest ``fixed_basename`` like ``/tmp/x.png`` or
+    ``../../etc`` would escape the managed root when joined, so it is rejected
+    here (verify-cross R1 §4#2) rather than trusted by the serve path."""
+    return (
+        bool(name)
+        and name == os.path.basename(name)
+        and not os.path.isabs(name)
+        and ".." not in name
+    )
 
 
 def match_image_override(
@@ -297,7 +318,9 @@ def run_image_backfill(
             cand.skip_reason = "not detected" if not detected else "not in allowlist"
             report.append(cand)
             continue
-        fixed_basename = f"{Path(base).stem}.png"
+        # Include page_idx so two chunks sharing an original basename in one doc
+        # don't overwrite each other's fixed PNG (verify-cross R1 §4#4).
+        fixed_basename = f"p{page_idx:04d}_{Path(base).stem}.png"
         if dry_run:
             # Manifest-first: report the candidate, write nothing (challenge §8).
             report.append(cand)
@@ -314,6 +337,35 @@ def run_image_backfill(
     return overrides, report
 
 
+def build_and_save_overrides(
+    *,
+    chunks: list[tuple[int, str | None, list[float] | None]],
+    pdf_path: str | Path,
+    dest_root: Path,
+    caption_overrides: list[CaptionOverride],
+    allowlist_basenames: set[str] | None = None,
+    frac_thresh: float = 0.6,
+    dpi: int = 300,
+    dry_run: bool = True,
+) -> tuple[Overrides, list[BackfillCandidate]]:
+    """Regenerate a doc's ``overrides.json`` from source (re-ingest-safe, durable
+    via the committed seed — verify-cross R1 §4#1): clip-render degraded images
+    and merge the reviewed caption corrections. Writes nothing on ``dry_run``."""
+    img_ov, report = run_image_backfill(
+        chunks=chunks,
+        pdf_path=pdf_path,
+        dest_root=dest_root,
+        allowlist_basenames=allowlist_basenames,
+        frac_thresh=frac_thresh,
+        dpi=dpi,
+        dry_run=dry_run,
+    )
+    ov = Overrides(images=img_ov, captions=list(caption_overrides))
+    if not dry_run:
+        save_overrides(dest_root, ov)
+    return ov, report
+
+
 __all__ = [
     "IMAGES_FIXED_DIR",
     "OVERRIDES_FILENAME",
@@ -322,8 +374,10 @@ __all__ = [
     "ImageOverride",
     "Overrides",
     "black_bg_fraction",
+    "build_and_save_overrides",
     "clip_render_figure",
     "is_degraded_candidate",
+    "is_safe_basename",
     "load_overrides",
     "match_caption_override",
     "match_image_override",
