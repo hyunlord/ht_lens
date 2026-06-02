@@ -126,6 +126,69 @@ async def test_reflow_unknown_doc_404(api_db_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reflow_dedup_drops_nested_panels_at_endpoint(
+    api_db_path: Path, tmp_path: Path
+) -> None:
+    """verify-cross 8e-4 R1 §4#3: lock the dedup where it is actually applied
+    (``get_reflow`` at reflow.py:127), not just the helper. A captioned full
+    crop containing two captionless panels → /reflow returns only the captioned
+    crop, while /v2/chunks/{id}/image for a dropped panel stays 200 (the DB row
+    is untouched — render-only)."""
+    from sqlalchemy import select
+
+    full = tmp_path / "full.jpg"
+    full.write_bytes(b"\xff\xd8\xff\xe0full")
+    p1 = tmp_path / "p1.jpg"
+    p1.write_bytes(b"\xff\xd8\xff\xe0p1")
+    p2 = tmp_path / "p2.jpg"
+    p2.write_bytes(b"\xff\xd8\xff\xe0p2")
+    doc_id = await _seed(
+        api_db_path,
+        [
+            {"type": "text", "page_idx": 2, "content": "x", "translated": "[KO] x"},
+            {
+                "type": "image",
+                "page_idx": 2,
+                "img_path": str(full),
+                "bbox_json": "[156,84,855,475]",
+                "caption": "Figure 28.18",
+            },
+            {"type": "image", "page_idx": 2, "img_path": str(p1), "bbox_json": "[512,273,857,461]"},
+            {"type": "image", "page_idx": 2, "img_path": str(p2), "bbox_json": "[156,86,503,266]"},
+        ],
+    )
+    # The captionless panels are dropped from /reflow but their rows remain.
+    engine = make_engine(api_db_path)
+    factory = make_session_factory(engine)
+    try:
+        async with factory() as s:
+            rows = (
+                (
+                    await s.execute(
+                        select(Chunk).where(Chunk.type == "image", Chunk.caption.is_(None))
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            panel_ids = sorted(c.id for c in rows)
+    finally:
+        await engine.dispose()
+    assert len(panel_ids) == 2
+
+    with make_test_client(api_db_path) as client:
+        data = client.get(f"/v2/documents/{doc_id}/reflow").json()
+        imgs = [c for c in data["chunks"] if c["type"] == "image"]
+        assert len(imgs) == 1  # only the captioned full crop survives
+        assert imgs[0]["caption"] == "Figure 28.18"
+        returned_ids = {c["id"] for c in data["chunks"]}
+        assert not (set(panel_ids) & returned_ids)  # both panels dropped from the view
+        # Non-destructive: each dropped panel image is still served.
+        for pid in panel_ids:
+            assert client.get(f"/v2/chunks/{pid}/image").status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_chunk_image_jpg_served_and_traversal_rejected(
     api_db_path: Path, tmp_path: Path
 ) -> None:

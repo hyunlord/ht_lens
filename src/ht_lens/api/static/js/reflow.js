@@ -144,6 +144,119 @@ function syncToChunk(chunkEl) {
   }
 }
 
+/**
+ * Pure, deterministic: given ascending page boundaries [{pageIdx, offset}] and
+ * the current scrollTop, return the pageIdx of the last boundary at/above the
+ * scroll position (the page the reader is currently in). Binary search — no IO
+ * callback-order ambiguity, fully unit-testable with synthetic offsets
+ * (Phase 8e-4: replaces IntersectionObserver, which jsdom can't validate).
+ */
+function pickCurrentPage(boundaries, scrollTop) {
+  if (!boundaries.length) return null;
+  let lo = 0;
+  let hi = boundaries.length - 1;
+  let ans = boundaries[0].pageIdx;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (boundaries[mid].offset <= scrollTop + 1) {
+      ans = boundaries[mid].pageIdx;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return ans;
+}
+
+/**
+ * Continuous compare-mode sync (Phase 8e-4): scrolling the right reading pane
+ * scrolls the left PDF pane to the current page. One-way (right→left) so there
+ * is no feedback loop. Throttled via rAF; only acts in compare mode. Returns
+ * {syncNow, recompute, teardown} — teardown is called on document reload so a
+ * stale handler never drives the new left pane.
+ */
+function initCompareSync({ contentEl, panePdf: pdfPane, layout: layoutEl }) {
+  const paneEl = contentEl.closest(".pane--reflow") || contentEl.parentElement;
+  let boundaries = [];
+  let lastPage = null;
+  let raf = 0;
+  // Offsets are a snapshot of getBoundingClientRect; lazy figure images load
+  // (no width/height attrs) and window resizes shift later pages, so a cached
+  // boundary can select the wrong PDF page (verify-cross R1 §4#1). ``dirty``
+  // forces a lazy recompute on the next sync; ``invalidate`` also schedules one
+  // so the left pane self-corrects without waiting for a user scroll.
+  let dirty = true;
+
+  function recompute() {
+    boundaries = [];
+    const seen = new Set();
+    const base = paneEl.getBoundingClientRect().top - paneEl.scrollTop;
+    for (const el of contentEl.querySelectorAll(".chunk")) {
+      const p = Number(el.dataset.pageIdx);
+      if (seen.has(p)) continue;
+      seen.add(p);
+      boundaries.push({ pageIdx: p, offset: el.getBoundingClientRect().top - base });
+    }
+    boundaries.sort((a, b) => a.offset - b.offset);
+    lastPage = null;
+    dirty = false;
+  }
+
+  function syncNow() {
+    if (layoutEl.dataset.mode !== "compare") return;
+    if (dirty || !boundaries.length) recompute();
+    const p = pickCurrentPage(boundaries, paneEl.scrollTop);
+    if (p === null || p === lastPage) return;
+    lastPage = p;
+    const page = pdfPane.querySelector(`.pdf-page[data-page-idx="${p}"]`);
+    if (page) {
+      for (const x of pdfPane.querySelectorAll(".pdf-page.hl")) x.classList.remove("hl");
+      page.classList.add("hl");
+      page.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }
+
+  function onScroll() {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      syncNow();
+    });
+  }
+
+  // Mark offsets stale and schedule a recompute+sync (compare mode only acts;
+  // single mode keeps dirty=true until the next compare toggle recomputes).
+  function invalidate() {
+    dirty = true;
+    onScroll();
+  }
+
+  paneEl.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", invalidate);
+  // ``load`` AND ``error``: a failed image is replaced by a .fig-missing span
+  // (renderChunk), which also shifts later page offsets (verify-cross R2 §4#2).
+  const imgs = contentEl.querySelectorAll("img");
+  for (const img of imgs) {
+    img.addEventListener("load", invalidate);
+    img.addEventListener("error", invalidate);
+  }
+  recompute();
+
+  function teardown() {
+    paneEl.removeEventListener("scroll", onScroll);
+    window.removeEventListener("resize", invalidate);
+    for (const img of imgs) {
+      img.removeEventListener("load", invalidate);
+      img.removeEventListener("error", invalidate);
+    }
+    if (raf) cancelAnimationFrame(raf);
+  }
+
+  return { syncNow, recompute, teardown };
+}
+
+let compareSync = null;
+
 async function load() {
   const { doc } = parseQuery();
   if (!doc) {
@@ -187,6 +300,11 @@ async function load() {
       paneReflow.appendChild(el);
     }
     buildPdfPane(doc, [...new Set(pageIdxs)]);
+    // Continuous compare-mode scroll-sync (8e-4). Tear down any previous one
+    // first so a reloaded document never leaves a stale handler driving the
+    // new left pane (verify-cross §5.4).
+    if (compareSync) compareSync.teardown();
+    compareSync = initCompareSync({ contentEl: paneReflow, panePdf, layout });
     // Section TOC drawer + ref-jump (capture handler intercepts before sync).
     if (tocNav) {
       renderToc(buildSectionTree(data.chunks), tocNav, {
@@ -211,6 +329,12 @@ if (paneReflow && layout) {
       layout.dataset.mode = e.target.value;
       // compare → overlay (clear body margin); single → restore it (R9).
       syncPaneMargin({ doc: document });
+      // Switching INTO compare: sync the left pane to the already-visible page
+      // immediately, rather than waiting for the next scroll event (§5.3).
+      if (e.target.value === "compare" && compareSync) {
+        compareSync.recompute();
+        compareSync.syncNow();
+      }
     });
   }
   if (tocToggle && tocNav) {
@@ -227,4 +351,4 @@ if (paneReflow && layout) {
 // ``buildPdfPane`` is exported only as a test seam (the page-render error
 // fallback at L112-114 lives inside it). Nothing in production imports it;
 // auto-init is unchanged — so this adds no behavior, only testability.
-export { buildPdfPane, renderChunk, syncToChunk };
+export { buildPdfPane, initCompareSync, pickCurrentPage, renderChunk, syncToChunk };

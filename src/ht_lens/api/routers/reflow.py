@@ -124,7 +124,51 @@ async def get_reflow(
                 bbox=_bbox_or_none(c.bbox_json),
             )
         )
+    out = _drop_captionless_images_contained_by_captioned(out)
     return ReflowResponse(doc_id=doc_id, filename=doc.filename, extractor=doc.extractor, chunks=out)
+
+
+def _strict_contains(a: list[float] | None, b: list[float] | None, tol: float = 2.0) -> bool:
+    """True if bbox ``a`` strictly encloses ``b`` (covers it within ``tol`` AND
+    is strictly larger in area). Malformed/inverted/None bboxes never contain —
+    so a bad bbox can't trigger a drop (verify-cross §2.6). Strict-larger keeps
+    equal-bbox images (not a nested panel; §3.12)."""
+    if a is None or b is None or len(a) != 4 or len(b) != 4:
+        return False
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    if ax1 < ax0 or ay1 < ay0 or bx1 < bx0 or by1 < by0:
+        return False  # inverted → never contains
+    encloses = ax0 - tol <= bx0 and ay0 - tol <= by0 and ax1 + tol >= bx1 and ay1 + tol >= by1
+    return encloses and (ax1 - ax0) * (ay1 - ay0) > (bx1 - bx0) * (by1 - by0)
+
+
+def _drop_captionless_images_contained_by_captioned(
+    chunks: list[ReflowChunk],
+) -> list[ReflowChunk]:
+    """Phase 8e-4: MinerU emits a multi-panel figure as a captioned full-figure
+    crop PLUS captionless panel crops nested inside it (doc1 Fig 28.18) — the
+    full and panels all render = duplicate. Drop a captionless image ONLY when a
+    same-page captioned image strictly contains it. Render-only / non-destructive
+    (the DB rows, ``/v2/chunks/{id}/image``, and chat are unaffected). Standalone
+    captionless images, equal bboxes, and malformed bboxes are kept."""
+    images = [c for c in chunks if c.type == "image"]
+    if len(images) < 2:
+        return chunks
+    by_page: dict[int, list[ReflowChunk]] = {}
+    for im in images:
+        by_page.setdefault(im.page_idx, []).append(im)
+    drop: set[int] = set()
+    for page_imgs in by_page.values():
+        captioned = [im for im in page_imgs if (im.caption or "").strip()]
+        for child in page_imgs:
+            if (child.caption or "").strip():
+                continue  # only captionless children are drop candidates
+            if any(_strict_contains(parent.bbox, child.bbox) for parent in captioned):
+                drop.add(child.id)
+    if not drop:
+        return chunks
+    return [c for c in chunks if c.id not in drop]
 
 
 def _validate_v2_image(raw: str) -> Path:
