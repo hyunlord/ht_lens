@@ -1,21 +1,21 @@
-# Phase 8e-5 — Verify (self) — v2 (post cross-verify R1 RE-CODE)
+# Phase 8e-5 — Verify (self) — v3 (post cross-verify R2)
 
 Scope: 비파괴 image-repair manifest — (1) 검은 배경 PGM 다이어그램 열화 페이지-클립
 복구(defect 1, 3건), (2) caption↔image 매핑 교정(defect 2, doc1 page4 3건). DB/스키마
 변경 0; 1.x 불변.
 
-Round history: v1 self 94(`e96e88a`) → **Codex R1 DOWNGRADE ~86-88** (4 gaps) →
-RE-CODE(`dfd1251` 하드닝, `e91afc9` CLI+seed+tests) → v2. HEAD = verify v2 직전
-`e91afc9`; 추적 트리 clean. (`ruff format --check .` = 203 files ok.)
+Round history: v1 94(`e96e88a`) → **R1 DOWNGRADE ~86-88** → RE-CODE(durable CLI+seed,
+manifest 하드닝) → v2 95(`333200c`) → **R2 DOWNGRADE 90-92** ("would not reject it;
+R1 defects genuinely fixed") → 소규모 RE-CODE(`6755b15`/`9fd68bb`). R2 = 최종 cross-verify
+(cap=2). HEAD `9fd68bb`; 추적 트리 clean. `ruff format --check .` = 203 ok.
 
-## R1 findings → resolution
-| R1 issue | Resolution | Lock |
+## R2 findings → resolution
+| R2 issue | Resolution | Lock |
 | -------- | ---------- | ---- |
-| §4#1 repair 자산 gitignored·재생성 경로 없음 | `ht-lens repair-images` CLI + 커밋된 `repair_seeds/doc1.json`(3 image allowlist + 3 caption) → git에서 결정적 재생성 | `test_build_and_save_overrides_apply_and_dry_run`, CLI dry-run/apply 라이브 |
-| §4#2 `fixed_basename` 절대/traversal로 root 탈출 | `is_safe_basename` — load_overrides가 unsafe 드롭 + chunk_image 서빙 가드(이중) | `test_is_safe_basename`, `test_load_overrides_drops_malformed_and_unsafe`, `test_image_override_absolute_fixed_basename_rejected`(integration) |
-| §4#3 malformed manifest가 서빙 깨뜨림 | load_overrides가 non-dict raw + non-dict item 가드 → 절대 raise 안 함 | `test_load_overrides_drops_malformed_and_unsafe`, `test_load_overrides_non_dict_root_is_empty` |
-| §4#4 같은 basename fixed PNG 충돌 | `fixed_basename = p<page>_<stem>.png` (page별 유일) | `test_backfill_same_basename_distinct_pages_no_collision` |
-| §1 format `--check` 미실행 | `uv run ruff format --check .` 실행 | 203 files ok |
+| §4#2 malformed bbox 타입이 서빙 crash (계약 위반) | `_valid_bbox` load drop + `_bbox_close` 방어 → `"bbox":"oops"` 무해 | `test_load_overrides_drops_non_numeric_bbox` |
+| §4#3 빈/부재 allowlist → None → "전부 복구" 퇴행 | CLI 항상 concrete set(빈=복구 0); reviewed-only 강제 | `test_repair_cli_captions_only_seed_repairs_no_images` |
+| §4#1 repair-images CLI 자동 테스트 없음 | CliRunner 테스트(wiring/dry-run/apply/allowlist) | `test_repair_cli_*` (3) |
+| §4#4 seed parse 무제어 예외 | try/except → clean exit 2 | `test_repair_cli_invalid_seed_exits_2` |
 
 ## 5-A. Automated checks
 | Check    | Command | Result |
@@ -23,49 +23,49 @@ RE-CODE(`dfd1251` 하드닝, `e91afc9` CLI+seed+tests) → v2. HEAD = verify v2 
 | Lint     | `uv run ruff check src tests` | All checks passed! |
 | Format   | `uv run ruff format --check .` | 203 files already formatted |
 | Type     | `uv run mypy src/` | Success: no issues in **86** source files |
-| Test     | `uv run pytest -q` | **828 passed, 8 skipped, 0 failed** (579.84s); 3 snapshots |
-| Focused  | `test_image_repair.py`(29) + `test_reflow_api.py`(18) | 47 passed |
+| Test     | `uv run pytest -q` | **832 passed, 8 skipped, 0 failed** (578.38s); 3 snapshots |
+| Focused  | image_repair(30) + reflow_api(19) + repair_cli(3) | 52 passed |
 | CI       | GitHub Actions | pending push |
 
-828 = v1의 822 + 6 신규 R1 테스트. `pytest -q`는 `-m "not llm and not slow"`의 상위집합(더 광범위).
+832 = v2의 828 + 4 신규 R2 테스트.
 
-## 5-B. Functional checks (live, in-process against `data/ht_lens_v2.db`)
-`data/extracts_v2/1/overrides.json`(3 image + 3 caption, **CLI로 재생성** = `repair-images --doc-id 1 --seed repair_seeds/doc1.json --apply`):
-
+## 5-B. Functional checks (live, in-process)
 | Check | Evidence |
 | ----- | -------- |
-| **defect 1** ch1/84/85 복구 | `/v2/chunks/1/image` → 200 image/png, **27218B** 완전 클립(`p0000_…png`) ≠ 열화 5328B. 3건 PDF clip 육안 확인(완전 DPGM/LDA 다이어그램) |
-| 비대상 무변경 | `/v2/chunks/30/image` → 200 image/jpeg(원본) |
-| **defect 2** caption | ch53="Figure 28.19: …2d embedding…", ch54="Figure 28.20: (a) GAP…", ch55="Figure 28.20: (b) Simplex FA…" |
-| **dedup 무영향**(R6) | page2 `[30]`, page4 `[53,54,55]` 유지, 총 12 |
-| CLI 재생성 | `repair-images --dry-run` detected=3/captions=3; `--apply` written=3 → `p<page>_<stem>.png` |
-| 5-doc 무회귀 | 정상 158 서빙 불변; 6 integration override 테스트 green |
-| 1.x/DB 무손상 | diff = `image_repair.py`/`reflow.py`/`cli.py` + 테스트 + 커밋 seed; DB/migration/model/1.x 0 |
+| defect 1 ch1/84/85 | `/v2/chunks/1/image` → 200 image/png, 27218B 완전 클립(`p0000_…`); 3건 육안 완전 다이어그램 |
+| 비대상 무변경 | `/v2/chunks/30/image` → image/jpeg 원본 |
+| defect 2 caption | ch53=Fig28.19, ch54=Fig28.20(a), ch55=Fig28.20(b) |
+| dedup 무영향 | page2 `[30]`, page4 `[53,54,55]`, 총 12 |
+| CLI 재생성 | `repair-images --doc-id 1 --seed repair_seeds/doc1.json --apply` → written=3, captions=3 (결정적) |
+| reviewed-only | captions-only seed → written=0 (미리뷰 dark image 미복구) |
+| malformed manifest | non-dict/unsafe-basename/non-numeric-bbox 전부 drop, serving 무crash |
+| 1.x/DB 무손상 | diff = image_repair/reflow/cli + 테스트 + 커밋 seed; DB/migration 0 |
 
 ## 5-C. Regression check (RE-CODE 가드)
-RE-CODE(`dfd1251`/`e91afc9`) 신규/변경 코드 경로 → 명시 테스트 잠금:
+R1+R2 신규/변경 경로 전부 명시 테스트 잠금:
 
-| 신규/변경 경로 (grep) | 잠금 테스트 |
-| --------------------- | ----------- |
-| `is_safe_basename` | `test_is_safe_basename` + load/serve 통합 |
-| `load_overrides` (non-dict raw/item + unsafe drop) | `test_load_overrides_drops_malformed_and_unsafe`, `test_load_overrides_non_dict_root_is_empty` |
-| `run_image_backfill` fixed_basename `p<page>_` | `test_backfill_same_basename_distinct_pages_no_collision` (+ apply 테스트 갱신) |
+| 경로 (grep) | 잠금 테스트 |
+| ----------- | ----------- |
+| `_valid_bbox`/`_bbox_close` 방어 | `test_load_overrides_drops_non_numeric_bbox` |
+| `is_safe_basename`/load drop | `test_is_safe_basename`, `test_load_overrides_drops_malformed_and_unsafe`, abs-path integration |
+| `run_image_backfill` `p<page>_` | `test_backfill_same_basename_distinct_pages_no_collision` |
 | `build_and_save_overrides` | `test_build_and_save_overrides_apply_and_dry_run` |
-| `chunk_image` is_safe 가드 | `test_image_override_absolute_fixed_basename_rejected` |
-| `repair-images` CLI | 라이브 dry-run/apply (재생성 doc1 결정적) |
+| `repair-images` CLI(allowlist/dry-run/error) | `test_repair_cli_*` (3) |
+| `chunk_image`/`get_reflow` override | reflow_api override 6 (matched/stale/scoped/abs/caption×dedup) |
 
-R1-fix 영역 회귀 재확인: 기존 override 서빙·dedup·caption 테스트 green(47 focused / 828 full). public contract(`/v2`·1.x·CLI 기존 커맨드) 무변경. 8e-4 dedup green.
+R1/R2-fix 영역 회귀 재확인: 52 focused / 832 full green. public contract(`/v2`·1.x·기존 CLI) 무변경. 8e-4 dedup green.
 
-## 5-D. Scoring (100, self-assessment)
+## 5-D. Scoring (100, self-assessment — 정직, R2-aligned)
 | Item       | Score / Max | Evidence |
 | ---------- | ----------- | -------- |
-| 독창성     |   14 / 15   | bbox 1000-정규화 발견 → 스키마 변경 0; 안정증거 manifest; 소스 PDF clip |
-| 완결성     |   33 / 35   | 두 defect 복구+교정+CLI 재생성+테스트; doc5 caption 패턴 의도적 defer(Planner) → roadmap follow-up |
-| 안정성     |   29 / 30   | 828 passed/0 fail, mypy 86; malformed/unsafe/collision 가드+테스트, 비파괴; −1 CI pending |
-| 확장성     |   19 / 20   | CLI+seed 재사용(신규 doc·ingest 통합); 순수 crop math; manifest 확장형 |
-| **Total**  | **95 / 100**|          |
+| 독창성     |   14 / 15   | 1000-정규화 발견(스키마 0); 안정증거 manifest; 소스 PDF clip |
+| 완결성     |   33 / 35   | 두 defect 복구+교정+CLI 재생성+테스트; doc5 caption defer(Planner) → follow-up |
+| 안정성     |   28 / 30   | 832/0; malformed bbox crash 수정(계약 준수)·reviewed-only 강제·CLI 테스트; −2 CI pending + coverage% 미보고 |
+| 확장성     |   18 / 20   | CLI+seed 재사용; 순수 crop math; −2 seed schema 검증 느슨(향후 강화) |
+| **Total**  | **93 / 100**|          |
 
 ## 5-E. Self verdict
-- [x] **PASS_CANDIDATE (≥95)** — R1 4건 전부 해소+테스트 잠금, 재생성 경로 durable. cross-verify Round 2(final)로 진행.
-- [ ] FAIL → RE-CODE
+- [ ] PASS_CANDIDATE (≥95)
+- [x] **BELOW THRESHOLD (93) → escalate to Planner.** R1+R2 *기능/robustness* gap 전부 해소+테스트 잠금(특히 R2 malformed-bbox 계약 위반 버그 수정). ≥95 잔여 갭 = pre-push CI + coverage% 미보고 + seed schema 느슨(향후). cross-verify cap(R2 final)·R2-DOWNGRADE push 정책상 자체 ≥95 미인증·자율 push 안 함 — Planner가 merge 결정.
+- [ ] FAIL → RE-CODE (Codex R2: "would not reject it")
 - [ ] FAIL → RE-PLAN
