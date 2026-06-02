@@ -122,6 +122,45 @@ def test_load_overrides_absent_is_empty(tmp_path: Path) -> None:
     assert got.images == [] and got.captions == []
 
 
+def test_load_overrides_drops_non_numeric_bbox(tmp_path: Path) -> None:
+    """verify-cross R2 §4#2: a manifest bbox of the wrong type must be dropped
+    at load, never reach _bbox_close and crash serving."""
+    import json
+
+    (tmp_path / "overrides.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {  # bad bbox type → dropped (must not crash)
+                        "page_idx": 0,
+                        "orig_basename": "x.jpg",
+                        "bbox": "oops",
+                        "fixed_basename": "x.png",
+                    },
+                    {  # bbox wrong length → dropped
+                        "page_idx": 0,
+                        "orig_basename": "y.jpg",
+                        "bbox": [1, 2, 3],
+                        "fixed_basename": "y.png",
+                    },
+                ],
+                "captions": [
+                    {
+                        "page_idx": 0,
+                        "orig_basename": "z.jpg",
+                        "bbox": [1, "x", 3, 4],  # non-numeric element → dropped
+                        "caption": "c",
+                    }
+                ],
+            }
+        )
+    )
+    ov = load_overrides(tmp_path)
+    assert ov.images == [] and ov.captions == []
+    # matching against a dropped/garbage bbox never raises
+    assert match_image_override(ov, 0, "/p/x.jpg", "oops") is None  # type: ignore[arg-type]
+
+
 def test_match_image_override_by_stable_evidence(tmp_path: Path) -> None:
     ov = _ov()
     # matches: same page, same basename, close bbox (within tol)
