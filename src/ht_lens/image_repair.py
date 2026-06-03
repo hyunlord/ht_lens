@@ -102,6 +102,127 @@ def is_degraded_candidate(path: str | Path, frac_thresh: float = 0.6) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Phase 8e-6 detectors (read-only audit — surface candidates for a human-edited
+# seed; NEVER auto-apply). A detector flag is a *candidate*, not a decision.
+# --------------------------------------------------------------------------- #
+@dataclass
+class ImageChunkInfo:
+    chunk_id: int
+    page_idx: int
+    caption: str | None
+    bbox: list[float] | None
+    img_path: str | None
+
+
+@dataclass
+class DegradedCandidate:
+    page_idx: int
+    order_idx: int  # chunk identity — distinguishes same-basename siblings (R1 §4#1)
+    basename: str
+    bbox: list[float] | None
+    black_frac: float
+    bbox_valid: bool  # False → page-clip impossible (reported, not silently skipped)
+
+
+@dataclass
+class CaptionMispairImage:
+    chunk_id: int
+    basename: str | None
+    bbox: list[float] | None
+    caption: str | None
+    has_caption: bool
+
+
+@dataclass
+class CaptionMispairPage:
+    page_idx: int
+    images: list[CaptionMispairImage]
+
+
+def _contains(a: list[float] | None, b: list[float] | None, tol: float = 2.0) -> bool:
+    """a strictly encloses b (same basis). Used only to exclude dedup-dropped
+    nested panels from caption candidates (mirrors reflow._strict_contains)."""
+    if not _valid_bbox(a) or not _valid_bbox(b):
+        return False
+    ax0, ay0, ax1, ay1 = a  # type: ignore[misc]
+    bx0, by0, bx1, by1 = b  # type: ignore[misc]
+    if ax1 < ax0 or ay1 < ay0 or bx1 < bx0 or by1 < by0:
+        return False
+    enc = ax0 - tol <= bx0 and ay0 - tol <= by0 and ax1 + tol >= bx1 and ay1 + tol >= by1
+    return enc and (ax1 - ax0) * (ay1 - ay0) > (bx1 - bx0) * (by1 - by0)
+
+
+def detect_degraded_images(
+    images: list[tuple[int, int, str | None, list[float] | None]],
+    *,
+    frac_thresh: float = 0.6,
+) -> list[DegradedCandidate]:
+    """Flag black-background degraded image candidates (defect 1). ``images`` =
+    ``(page_idx, order_idx, img_path, bbox)`` — ``order_idx`` carries chunk
+    identity so same-basename siblings stay distinct (R1 §4#1). Pure read of the
+    image files; clip feasibility (rotation) is determined later by the CLI."""
+    out: list[DegradedCandidate] = []
+    for page_idx, order_idx, img_path, bbox in images:
+        base = _basename(img_path)
+        if base is None or not (img_path and os.path.exists(img_path)):
+            continue
+        try:
+            frac = black_bg_fraction(img_path)
+        except (OSError, ValueError):
+            continue
+        if frac > frac_thresh:
+            out.append(
+                DegradedCandidate(
+                    page_idx, order_idx, base, bbox, round(frac, 3), _valid_bbox(bbox)
+                )
+            )
+    return out
+
+
+def detect_caption_mispairs(chunks: list[ImageChunkInfo]) -> list[CaptionMispairPage]:
+    """Flag multi-image pages where a caption may be mis-paired (defect 2):
+    a captionless image coexists with a captioned sibling on the same page (the
+    doc1/doc5 vertical-merge signature). **Report only** — the (a)/(b)→image
+    assignment is left to a human-edited seed (challenge R2; no brittle spatial
+    heuristic). Captionless panels that serving would dedup-drop (strictly inside
+    a captioned sibling) are excluded so the review queue holds no dead work."""
+    by_page: dict[int, list[ImageChunkInfo]] = {}
+    for c in chunks:
+        by_page.setdefault(c.page_idx, []).append(c)
+    pages: list[CaptionMispairPage] = []
+    for page_idx in sorted(by_page):
+        imgs = by_page[page_idx]
+        if len(imgs) < 2:
+            continue
+        captioned = [c for c in imgs if (c.caption or "").strip()]
+        # drop nested captionless panels (handled by 8e-4 dedup, not caption repair)
+        considered = [
+            c
+            for c in imgs
+            if (c.caption or "").strip() or not any(_contains(p.bbox, c.bbox) for p in captioned)
+        ]
+        has_uncaptioned = any(not (c.caption or "").strip() for c in considered)
+        has_captioned = any((c.caption or "").strip() for c in considered)
+        if has_uncaptioned and has_captioned:
+            pages.append(
+                CaptionMispairPage(
+                    page_idx,
+                    [
+                        CaptionMispairImage(
+                            c.chunk_id,
+                            _basename(c.img_path),
+                            c.bbox,
+                            c.caption,
+                            bool((c.caption or "").strip()),
+                        )
+                        for c in considered
+                    ],
+                )
+            )
+    return pages
+
+
+# --------------------------------------------------------------------------- #
 # Manifest model
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
@@ -301,7 +422,7 @@ class BackfillCandidate:
 
 def run_image_backfill(
     *,
-    chunks: list[tuple[int, str | None, list[float] | None]],
+    chunks: list[tuple[int, int, str | None, list[float] | None]],
     pdf_path: str | Path,
     dest_root: Path,
     allowlist_basenames: set[str] | None = None,
@@ -311,15 +432,16 @@ def run_image_backfill(
 ) -> tuple[list[ImageOverride], list[BackfillCandidate]]:
     """Detect degraded image chunks and (unless ``dry_run``) clip-render fixes.
 
-    ``chunks``: ``(page_idx, img_path, bbox_norm)`` for image chunks. Repairs
-    only chunks whose original is black-bg degraded (``>frac_thresh``) AND, when
-    ``allowlist_basenames`` is given, in the reviewed allowlist (challenge R1).
-    Returns ``(image_overrides, candidates)``; ``dry_run`` writes no files and
-    returns empty overrides (manifest-first review gate — challenge §8)."""
+    ``chunks``: ``(page_idx, order_idx, img_path, bbox_norm)`` for image chunks.
+    Repairs only chunks whose original is black-bg degraded (``>frac_thresh``)
+    AND, when ``allowlist_basenames`` is given, in the reviewed allowlist
+    (challenge R1). The fixed PNG is named ``p{page}_o{order}_{stem}`` so two
+    chunks sharing a basename on one page never collide (verify-cross R2 §4#1).
+    Returns ``(image_overrides, candidates)``; ``dry_run`` writes no files."""
     fixed_dir = Path(dest_root) / IMAGES_FIXED_DIR
     overrides: list[ImageOverride] = []
     report: list[BackfillCandidate] = []
-    for page_idx, img_path, bbox in chunks:
+    for page_idx, order_idx, img_path, bbox in chunks:
         base = _basename(img_path)
         if base is None:
             continue
@@ -333,9 +455,8 @@ def run_image_backfill(
             cand.skip_reason = "not detected" if not detected else "not in allowlist"
             report.append(cand)
             continue
-        # Include page_idx so two chunks sharing an original basename in one doc
-        # don't overwrite each other's fixed PNG (verify-cross R1 §4#4).
-        fixed_basename = f"p{page_idx:04d}_{Path(base).stem}.png"
+        # page+order identity → same-basename siblings never overwrite (R2 §4#1).
+        fixed_basename = f"p{page_idx:04d}_o{order_idx:04d}_{Path(base).stem}.png"
         if dry_run:
             # Manifest-first: report the candidate, write nothing (challenge §8).
             report.append(cand)
@@ -354,7 +475,7 @@ def run_image_backfill(
 
 def build_and_save_overrides(
     *,
-    chunks: list[tuple[int, str | None, list[float] | None]],
+    chunks: list[tuple[int, int, str | None, list[float] | None]],
     pdf_path: str | Path,
     dest_root: Path,
     caption_overrides: list[CaptionOverride],
@@ -385,12 +506,18 @@ __all__ = [
     "IMAGES_FIXED_DIR",
     "OVERRIDES_FILENAME",
     "BackfillCandidate",
+    "CaptionMispairImage",
+    "CaptionMispairPage",
     "CaptionOverride",
+    "DegradedCandidate",
+    "ImageChunkInfo",
     "ImageOverride",
     "Overrides",
     "black_bg_fraction",
     "build_and_save_overrides",
     "clip_render_figure",
+    "detect_caption_mispairs",
+    "detect_degraded_images",
     "is_degraded_candidate",
     "is_safe_basename",
     "load_overrides",

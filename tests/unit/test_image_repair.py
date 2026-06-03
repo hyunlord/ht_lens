@@ -223,7 +223,7 @@ def test_backfill_dry_run_writes_nothing(tmp_path: Path) -> None:
     black = tmp_path / "fig.jpg"
     _png(black, (0, 0, 0))
     ov, report = run_image_backfill(
-        chunks=[(0, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=tmp_path / "doc",
         dry_run=True,
@@ -241,16 +241,16 @@ def test_backfill_apply_writes_only_detected(tmp_path: Path) -> None:
     white = tmp_path / "ok.jpg"
     _png(white, (255, 255, 255))
     ov, _report = run_image_backfill(
-        chunks=[(0, str(black), [100, 100, 500, 500]), (0, str(white), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500]), (0, 1, str(white), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=tmp_path / "doc",
         dry_run=False,
     )
     assert len(ov) == 1 and ov[0].orig_basename == "deg.jpg"
-    assert ov[0].fixed_basename == "p0000_deg.png"
-    assert (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_deg.png").is_file()
+    assert ov[0].fixed_basename == "p0000_o0000_deg.png"
+    assert (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_o0000_deg.png").is_file()
     # the white (normal) image is not repaired
-    assert not (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_ok.png").exists()
+    assert not (tmp_path / "doc" / IMAGES_FIXED_DIR / "p0000_o0001_ok.png").exists()
 
 
 def test_backfill_allowlist_filters(tmp_path: Path) -> None:
@@ -259,7 +259,7 @@ def test_backfill_allowlist_filters(tmp_path: Path) -> None:
     black = tmp_path / "deg.jpg"
     _png(black, (0, 0, 0))
     ov, report = run_image_backfill(
-        chunks=[(0, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=tmp_path / "doc",
         allowlist_basenames={"someone_else.jpg"},
@@ -325,7 +325,7 @@ def test_backfill_same_basename_distinct_pages_no_collision(tmp_path: Path) -> N
     _png(black, (0, 0, 0))
     # same original basename appears on two pages → distinct fixed files (R1 §4#4)
     ov, _ = run_image_backfill(
-        chunks=[(0, str(black), [100, 100, 500, 500]), (1, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500]), (1, 1, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=tmp_path / "doc",
         dry_run=False,
@@ -345,7 +345,7 @@ def test_build_and_save_overrides_apply_and_dry_run(tmp_path: Path) -> None:
     root = tmp_path / "doc"
     # dry-run: nothing written
     build_and_save_overrides(
-        chunks=[(0, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=root,
         caption_overrides=caps,
@@ -354,7 +354,7 @@ def test_build_and_save_overrides_apply_and_dry_run(tmp_path: Path) -> None:
     assert not (root / "overrides.json").exists()
     # apply: manifest with image override + merged captions persisted
     build_and_save_overrides(
-        chunks=[(0, str(black), [100, 100, 500, 500])],
+        chunks=[(0, 0, str(black), [100, 100, 500, 500])],
         pdf_path=pdf,
         dest_root=root,
         caption_overrides=caps,
@@ -363,3 +363,117 @@ def test_build_and_save_overrides_apply_and_dry_run(tmp_path: Path) -> None:
     loaded = load_overrides(root)
     assert len(loaded.images) == 1 and len(loaded.captions) == 1
     assert loaded.captions[0].caption == "Figure X"
+
+
+# --------------------------------------------------------------------------- #
+# Phase 8e-6 detectors (read-only audit)
+# --------------------------------------------------------------------------- #
+def test_detect_degraded_images(tmp_path: Path) -> None:
+    from ht_lens.image_repair import detect_degraded_images
+
+    black = tmp_path / "deg.jpg"
+    _png(black, (0, 0, 0))
+    white = tmp_path / "ok.jpg"
+    _png(white, (255, 255, 255))
+    out = detect_degraded_images(
+        [
+            (0, 0, str(black), [100, 100, 500, 500]),
+            (1, 1, str(white), [100, 100, 500, 500]),
+            (2, 2, str(black), [1, 2, 3]),  # degraded but malformed bbox (len 3)
+            (3, 3, None, None),  # no path → skipped
+            (4, 4, str(tmp_path / "gone.jpg"), [0, 0, 1, 1]),  # missing → skipped
+        ]
+    )
+    by = {c.page_idx: c for c in out}
+    assert 0 in by and by[0].black_frac > 0.6 and by[0].bbox_valid is True
+    assert by[0].order_idx == 0
+    assert all(c.black_frac > 0.6 for c in out)
+    assert not any(c.page_idx == 1 for c in out)  # white not degraded
+    # malformed bbox degraded one is flagged but marked clip-impossible (reported)
+    assert by[2].bbox_valid is False
+    assert len(out) == 2  # deg(p0) + malformed(p2); white/none/missing excluded
+
+
+def test_detect_degraded_images_same_basename_same_page_distinct_identity(tmp_path: Path) -> None:
+    from ht_lens.image_repair import detect_degraded_images
+
+    black = tmp_path / "dup.jpg"
+    _png(black, (0, 0, 0))
+    # two chunks, same page + same basename, different order_idx → kept distinct
+    out = detect_degraded_images(
+        [(0, 5, str(black), [0, 0, 400, 400]), (0, 6, str(black), [0, 0, 400, 400])]
+    )
+    assert len(out) == 2
+    assert {c.order_idx for c in out} == {5, 6}  # identity preserved (R1 §4#1)
+
+
+def _ci(cid, pg, cap, bbox, base):
+    from ht_lens.image_repair import ImageChunkInfo
+
+    return ImageChunkInfo(cid, pg, cap, bbox, f"/x/{base}")
+
+
+def test_detect_caption_mispairs_flags_captionless_coexist() -> None:
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    # doc5-style: page with a captionless image + a captioned sibling
+    chunks = [
+        _ci(1, 0, None, [160, 95, 839, 272], "a.jpg"),  # captionless (top)
+        _ci(2, 0, "(a) Parallel (b) Sequential Figure 6.2", [142, 299, 861, 477], "b.jpg"),
+    ]
+    pages = detect_caption_mispairs(chunks)
+    assert len(pages) == 1 and pages[0].page_idx == 0
+    assert {im.has_caption for im in pages[0].images} == {True, False}
+
+
+def test_detect_caption_mispairs_no_fp_all_captioned() -> None:
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    # normal multi-panel: every image has its (a)/(b) label → NOT flagged
+    chunks = [
+        _ci(1, 0, "(a) Ordered ratings", [0, 0, 400, 400], "a.jpg"),
+        _ci(2, 0, "(b) Unary ratings Figure 1.3", [400, 0, 800, 400], "b.jpg"),
+    ]
+    assert detect_caption_mispairs(chunks) == []
+
+
+def test_detect_caption_mispairs_single_image_page_ignored() -> None:
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    assert detect_caption_mispairs([_ci(1, 0, None, [0, 0, 100, 100], "a.jpg")]) == []
+
+
+def test_detect_caption_mispairs_excludes_nested_dedup_drop() -> None:
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    # captioned full crop contains a captionless panel (8e-4 dedup drops it) +
+    # nothing else captionless → must NOT be flagged as a caption mispair.
+    chunks = [
+        _ci(1, 0, "Figure X full", [0, 0, 500, 500], "full.jpg"),
+        _ci(2, 0, None, [50, 50, 200, 200], "panel.jpg"),  # nested → excluded
+    ]
+    assert detect_caption_mispairs(chunks) == []
+
+
+def test_detect_caption_mispairs_prose_parens_no_fp() -> None:
+    """verify-cross R2 §4#4: detection is structural (captionless coexistence),
+    not prose-parsing — a fully-captioned page whose captions contain '(a)/(b)'
+    prose must NOT be flagged (no review-overload FP)."""
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    chunks = [
+        _ci(
+            1, 0, "We compare (a) the encoder and (b) the decoder. Figure 5.", [0, 0, 4, 4], "a.jpg"
+        ),
+        _ci(2, 0, "(b) Results (a)-(c) summarized. Figure 6.", [5, 0, 9, 4], "b.jpg"),
+    ]
+    assert detect_caption_mispairs(chunks) == []
+
+
+def test_detect_caption_mispairs_is_image_chunk_only() -> None:
+    """Caption text emitted as a separate (non-image) chunk is out of scope by
+    design: the detector only inspects image chunks. A lone captionless image
+    (its caption living elsewhere as text) is not flagged (single image)."""
+    from ht_lens.image_repair import detect_caption_mispairs
+
+    assert detect_caption_mispairs([_ci(1, 0, None, [0, 0, 100, 100], "only.jpg")]) == []
