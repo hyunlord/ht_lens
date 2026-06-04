@@ -1,37 +1,37 @@
 ## 1. Verification of automated checks
 
-The self-verify is not stale with respect to committed code: `verify.md` is commit `bb5aa1c`, immediately after the last code/test commit `3317247`, and there are no later committed `src/` or `tests/` changes. The untracked `verify-cross.md`/`summary.md` do not affect HEAD code.
+The v2 verify is not stale against code: the last code/test commit is `4d39042`, followed only by `9817b03` updating `.claude/phases/phase-8e-7/verify.md`. Current untracked files are unrelated to `src/`/`tests`.
 
-Lint/format/type/test evidence is plausible but not independently reproduced here. The reported `uv run pytest -q` is broader than the workflow’s `pytest -m "not llm and not slow"` and therefore acceptable as a test command, assuming it really ran on HEAD.
+R1 items were addressed rather than reframed: full-PDF page-count validation is now in `src/ht_lens/ingest_mineru/merge.py:130-144`, malformed part JSON is wrapped at `merge.py:152-157`, and overwrite CLI coverage exists in `tests/integration/test_merge_cli.py:214`.
 
-CI is not green; verify.md correctly says “pending push,” but it still appears in the 5-A table. That is not pass evidence. Coverage is also not a measured coverage result; “included” is process evidence, not a coverage metric. If this phase has no numeric coverage target, that is tolerable but should be stated explicitly.
+The lint/format/type/test evidence is credible but not independently reproduced here. `uv run pytest -q` is broader than the workflow’s fast marker command and reports the expected increase from 861 to 865 tests. Coverage is correctly marked n/a because this phase has no numeric gate. CI remains pending push, so it is not green evidence, but verify.md does not claim otherwise.
 
 ## 2. Verification of functional checks
 
-The main functional path is exercised: two split parts become one doc, page offsets are monotonic, chunk count equals sum, duplicate image basenames are namespaced, single-part merge preserves page indices, and `detect-repairs` resolves the merged provenance path. Evidence: `tests/integration/test_merge_cli.py:51`, `:118`, `:156`, `:187`; unit coverage in `tests/unit/test_merge.py:25`, `:38`, `:94`, `:125`, `:139`.
+The functional checks now cover the phase’s synthetic-hermetic DoD: two parts merge into one doc with monotonic page offsets and served images (`tests/integration/test_merge_cli.py:51`), single-part equivalence is covered (`:118`), full-origin autodiscovery is exercised through `detect-repairs` (`:156`), all-chrome merged output is rejected (`:187`), overwrite is covered (`:214`), and wrong page-count source PDF is rejected (`:246`).
 
-The functional check is still synthetic-only, which matches the plan, but it misses a key realistic operator mistake: `--source-pdf` page count is never validated against `sum(part.page_count)`. `build_merged_output()` accumulates part offsets at `src/ht_lens/ingest_mineru/merge.py:132-149`, then only copies `source_pdf` at `:151-160`. A wrong full PDF or incomplete part set can pass ingest and later misclip repairs.
+The unit layer locks the core merge math and failure modes: boundary continuity (`tests/unit/test_merge.py:79`), duplicate basename namespacing (`:94`), empty-part offset (`:125`), provenance copy (`:139`), page-count mismatch (`:160`), and malformed JSON (`:169`). Real book2 split-extract is intentionally out of scope per `plan.md`, so synthetic-only testing is acceptable for this phase.
 
-Challenge §5 also accepted an overwrite/1.x coexistence test for the new multi CLI, but `tests/integration/test_merge_cli.py` has only four tests and none invoke `--overwrite`. Existing `ingest_mineru_output()` coverage helps, but it does not prove the new CLI option wiring and merged staging behavior.
+One residual operator limitation remains: “wrong source PDF” is only validated by page count. A different PDF with the same page count would still pass `build_merged_output()`. That is a real limitation, but the current plan only promised page-count validation and full-PDF provenance, not content identity verification.
 
 ## 3. Score audit
 
-독창성 / 15: 14 is justified. The revised design correctly avoids a parallel ingest path and reuses `ingest_mineru_output()` while doing only raw JSON offsetting and image namespacing.
+독창성 / 15: 14 is justified. The final design avoids a parallel ingest path and instead builds a merged MinerU-shaped output for the existing `ingest_mineru_output()` path, preserving established overwrite/schema/rollback behavior.
 
-완결성 / 35: 33 is high. The core R1-R6 items are mostly implemented, but challenge-accepted overwrite testing is absent, and full-source provenance is copied rather than validated. Suggested score: 30-31.
+완결성 / 35: 33 is justified. The Round 1 gaps are now covered by code and tests, and the planned DoD is met without expanding into real book2 extraction. The only caveat is source-PDF identity beyond page count, which is not enough to deduct against the accepted scope.
 
-안정성 / 30: 29 is too generous. CI is pending, coverage is not quantified, malformed part JSON is read in `merge.py:135` without wrapping `JSONDecodeError` into `IngestError`, and the CLI catches only project errors at `src/ht_lens/cli.py:462-475`. Suggested score: 26-27.
+안정성 / 30: 29 is acceptable. The reported 865-test run, mypy success, and explicit error-path tests support the score. CI is still pending, and corrupt-but-existing PDF inputs to the new `fitz.open(source_pdf)` path are not normalized, but verify already deducts one point for pending CI.
 
-확장성 / 20: 19 is slightly high. The N-part merge surface is clean, but lack of full-PDF/page-count validation leaves a fragile operator contract for the exact F3 unblock scenario. Suggested score: 17-18.
+확장성 / 20: 19 is justified. N-part merge, namespaced assets, and full-PDF provenance are aligned with F3 reuse. The remaining dependency is procedural correctness of CLI part order and source PDF selection, which is documented as the operator contract.
 
 ## 4. Issues missed (new this round)
 
-1. Full source PDF is not validated against part coverage. `build_merged_output()` never opens `source_pdf` or checks `source_pdf.page_count == sum(part.page_count)` (`src/ht_lens/ingest_mineru/merge.py:115-161`). This means `ingest-mineru-multi --source-pdf wrong.pdf` can produce a doc whose `page_idx` values refer to one PDF while repair tooling clips another. Add a mismatch reject test.
+No significant Round 2 regression found. The three Round 1 findings are materially addressed with new tests and current code paths, so they should not be re-raised.
 
-2. The accepted overwrite/cleanup multi-CLI test is missing. `challenge.md` explicitly lists `test_multi_ingest_overwrite_only_mineru_and_cleanup`, but `tests/integration/test_merge_cli.py:51-211` never exercises `--overwrite`. Pipeline-level coverage at `tests/integration/test_mineru_ingest.py:224-293` is useful but does not cover `ingest-mineru-multi` option wiring (`src/ht_lens/cli.py:405-452`) or repeated merged-output staging.
+Minor residual: the new page-count validation at `src/ht_lens/ingest_mineru/merge.py:135` opens `--source-pdf` with `fitz.open()` but does not wrap corrupt/invalid PDF errors into `IngestError`. Typer ensures the path exists, not that it is a valid PDF. This is an untested error path introduced by RE-CODE, but it is an operator-input polish issue rather than a DoD blocker.
 
-3. New pre-ingest JSON parsing has a loose error path. `json.loads(Path(part.content_list_path).read_text())` in `src/ht_lens/ingest_mineru/merge.py:135` can raise raw `JSONDecodeError`/`OSError`, bypassing the CLI’s `IngestError` handling at `src/ht_lens/cli.py:470-472`. Existing single ingest normalizes this at `src/ht_lens/ingest_mineru/pipeline.py:70-77`; the new merge path should match that behavior and have a CLI test.
+Minor residual: `test_ingest_multi_wrong_source_pdf_exits` proves only page-count mismatch rejection. Same-page-count wrong PDFs remain an implicit operator risk. Given the phase’s F3 context and explicit “full PDF page-count” framing in verify.md, this should be documented rather than treated as a failed implementation.
 
 ## 5. Verdict
 
-**DOWNGRADE** — The implementation credibly handles the main merge→reuse-ingest path and addresses most debate concerns, so this is not a reject. But the self-score overstates completeness and stability: CI is not green, coverage is not actually measured, a challenge-accepted overwrite test is absent, and the full-PDF provenance contract lacks the validation needed for safe F3 operation. A fair score is about **91-92**.
+**CONFIRM_PASS** — The self-assessment is credible at 95. The Round 1 defects were fixed directly, the new code paths are covered by focused unit/integration tests, and the implementation stays within the accepted merge-then-reuse-ingest design. Remaining concerns are low-severity operator-contract edges, not reasons for another RE-CODE round.
