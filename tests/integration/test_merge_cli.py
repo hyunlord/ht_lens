@@ -151,3 +151,61 @@ def test_ingest_multi_single_part_equivalent(
         chunks = client.get("/v2/documents/1/reflow").json()["chunks"]
     assert [c["page_idx"] for c in chunks] == [0, 1]  # offset 0, unchanged
     assert len(chunks) == 2
+
+
+def test_ingest_multi_provenance_resolves_full_pdf_for_repair(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """challenge §5#1: after multi ingest, detect-repairs must resolve the FULL
+    source PDF via the merged doc's markdown_path (not a part origin), so repair
+    clips absolute pages. It succeeds (exit 0) instead of 'source PDF not found'."""
+    _env(monkeypatch, tmp_path)
+    p0 = _part(tmp_path, "p0", [{"type": "text", "text": "a", "page_idx": 0}], {}, 2)
+    p1 = _part(tmp_path, "p1", [{"type": "text", "text": "b", "page_idx": 0}], {}, 2)
+    full = tmp_path / "book.pdf"
+    _tiny_pdf(full, 4)
+    r1 = runner.invoke(
+        app,
+        [
+            "ingest-mineru-multi",
+            str(p0),
+            str(p1),
+            "--filename",
+            "book.pdf",
+            "--source-pdf",
+            str(full),
+            "--db",
+            str(api_db_path),
+        ],
+    )
+    assert r1.exit_code == 0, r1.output
+    # detect-repairs autodiscovers *_origin.pdf from the merged doc's markdown dir
+    r2 = runner.invoke(app, ["detect-repairs", "--doc-id", "1", "--db", str(api_db_path)])
+    assert r2.exit_code == 0, r2.output  # full origin resolved, no "source PDF not found"
+
+
+def test_ingest_multi_all_chrome_rejected(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """challenge §5#3: parts may be individually empty, but an all-chrome merged
+    document (zero content chunks) is rejected by the reused ingest pipeline."""
+    _env(monkeypatch, tmp_path)
+    p0 = _part(tmp_path, "p0", [{"type": "page_number", "text": "1", "page_idx": 0}], {}, 2)
+    p1 = _part(tmp_path, "p1", [{"type": "header", "text": "h", "page_idx": 0}], {}, 2)
+    full = tmp_path / "book.pdf"
+    _tiny_pdf(full, 4)
+    res = runner.invoke(
+        app,
+        [
+            "ingest-mineru-multi",
+            str(p0),
+            str(p1),
+            "--filename",
+            "book.pdf",
+            "--source-pdf",
+            str(full),
+            "--db",
+            str(api_db_path),
+        ],
+    )
+    assert res.exit_code != 0  # zero-chunk merged doc rejected
