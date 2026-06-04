@@ -137,11 +137,13 @@ def test_build_merged_output_empty_part_keeps_offset(tmp_path: Path) -> None:
 
 
 def test_build_merged_output_provenance_is_full_pdf(tmp_path: Path) -> None:
-    p1 = _part(tmp_path, "p1", [{"type": "text", "text": "a", "page_idx": 0}], {}, 1)
+    # two parts (4 + 3) cover a 7-page full PDF; provenance origin = full PDF.
+    p1 = _part(tmp_path, "p1", [{"type": "text", "text": "a", "page_idx": 0}], {}, 4)
+    p2 = _part(tmp_path, "p2", [{"type": "text", "text": "b", "page_idx": 0}], {}, 3)
     src = tmp_path / "full.pdf"
     _tiny_pdf(src, 7)  # full book has 7 pages
     merged = build_merged_output(
-        [p1], dest_dir=tmp_path / "m", source_pdf=src, filename_stem="full"
+        [p1, p2], dest_dir=tmp_path / "m", source_pdf=src, filename_stem="full"
     )
     import fitz
 
@@ -149,7 +151,25 @@ def test_build_merged_output_provenance_is_full_pdf(tmp_path: Path) -> None:
     assert origin.is_file()
     doc = fitz.open(str(origin))
     try:
-        assert doc.page_count == 7  # provenance = FULL pdf (not the 1-page part)
+        assert doc.page_count == 7  # provenance = FULL pdf (not a part)
     finally:
         doc.close()
     assert merged.markdown_path.is_file()
+
+
+def test_build_merged_output_rejects_page_count_mismatch(tmp_path: Path) -> None:
+    # parts sum to 3 pages but source PDF has 5 → wrong PDF / incomplete parts.
+    p1 = _part(tmp_path, "p1", [{"type": "text", "text": "a", "page_idx": 0}], {}, 3)
+    src = tmp_path / "full.pdf"
+    _tiny_pdf(src, 5)
+    with pytest.raises(IngestError, match="wrong source PDF or incomplete"):
+        build_merged_output([p1], dest_dir=tmp_path / "m", source_pdf=src, filename_stem="full")
+
+
+def test_build_merged_output_rejects_malformed_part_json(tmp_path: Path) -> None:
+    p1 = _part(tmp_path, "p1", [{"type": "text", "text": "a", "page_idx": 0}], {}, 2)
+    p1.content_list_path.write_text("{ not json")  # corrupt
+    src = tmp_path / "full.pdf"
+    _tiny_pdf(src, 2)
+    with pytest.raises(IngestError, match="unreadable"):
+        build_merged_output([p1], dest_dir=tmp_path / "m", source_pdf=src, filename_stem="full")

@@ -209,3 +209,62 @@ def test_ingest_multi_all_chrome_rejected(
         ],
     )
     assert res.exit_code != 0  # zero-chunk merged doc rejected
+
+
+def test_ingest_multi_overwrite_replaces_not_duplicates(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """challenge §5#5: re-running with --overwrite replaces the merged doc (reused
+    ingest contract) — one document, not a duplicate; without it, the 2nd fails."""
+    _env(monkeypatch, tmp_path)
+    p0 = _part(tmp_path, "p0", [{"type": "text", "text": "a", "page_idx": 0}], {}, 2)
+    p1 = _part(tmp_path, "p1", [{"type": "text", "text": "b", "page_idx": 0}], {}, 2)
+    full = tmp_path / "book.pdf"
+    _tiny_pdf(full, 4)
+    args = [
+        "ingest-mineru-multi",
+        str(p0),
+        str(p1),
+        "--filename",
+        "book.pdf",
+        "--source-pdf",
+        str(full),
+        "--db",
+        str(api_db_path),
+    ]
+    assert runner.invoke(app, args).exit_code == 0
+    # second run without --overwrite → rejected (already ingested)
+    assert runner.invoke(app, args).exit_code != 0
+    # with --overwrite → replaces; still exactly one document
+    assert runner.invoke(app, [*args, "--overwrite"]).exit_code == 0
+    with make_test_client(api_db_path) as client:
+        # doc id 1 still resolves and is the only doc
+        assert client.get("/v2/documents/1/reflow").status_code == 200
+        assert client.get("/v2/documents/2/reflow").status_code == 404
+
+
+def test_ingest_multi_wrong_source_pdf_exits(
+    api_db_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1 §4#1: --source-pdf whose page count != Σ part page counts is rejected
+    (would otherwise misclip repairs)."""
+    _env(monkeypatch, tmp_path)
+    p0 = _part(tmp_path, "p0", [{"type": "text", "text": "a", "page_idx": 0}], {}, 2)
+    p1 = _part(tmp_path, "p1", [{"type": "text", "text": "b", "page_idx": 0}], {}, 2)
+    wrong = tmp_path / "wrong.pdf"
+    _tiny_pdf(wrong, 9)  # parts sum to 4, not 9
+    res = runner.invoke(
+        app,
+        [
+            "ingest-mineru-multi",
+            str(p0),
+            str(p1),
+            "--filename",
+            "book.pdf",
+            "--source-pdf",
+            str(wrong),
+            "--db",
+            str(api_db_path),
+        ],
+    )
+    assert res.exit_code != 0

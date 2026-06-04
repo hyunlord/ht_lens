@@ -123,8 +123,25 @@ def build_merged_output(
     ``dest_dir`` and return its content_list/images/markdown paths, ready for
     ``ingest_mineru_output``. Part order is the caller's contract; offsets are
     cumulative source-PDF page counts."""
+    import fitz
+
     if not parts:
         raise IngestError("no parts to merge")
+    # The parts must be a disjoint, complete cover of the full PDF: their page
+    # counts must sum to the source PDF's page count. Otherwise the merged
+    # page_idx refers to a different document than repair tooling would clip
+    # (wrong --source-pdf or an incomplete/extra part set) — reject (R1 §4#1).
+    total_part_pages = sum(p.page_count for p in parts)
+    doc = fitz.open(str(source_pdf))
+    try:
+        full_pages = doc.page_count
+    finally:
+        doc.close()
+    if total_part_pages != full_pages:
+        raise IngestError(
+            f"part page counts sum to {total_part_pages} but --source-pdf has "
+            f"{full_pages} pages — wrong source PDF or incomplete/extra parts"
+        )
     dest_dir = Path(dest_dir)
     images_out = dest_dir / "images"
     images_out.mkdir(parents=True, exist_ok=True)
@@ -132,7 +149,12 @@ def build_merged_output(
     merged: list[dict[str, object]] = []
     page_offset = 0
     for k, part in enumerate(parts):
-        raw = json.loads(Path(part.content_list_path).read_text())
+        try:
+            raw = json.loads(Path(part.content_list_path).read_text())
+        except (OSError, ValueError) as exc:
+            raise IngestError(
+                f"part {k} content_list unreadable: {part.content_list_path}"
+            ) from exc
         if not isinstance(raw, list):
             raise IngestError(f"part {k} content_list is not a list: {part.content_list_path}")
         new_items, renames = offset_items(
