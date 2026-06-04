@@ -380,6 +380,101 @@ def ingest_mineru_command(
         raise typer.Exit(code=exc.exit_code) from exc
 
 
+@app.command("ingest-mineru-multi")
+def ingest_mineru_multi_command(
+    part_dirs: list[Path] = typer.Argument(  # noqa: B008
+        ...,
+        exists=True,
+        readable=True,
+        resolve_path=True,
+        help="MinerU output dirs of the split parts, IN ORDER (part1 part2 ...).",
+    ),
+    filename: str = typer.Option(
+        ..., "--filename", help="Display filename for the merged document."
+    ),
+    source_pdf: Path = typer.Option(  # noqa: B008
+        ...,
+        "--source-pdf",
+        exists=True,
+        readable=True,
+        resolve_path=True,
+        help="FULL source PDF (provenance origin for repair tooling — absolute pages).",
+    ),
+    src: str = typer.Option("en", "--src", help="Source language code."),
+    tgt: str = typer.Option("ko", "--tgt", help="Target language code."),
+    overwrite: bool = typer.Option(
+        False, "--overwrite/--no-overwrite", help="Replace an already-ingested document."
+    ),
+    db: Path = typer.Option(  # noqa: B008
+        None,
+        "--db",
+        resolve_path=True,
+        help="SQLite DB (default HT_LENS_DB_URL or data/ht_lens.db).",
+    ),
+) -> None:
+    """Phase 8e-7 — ingest split MinerU outputs (part PDFs too large for one CPU
+    extraction) as ONE document.
+
+    Merges the parts (page_idx offset by cumulative source-PDF page count, images
+    namespaced per part, full PDF as provenance origin) into a single MinerU-shaped
+    dir, then reuses ``ingest-mineru``'s pipeline — same schema/overwrite/rollback/
+    1.x-coexistence invariants. Parts must be passed IN ORDER."""
+    from ht_lens.db.session import make_engine, make_session_factory
+    from ht_lens.ingest_mineru.merge import build_merged_output, discover_part
+
+    db_path = db if db is not None else _db_path_from_env()
+    stem = Path(filename).stem
+    merged_dir = (
+        Path(os.environ.get("HT_LENS_MINERU_OUT_DIR", "data/mineru_out"))
+        / f"{stem}_merged"
+        / "auto"
+    )
+
+    async def _run() -> None:
+        from ht_lens.ingest_mineru.pipeline import ingest_mineru_output
+
+        parts = [discover_part(p) for p in part_dirs]
+        merged = build_merged_output(
+            parts, dest_dir=merged_dir, source_pdf=source_pdf, filename_stem=stem
+        )
+        engine = make_engine(db_path)
+        factory = make_session_factory(engine)
+        try:
+            async with factory() as session:
+                stats = await ingest_mineru_output(
+                    merged.content_list_path,
+                    session,
+                    filename=filename,
+                    src=src,
+                    tgt=tgt,
+                    images_dir=merged.images_dir,
+                    markdown_path=merged.markdown_path,
+                    overwrite=overwrite,
+                )
+                await session.commit()
+            typer.echo(
+                f"ok: doc_id={stats.document_id} chunks={stats.chunks} images={stats.images} "
+                f"(merged {len(parts)} parts -> {merged_dir})"
+            )
+        finally:
+            await engine.dispose()
+
+    try:
+        asyncio.run(_run())
+    except DocumentAlreadyIngested as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except SchemaVersionMismatch as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    except IngestError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    except HtLensError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=exc.exit_code) from exc
+
+
 @app.command("repair-images")
 def repair_images_command(
     doc_id: int = typer.Option(..., "--doc-id", help="2.0 (MinerU) document id to repair."),
