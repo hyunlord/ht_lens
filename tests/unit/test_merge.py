@@ -173,3 +173,11 @@ def test_build_merged_output_rejects_malformed_part_json(tmp_path: Path) -> None
     _tiny_pdf(src, 2)
     with pytest.raises(IngestError, match="unreadable"):
         build_merged_output([p1], dest_dir=tmp_path / "m", source_pdf=src, filename_stem="full")
+
+
+def test_build_merged_output_rejects_corrupt_source_pdf(tmp_path: Path) -> None:
+    p1 = _part(tmp_path, "p1", [{"type": "text", "text": "a", "page_idx": 0}], {}, 2)
+    bad = tmp_path / "bad.pdf"
+    bad.write_text("not a pdf")  # exists but not a valid PDF
+    with pytest.raises(IngestError, match="not a readable PDF"):
+        build_merged_output([p1], dest_dir=tmp_path / "m", source_pdf=bad, filename_stem="x")

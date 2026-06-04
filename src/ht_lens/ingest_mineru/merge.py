@@ -132,11 +132,14 @@ def build_merged_output(
     # page_idx refers to a different document than repair tooling would clip
     # (wrong --source-pdf or an incomplete/extra part set) — reject (R1 §4#1).
     total_part_pages = sum(p.page_count for p in parts)
-    doc = fitz.open(str(source_pdf))
     try:
-        full_pages = doc.page_count
-    finally:
-        doc.close()
+        doc = fitz.open(str(source_pdf))
+        try:
+            full_pages = doc.page_count
+        finally:
+            doc.close()
+    except Exception as exc:  # corrupt/invalid PDF (Typer only checks existence)
+        raise IngestError(f"--source-pdf is not a readable PDF: {source_pdf}") from exc
     if total_part_pages != full_pages:
         raise IngestError(
             f"part page counts sum to {total_part_pages} but --source-pdf has "
