@@ -67,3 +67,10 @@ R1-fix 영역 회귀 재확인: 21+ focused / 865 full green. 단일 ingest·`/v
 - [x] **PASS_CANDIDATE (≥95)** — R1 3건(full-PDF 검증/overwrite/JSON) 전부 해소+테스트 잠금, 핵심 정합 유지, 0 DB·단일 ingest 불변. cross-verify Round 2(final) 진행.
 - [ ] FAIL → RE-CODE
 - [ ] FAIL → RE-PLAN
+
+## 5-F. Post-R2 addendum (`d62c277`)
+cross-verify **R2 = CONFIRM_PASS (95)**. R2 minor residual #1 polished: corrupt/
+invalid `--source-pdf`(Typer는 존재만 검사)의 `fitz.open` raw 예외를 `IngestError`로
+래핑(JSON 정규화와 동일 철학) + 단위 테스트. R2 residual #2(동일 page_count의 다른 PDF는
+page_count만으론 미탐지)는 **operator-contract 한계로 문서화**(summary Known issues) — Codex가
+"document rather than fix"로 합의. 전체 **866 passed**(865+1), ruff/mypy clean, 추적 트리 clean.
